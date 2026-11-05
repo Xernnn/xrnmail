@@ -1,0 +1,75 @@
+import { test } from '@playwright/test'
+import { rawMail } from '../tests/fake-gmail'
+import { launch, signIn } from './app'
+import type { FakeGmail } from '../tests/fake-gmail'
+
+/** Pictures of the app with made-up mail, for looking at it: SHOTS=<folder> npx playwright test shots */
+const folder = process.env['SHOTS']
+test.skip(!folder, 'only when SHOTS is set')
+
+const ago = (hours: number): Date => new Date(Date.now() - hours * 3_600_000)
+
+const NEWSLETTER = `<html><head><style>
+  .wrap { max-width: 560px; margin: 0 auto; font-family: Georgia, serif; }
+  h1 { color: #1c4e80; } .cta { display: inline-block; padding: 10px 18px; background: #1c4e80; color: #fff; border-radius: 6px; text-decoration: none; }
+  </style></head><body><div class="wrap">
+  <h1>The week in small tools</h1>
+  <p>Three things worth reading this week, and one worth building.</p>
+  <img src="https://example.invalid/banner.png" alt="Banner" width="560" height="120">
+  <p><a class="cta" href="https://example.com/read">Read it</a></p>
+  </div></body></html>`
+
+function fill(gmail: FakeGmail): void {
+  gmail.add(rawMail({ subject: 'Lịch thi cuối kỳ HK1', from: 'Phòng Đào Tạo <daotao@uni.example>', text: 'Các bạn xem lịch thi đính kèm.\n\nChi tiết: https://uni.example/lich-thi', attachment: { name: 'lich-thi.pdf', type: 'application/pdf', body: 'x'.repeat(240000) } }), { arrived: ago(1) })
+  gmail.add(rawMail({ subject: 'The week in small tools', from: 'Small Tools <hello@smalltools.example>', html: NEWSLETTER }), { arrived: ago(3), labels: ['\\Inbox', 'Newsletters'] })
+  gmail.add(rawMail({ subject: 'Trip to Da Lat', text: 'Are you still on for Friday?', from: 'Mai Tran <mai@example.com>' }), { arrived: ago(5), thread: 77n })
+  gmail.add(rawMail({ subject: 'Re: Trip to Da Lat', text: 'Yes! Bus leaves at 7.\n\nI booked two seats.', from: 'Linh Pham <linh@example.com>' }), { arrived: ago(4), thread: 77n })
+  gmail.add(rawMail({ subject: 'Your receipt', text: 'Thanks for your order of 245,000 VND.', from: 'Coffee House <no-reply@coffee.example>' }), { arrived: ago(30), flags: ['\\Seen'], labels: ['\\Inbox', 'Receipts'] })
+  gmail.add(rawMail({ subject: 'A very long subject line that keeps going well past what fits on one row of the list', text: 'Long.', from: 'Someone With A Rather Long Display Name <long@example.com>' }), { arrived: ago(80), flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'Sent by me', text: 'Sent.', from: 'Me <me@example.com>' }), { arrived: ago(6), flags: ['\\Seen'], labels: ['\\Sent'] })
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`pictures ${colorScheme}`, async () => {
+    const run = await launch({ colorScheme, size: [1280, 840] })
+    const { page, gmail } = run
+    await page.screenshot({ path: `${folder}/${colorScheme}-welcome.png` })
+    fill(gmail)
+    await signIn(run)
+    await page.getByText('Lịch thi cuối kỳ HK1').first().waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    gmail.add(rawMail({ subject: 'Held', text: 'Held.' }))
+    gmail.add(rawMail({ subject: 'Held too', text: 'Held.' }))
+    await page.getByRole('button', { name: /^Sync/ }).click()
+    await page.getByText('2 waiting').waitFor()
+    await page.getByText('Trip to Da Lat').first().click()
+    await page.locator('.messages').getByText('Bus leaves').waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-thread.png` })
+    await page.getByText('The week in small tools').first().click()
+    await page.frameLocator('iframe.body-frame').getByText('Three things').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-html.png` })
+    await page.getByText('Lịch thi cuối kỳ HK1').first().click()
+    await page.locator('.messages').getByText('lich-thi.pdf').waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-attachment.png` })
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByLabel('Remove 13:00').waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings.png` })
+    await page.getByRole('button', { name: 'Done' }).click()
+    await page.getByLabel('Search').fill('zzzz')
+    await page.getByText('Nothing found').waitFor()
+    await page.getByLabel('Search').fill('')
+    await page.evaluate((secret) => window.mail.addAccount('second@example.com', secret), gmail.secret)
+    await page.getByRole('button', { name: 'second', exact: true }).waitFor()
+    await page.getByText('Lịch thi cuối kỳ HK1').first().waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-two-accounts.png` })
+    await run.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(760, 700))
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await page.getByRole('button', { name: 'Back' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-narrow-reader.png` })
+    await page.getByRole('button', { name: 'Back' }).click()
+    await page.locator('.thread').first().waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-narrow-list.png` })
+    await run.stop()
+  })
+}

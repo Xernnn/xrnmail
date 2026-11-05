@@ -1,0 +1,30 @@
+appId: app.xrnmail.desktop
+productName: xrnmail
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - resources/icon.png
+asarUnpack:
+  - resources/**
+
+# Off: running the binary as plain Node, NODE_OPTIONS and --inspect, each of which lets any program
+# running as the user drive an app holding the keyring's key to the app passwords.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Network;Email;
+  synopsis: Your Gmail, delivered in batches
+  description: A mail client that brings mail a few times a day
+  icon: resources/icon.png
