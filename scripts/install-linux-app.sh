@@ -31,11 +31,12 @@ cat > "$DESKTOP_DIR/${APP_ID}.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=xrnmail
-Comment=Your Gmail, delivered in batches
+Comment=All your mail accounts in one place, delivered in batches
 Exec="${TARGET}" %U
 Icon=${ICON_DIR}/${APP_ID}.png
 Terminal=false
 Categories=Network;Email;
+MimeType=x-scheme-handler/mailto;
 StartupWMClass=xrnmail
 DESKTOP
 chmod 644 "$DESKTOP_DIR/${APP_ID}.desktop"
@@ -45,3 +46,4 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "Installed: $TARGET"
+echo "To have mail links open here: xdg-mime default ${APP_ID}.desktop x-scheme-handler/mailto"

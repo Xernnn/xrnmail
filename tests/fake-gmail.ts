@@ -1,10 +1,37 @@
 import { createServer, type Server, type Socket } from 'node:net'
 
 /**
- * A small IMAP server speaking Gmail's dialect, so the real client library runs against something
- * real over a real socket. `commands` keeps everything it was sent, which is how the tests prove
- * xrnmail never asks for a change.
+ * A small IMAP server, so the real client library runs against something real over a real socket.
+ * By default it speaks Gmail's dialect: everything in All Mail, with labels, and Trash and Spam apart.
+ * With `plain` it's any other mail service: real folders, and none of Gmail's extensions. The options
+ * below turn off what servers differ on. `commands` keeps everything it was sent, which is how the
+ * tests prove xrnmail never asks for a change.
  */
+
+export interface FakeOptions {
+  /** Not Gmail: folders, no labels, no threads. */
+  plain?: boolean
+  /** Extra folders on a plain server. */
+  folders?: string[]
+  /** RFC 6851. Without it the client copies and deletes. */
+  move?: boolean
+  /** RFC 4315. Without it a move doesn't say what the new UIDs are. */
+  uidplus?: boolean
+  /** RFC 7162. Without it there's no asking what changed. */
+  condstore?: boolean
+  /** No Archive folder, so the first thing archived has to make one. */
+  noArchiveFolder?: boolean
+  /** Takes a token instead of a password. */
+  token?: string
+}
+
+export interface FakeBox {
+  path: string
+  flag: string
+  uidValidity: number
+  nextUid: number
+  mails: FakeMail[]
+}
 
 export interface FakeMail {
   uid: number
@@ -48,20 +75,65 @@ const quoted = (label: string): string => `"${label.replace(/\\/g, '\\\\')}"`
 const bare = (label: string): string => (label.startsWith('\\') ? label : quoted(label))
 
 export class FakeGmail {
-  mails: FakeMail[] = []
   commands: string[] = []
-  uidValidity = 1
+  boxes: FakeBox[] = []
   modseq = 100
   secret = 'abcdabcdabcdabcd'
   allMail = '[Gmail]/All Mail'
   hasAllMail = true
   dropNextConnection = false
+  /** Answer NO to anything that would change the mailbox. */
+  refuseWrites = false
+  /** What was moved out of All Mail, by the folder it went to. */
+  moved: { uid: number; to: string }[] = []
   /** Gmail's documentation shows \\Inbox bare, and real sessions show it quoted. */
   bareLabels = false
-  private nextUid = 1
+  /** What the server thinks the time is, for mail it files itself. */
+  now: () => Date = () => new Date()
+  options: FakeOptions
+  private nextThread = 1n
   private server: Server | null = null
   private idlers = new Set<Socket>()
   private sockets = new Set<Socket>()
+
+  constructor(options: FakeOptions = {}) {
+    this.options = options
+    const box = (path: string, flag = ''): FakeBox => ({ path, flag, uidValidity: 1, nextUid: 1, mails: [] })
+    this.boxes = options.plain
+      ? [
+          box('INBOX'), box('Sent', '\\Sent'), box('Trash', '\\Trash'), box('Junk', '\\Junk'), box('Drafts', '\\Drafts'),
+          ...(options.noArchiveFolder ? [] : [box('Archive', '\\Archive')]),
+          ...(options.folders ?? []).map((path) => box(path))
+        ]
+      : [box('[Gmail]/All Mail', '\\All'), box('[Gmail]/Trash', '\\Trash'), box('[Gmail]/Spam', '\\Junk')]
+  }
+
+  private get home(): FakeBox {
+    return this.boxes[0] as FakeBox
+  }
+
+  /** All Mail on Gmail, the inbox anywhere else. */
+  get mails(): FakeMail[] {
+    return this.home.mails
+  }
+
+  set mails(mails: FakeMail[]) {
+    this.home.mails = mails
+  }
+
+  get uidValidity(): number {
+    return this.home.uidValidity
+  }
+
+  set uidValidity(value: number) {
+    this.home.uidValidity = value
+  }
+
+  box(path: string): FakeBox {
+    const found = this.boxes.find((b) => b.path === path)
+    if (!found) throw new Error(`no folder ${path}`)
+    return found
+  }
 
   async listen(): Promise<number> {
     this.server = createServer((socket) => this.serve(socket))
@@ -76,34 +148,49 @@ export class FakeGmail {
     await new Promise<void>((resolve) => this.server?.close(() => resolve()))
   }
 
-  add(raw: string | Buffer, options: Partial<Pick<FakeMail, 'arrived' | 'labels' | 'flags' | 'thread'>> = {}): number {
-    const uid = this.nextUid++
+  add(raw: string | Buffer, options: Partial<Pick<FakeMail, 'arrived' | 'labels' | 'flags' | 'thread'>> & { box?: string } = {}): number {
+    const box = options.box ? this.box(options.box) : this.home
+    const uid = box.nextUid++
     this.modseq++
-    this.mails.push({
+    box.mails.push({
       uid,
       raw: Buffer.isBuffer(raw) ? raw : Buffer.from(raw.replace(/\r?\n/g, '\r\n')),
-      arrived: options.arrived ?? new Date(),
-      labels: options.labels ?? ['\\Inbox'],
+      arrived: options.arrived ?? this.now(),
+      labels: options.labels ?? (options.box ? [] : ['\\Inbox']),
       flags: options.flags ?? [],
-      thread: options.thread ?? 7_000_000_000_000_000_000n + BigInt(uid),
-      gmailId: 6_000_000_000_000_000_000n + BigInt(uid),
+      thread: options.thread ?? 7_000_000_000_000_000_000n + this.nextThread,
+      gmailId: 6_000_000_000_000_000_000n + this.nextThread++,
       modseq: this.modseq
     })
-    for (const socket of this.idlers) socket.write(`* ${this.mails.length} EXISTS\r\n`)
+    for (const socket of this.idlers) socket.write(`* ${box.mails.length} EXISTS\r\n`)
     return uid
   }
 
-  change(uid: number, labels: string[], flags: string[] = []): void {
-    const mail = this.mails.find((m) => m.uid === uid)
+  change(uid: number, labels: string[], flags: string[] = [], path?: string): void {
+    const mail = (path ? this.box(path) : this.home).mails.find((m) => m.uid === uid)
     if (!mail) throw new Error('no such mail')
     mail.labels = labels
     mail.flags = flags
     mail.modseq = ++this.modseq
   }
 
-  remove(uid: number): void {
-    this.mails = this.mails.filter((m) => m.uid !== uid)
+  remove(uid: number, path?: string): void {
+    const box = path ? this.box(path) : this.home
+    box.mails = box.mails.filter((m) => m.uid !== uid)
     this.modseq++
+  }
+
+  private selected(socket: Socket): FakeBox {
+    return (socket as Socket & { selected?: FakeBox }).selected ?? this.home
+  }
+
+  private capabilities(): string {
+    const { plain, move = true, uidplus = true, condstore = true, token } = this.options
+    return [
+      'IMAP4rev1', 'NAMESPACE', 'IDLE', 'SPECIAL-USE',
+      ...(uidplus ? ['UIDPLUS'] : []), ...(condstore ? ['CONDSTORE'] : []), ...(move ? ['MOVE'] : []),
+      ...(plain ? [] : ['X-GM-EXT-1']), ...(token ? ['AUTH=XOAUTH2', 'SASL-IR'] : [])
+    ].join(' ')
   }
 
   /** What was asked of the mailbox that would have changed it. */
@@ -125,18 +212,38 @@ export class FakeGmail {
     }
     socket.write('* OK Gimap ready\r\n')
     let pending = ''
+    let held = '' // a command so far, while its literal is on the way
+    let literal = 0
+    let body: string | null = null
     socket.on('data', (chunk) => {
       pending += chunk.toString('latin1')
-      let at: number
-      while ((at = pending.indexOf('\r\n')) >= 0) {
+      for (;;) {
+        if (literal > 0) {
+          if (pending.length < literal) return
+          body = pending.slice(0, literal)
+          pending = pending.slice(literal)
+          literal = 0
+        }
+        const at = pending.indexOf('\r\n')
+        if (at < 0) return
         const line = pending.slice(0, at)
         pending = pending.slice(at + 2)
-        this.line(socket, line)
+        const wants = /\{(\d+)(\+?)\}$/.exec(line)
+        if (wants) {
+          held = line.slice(0, wants.index)
+          literal = Number(wants[1])
+          if (!wants[2]) socket.write('+ go ahead\r\n')
+          continue
+        }
+        const whole = `${held}${line}`
+        held = ''
+        this.line(socket, whole, body)
+        body = null
       }
     })
   }
 
-  private line(socket: Socket, line: string): void {
+  private line(socket: Socket, line: string, literal: string | null): void {
     if (this.idlers.has(socket)) {
       if (line.trim().toUpperCase() === 'DONE') {
         this.idlers.delete(socket)
@@ -154,13 +261,18 @@ export class FakeGmail {
     const ok = (text = 'OK'): void => void socket.write(`${tag} OK ${text}\r\n`)
     switch (full) {
       case 'CAPABILITY':
-        socket.write('* CAPABILITY IMAP4rev1 UIDPLUS CONDSTORE IDLE X-GM-EXT-1 SPECIAL-USE\r\n')
+        socket.write(`* CAPABILITY ${this.capabilities()}\r\n`)
         return ok()
+      case 'AUTHENTICATE': {
+        const given = Buffer.from(words[2] ?? '', 'base64').toString()
+        if (this.options.token && given.includes(`auth=Bearer ${this.options.token}`)) return ok('AUTHENTICATE completed')
+        return void socket.write(`${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`)
+      }
       case 'ID':
         socket.write('* ID ("name" "GImap")\r\n')
         return ok()
       case 'LOGIN':
-        if (rest.includes(this.secret)) return ok('LOGIN completed')
+        if (!this.options.token && rest.includes(this.secret)) return ok('LOGIN completed')
         return void socket.write(`${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`)
       case 'NAMESPACE':
         socket.write('* NAMESPACE (("" "/")) NIL NIL\r\n')
@@ -169,26 +281,70 @@ export class FakeGmail {
         return ok()
       case 'LIST':
       case 'LSUB':
+        if (this.options.plain) {
+          for (const box of this.boxes) socket.write(`* ${full} (${[box.flag, '\\HasNoChildren'].filter(Boolean).join(' ')}) "/" "${box.path}"\r\n`)
+          return ok()
+        }
         socket.write(`* ${full} (\\HasNoChildren) "/" "INBOX"\r\n`)
         if (this.hasAllMail) socket.write(`* ${full} (\\All \\HasNoChildren) "/" "${this.allMail}"\r\n`)
         socket.write(`* ${full} (\\Sent \\HasNoChildren) "/" "[Gmail]/Sent Mail"\r\n`)
+        socket.write(`* ${full} (\\Trash \\HasNoChildren) "/" "[Gmail]/Trash"\r\n`)
+        socket.write(`* ${full} (\\Junk \\HasNoChildren) "/" "[Gmail]/Spam"\r\n`)
         return ok()
       case 'STATUS':
-        socket.write(`* STATUS "${this.allMail}" (MESSAGES ${this.mails.length} UIDNEXT ${this.nextUid})\r\n`)
+        socket.write(`* STATUS "${this.home.path}" (MESSAGES ${this.mails.length} UIDNEXT ${this.home.nextUid})\r\n`)
         return ok()
       case 'EXAMINE':
-      case 'SELECT':
+      case 'SELECT': {
+        const name = /"([^"]+)"|(\S+)$/.exec(rest.slice(full.length + 1).replace(/ \(.*\)$/, ''))
+        const path = name?.[1] ?? name?.[2] ?? ''
+        const box = path === this.allMail || (path === 'INBOX' && !this.options.plain) ? this.home : this.boxes.find((b) => b.path === path)
+        if (!box) return void socket.write(`${tag} NO no such mailbox\r\n`)
+        const session = socket as Socket & { readOnly?: boolean; selected?: FakeBox }
+        session.readOnly = full === 'EXAMINE'
+        session.selected = box
         socket.write('* FLAGS (\\Answered \\Flagged \\Draft \\Deleted \\Seen)\r\n')
-        socket.write(`* OK [UIDVALIDITY ${this.uidValidity}] UIDs valid\r\n`)
-        socket.write(`* ${this.mails.length} EXISTS\r\n* 0 RECENT\r\n`)
-        socket.write(`* OK [UIDNEXT ${this.nextUid}] next\r\n* OK [HIGHESTMODSEQ ${this.modseq}] modseq\r\n`)
+        socket.write(`* OK [UIDVALIDITY ${box.uidValidity}] UIDs valid\r\n`)
+        socket.write(`* ${box.mails.length} EXISTS\r\n* 0 RECENT\r\n`)
+        socket.write(`* OK [UIDNEXT ${box.nextUid}] next\r\n`)
+        if (this.options.condstore !== false) socket.write(`* OK [HIGHESTMODSEQ ${this.modseq}] modseq\r\n`)
         return ok(full === 'EXAMINE' ? '[READ-ONLY] opened' : '[READ-WRITE] opened')
+      }
+      case 'CREATE': {
+        const path = /"?([^"]+)"?$/.exec(rest.slice('CREATE '.length))?.[1] ?? ''
+        if (!this.mayWrite(socket, tag)) return undefined
+        this.boxes.push({ path, flag: path === 'Archive' ? '\\Archive' : '', uidValidity: 1, nextUid: 1, mails: [] })
+        return ok('CREATE done')
+      }
+      case 'APPEND': {
+        const path = /^APPEND "?([^"\s]+)"?/.exec(rest)?.[1] ?? ''
+        if (!this.mayWrite(socket, tag)) return undefined
+        const box = this.box(path)
+        const uid = this.add(Buffer.from(literal ?? '', 'latin1'), { box: path, flags: /\\Seen/.test(rest) ? ['\\Seen'] : [] })
+        return ok(`[APPENDUID ${box.uidValidity} ${uid}] APPEND done`)
+      }
+      case 'EXPUNGE':
+      case 'UID EXPUNGE': {
+        const box = this.selected(socket)
+        for (let index = box.mails.length - 1; index >= 0; index--) {
+          if (box.mails[index]?.flags.includes('\\Deleted')) {
+            box.mails.splice(index, 1)
+            socket.write(`* ${index + 1} EXPUNGE\r\n`)
+          }
+        }
+        return ok('EXPUNGE done')
+      }
       case 'SEARCH':
       case 'UID SEARCH':
         return this.search(socket, tag, rest)
       case 'FETCH':
       case 'UID FETCH':
         return this.fetch(socket, tag, rest, full === 'UID FETCH')
+      case 'UID STORE':
+        return this.store(socket, tag, rest)
+      case 'UID MOVE':
+      case 'UID COPY':
+        return this.move(socket, tag, rest, full === 'UID COPY')
       case 'NOOP':
         return ok()
       case 'IDLE':
@@ -205,10 +361,82 @@ export class FakeGmail {
     }
   }
 
+  /** As a real server: a mailbox opened read-only takes no writes. */
+  private mayWrite(socket: Socket, tag: string): boolean {
+    if ((socket as Socket & { readOnly?: boolean }).readOnly) {
+      socket.write(`${tag} NO [READ-ONLY] mailbox is read-only\r\n`)
+      return false
+    }
+    if (this.refuseWrites) {
+      socket.write(`${tag} NO refused\r\n`)
+      return false
+    }
+    return true
+  }
+
+  private store(socket: Socket, tag: string, rest: string): void {
+    const parts = /^UID STORE (\S+) ([+-])(FLAGS(?:\.SILENT)?|X-GM-LABELS) \((.*)\)$/i.exec(rest)
+    if (!parts) return void socket.write(`${tag} BAD store\r\n`)
+    if (!this.mayWrite(socket, tag)) return undefined
+    const [, range = '', sign, item = '', list = ''] = parts
+    const values = list.split(' ').map((v) => v.replace(/^"|"$/g, '').replace(/\\\\/g, '\\')).filter(Boolean)
+    const box = this.selected(socket)
+    const top = box.mails.at(-1)?.uid ?? 0
+    box.mails.forEach((mail, index) => {
+      if (!inRange(mail.uid, range, top)) return
+      const key = /LABELS/i.test(item) ? 'labels' : 'flags'
+      mail[key] = sign === '+' ? [...new Set([...mail[key], ...values])] : mail[key].filter((v) => !values.includes(v))
+      mail.modseq = ++this.modseq
+      socket.write(`* ${index + 1} FETCH (UID ${mail.uid} FLAGS (${mail.flags.join(' ')}) MODSEQ (${mail.modseq}))\r\n`)
+    })
+    socket.write(`${tag} OK STORE done\r\n`)
+  }
+
+  /** As Gmail: moving to INBOX puts mail back in All Mail, under a new UID there, with its label. */
+  private target(path: string): { box: FakeBox; labels: string[] } | null {
+    if (!this.options.plain && path === 'INBOX') return { box: this.home, labels: ['\\Inbox'] }
+    const box = this.boxes.find((b) => b.path === path)
+    return box ? { box, labels: [] } : null
+  }
+
+  private move(socket: Socket, tag: string, rest: string, copy: boolean): void {
+    const parts = /^UID (?:MOVE|COPY) (\S+) "?([^"]+)"?$/i.exec(rest)
+    if (!parts) return void socket.write(`${tag} BAD move\r\n`)
+    if (!this.mayWrite(socket, tag)) return undefined
+    const [, range = '', to = ''] = parts
+    const from = this.selected(socket)
+    const destination = this.target(to)
+    const top = from.mails.at(-1)?.uid ?? 0
+    const pairs: [number, number][] = []
+    for (let index = from.mails.length - 1; index >= 0; index--) {
+      const mail = from.mails[index]
+      if (!mail || !inRange(mail.uid, range, top)) continue
+      if (destination) {
+        const uid = destination.box.nextUid++
+        destination.box.mails.push({ ...mail, uid, flags: [...mail.flags], labels: [...mail.labels.filter((l) => !destination.labels.includes(l)), ...destination.labels], modseq: ++this.modseq })
+        pairs.push([mail.uid, uid])
+      }
+      if (copy) continue
+      from.mails.splice(index, 1)
+      this.moved.push({ uid: mail.uid, to })
+      socket.write(`* ${index + 1} EXPUNGE\r\n`)
+    }
+    this.modseq++
+    pairs.reverse()
+    const code = this.options.uidplus !== false && destination && pairs.length > 0
+      ? `[COPYUID ${destination.box.uidValidity} ${pairs.map((p) => p[0]).join(',')} ${pairs.map((p) => p[1]).join(',')}] `
+      : ''
+    socket.write(`${tag} OK ${code}done\r\n`)
+  }
+
   private search(socket: Socket, tag: string, rest: string): void {
     const since = /SINCE (\S+)/i.exec(rest)
     const from = since?.[1] ? parseSearchDate(since[1].replace(/"/g, '')) : null
-    const hits = this.mails.filter((m) => !from || m.arrived >= from).map((m) => m.uid)
+    const wanted = /HEADER "?MESSAGE-ID"? "?([^"]+)"?/i.exec(rest)?.[1]
+    const hits = this.selected(socket).mails
+      .filter((m) => !from || m.arrived >= from)
+      .filter((m) => !wanted || m.raw.toString('latin1').includes(wanted))
+      .map((m) => m.uid)
     socket.write(`* SEARCH ${hits.join(' ')}\r\n${tag} OK SEARCH done\r\n`)
   }
 
@@ -216,20 +444,23 @@ export class FakeGmail {
     const parts = /^(?:UID )?FETCH (\S+) \((.*?)\)(?: \(CHANGEDSINCE (\d+)\))?$/i.exec(rest)
     if (!parts) return void socket.write(`${tag} BAD fetch\r\n`)
     const [, range = '', items = '', changed] = parts
-    const top = this.mails.at(-1)?.uid ?? 0
+    const box = this.selected(socket)
+    const top = box.mails.at(-1)?.uid ?? 0
     const peek = /BODY\.PEEK\[\](?:<(\d+)\.(\d+)>)?/i.exec(items)
     const silent = /\bBODY\[/i.test(items.replace(/BODY\.PEEK/gi, ''))
     if (silent) this.commands.push('TOUCHED-SEEN')
-    this.mails.forEach((mail, index) => {
+    const gmail = !this.options.plain
+    box.mails.forEach((mail, index) => {
       const key = byUid ? mail.uid : index + 1
-      if (!inRange(key, range, byUid ? top : this.mails.length)) return
+      if (!inRange(key, range, byUid ? top : box.mails.length)) return
       if (changed && mail.modseq <= Number(changed)) return
-      const bits = [`UID ${mail.uid}`, `FLAGS (${mail.flags.join(' ')})`, `MODSEQ (${mail.modseq})`]
+      const bits = [`UID ${mail.uid}`, `FLAGS (${mail.flags.join(' ')})`]
+      if (this.options.condstore !== false) bits.push(`MODSEQ (${mail.modseq})`)
       if (/INTERNALDATE/i.test(items)) bits.push(`INTERNALDATE "${imapDate(mail.arrived)}"`)
       if (/RFC822\.SIZE/i.test(items)) bits.push(`RFC822.SIZE ${mail.raw.length}`)
-      if (/X-GM-MSGID/i.test(items)) bits.push(`X-GM-MSGID ${mail.gmailId}`)
-      if (/X-GM-THRID/i.test(items)) bits.push(`X-GM-THRID ${mail.thread}`)
-      if (/X-GM-LABELS/i.test(items)) bits.push(`X-GM-LABELS (${mail.labels.map(this.bareLabels ? bare : quoted).join(' ')})`)
+      if (gmail && /X-GM-MSGID/i.test(items)) bits.push(`X-GM-MSGID ${mail.gmailId}`)
+      if (gmail && /X-GM-THRID/i.test(items)) bits.push(`X-GM-THRID ${mail.thread}`)
+      if (gmail && /X-GM-LABELS/i.test(items)) bits.push(`X-GM-LABELS (${mail.labels.map(this.bareLabels ? bare : quoted).join(' ')})`)
       const head = `* ${index + 1} FETCH (${bits.join(' ')}`
       if (peek) {
         const start = Number(peek[1] ?? 0)
@@ -254,6 +485,7 @@ export function rawMail(options: {
   html?: string
   date?: Date
   attachment?: { name: string; type: string; body: string }
+  headers?: string[]
 }): string {
   const boundary = 'BOUNDARY-xrn'
   const lines = [
@@ -262,6 +494,7 @@ export function rawMail(options: {
     `Subject: ${options.subject ?? 'Hello'}`,
     `Date: ${(options.date ?? new Date()).toUTCString()}`,
     `Message-ID: <${Math.random().toString(36).slice(2)}@example.com>`,
+    ...(options.headers ?? []),
     'MIME-Version: 1.0'
   ]
   const parts: string[] = []

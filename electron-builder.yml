@@ -25,6 +25,8 @@ linux:
       arch:
         - x64
   category: Network;Email;
-  synopsis: Your Gmail, delivered in batches
+  synopsis: All your mail accounts in one place, delivered in batches
   description: A mail client that brings mail a few times a day
+  mimeTypes:
+    - x-scheme-handler/mailto
   icon: resources/icon.png

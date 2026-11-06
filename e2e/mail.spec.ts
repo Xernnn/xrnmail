@@ -15,15 +15,17 @@ test('wrong password says so, right one lists the mail', async () => {
   run = await launch()
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Welcome aboard', text: 'First words', from: 'Ada Lovelace <ada@example.com>' }), { arrived: earlier(2) })
-  await page.getByLabel('Gmail').fill(ME)
+  await page.getByLabel('Email address').fill(ME)
+  await page.getByRole('radio', { name: 'Gmail' }).click()
   await page.getByLabel('App password').fill('wrong')
   await page.getByRole('button', { name: 'Add' }).click()
-  await expect(page.getByText('Gmail refused this app password.')).toBeVisible()
+  await expect(page.getByText('Gmail refused this password.')).toBeVisible()
   await signIn(run)
   await expect(page.getByText('Welcome aboard')).toBeVisible()
   await page.getByText('Welcome aboard').click()
   await expect(page.locator('.body-text')).toHaveText('First words')
-  expect(gmail.writes()).toEqual([])
+  await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen')
+  expect(gmail.writes().filter((c) => !c.startsWith('SELECT'))).toEqual([expect.stringMatching(/^UID STORE \d+ \+FLAGS.*\\Seen/)])
 })
 
 test('new mail waits, and delivering early makes you wait first', async () => {
@@ -64,6 +66,7 @@ test('settings change the timetable and stick', async () => {
   const { page } = run
   await signIn(run)
   await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Batches' }).click()
   await page.getByLabel('Remove 13:00').click()
   await page.getByLabel('New time').fill('20:15')
   await page.getByRole('button', { name: 'Add', exact: true }).first().click()
@@ -71,6 +74,7 @@ test('settings change the timetable and stick', async () => {
   await page.getByRole('button', { name: 'Done' }).click()
   await page.reload()
   await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Batches' }).click()
   await expect(page.getByLabel('Remove 20:15')).toBeVisible()
   await expect(page.getByLabel('Remove 13:00')).toHaveCount(0)
 })
@@ -174,20 +178,20 @@ test('the page has only the bridge, and a page reached by accident gets nothing'
   await expect.poll(run.opened).toEqual(['https://example.com/'])
 })
 
-test('following a thread: replies open in Gmail, and it reads back from the saved mail', async () => {
+test('following a thread: it opens in Gmail, and reads back from the saved mail', async () => {
   run = await launch()
   const { page, gmail } = run
-  gmail.add(rawMail({ subject: 'Plan', text: 'Early idea' }), { thread: 255n, arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Plan', text: 'Early idea' }), { flags: ['\\Seen'], thread: 255n, arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Re: Plan', text: 'Better idea', attachment: { name: 'notes.pdf', type: 'application/pdf', body: 'pdf' } }), { thread: 255n, arrived: earlier(2) })
   await signIn(run)
   await page.getByText('Re: Plan').click()
   const thread = page.locator('.messages')
   await expect(thread.getByText('Better idea')).toBeVisible()
   await expect(thread.getByText('notes.pdf')).toBeVisible()
-  await expect(thread.getByText('Early idea')).toHaveCount(0) // older ones start folded
+  await expect(thread.locator('.message.open').getByText('Early idea')).toHaveCount(0) // older ones start folded
   await page.locator('.message-head').first().click()
-  await expect(thread.getByText('Early idea')).toBeVisible()
-  await page.getByRole('button', { name: 'Reply in Gmail' }).click()
+  await expect(thread.locator('.message.open').getByText('Early idea')).toBeVisible()
+  await page.getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Open in Gmail' }).click()
   await expect.poll(run.opened).toEqual([`https://mail.google.com/mail/?authuser=${encodeURIComponent(ME)}#all/ff`])
-  expect(gmail.writes()).toEqual([])
 })

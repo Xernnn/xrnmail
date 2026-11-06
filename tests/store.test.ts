@@ -1,0 +1,234 @@
+import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { canOpenDirectly, isPublicHttps, safeFileName } from '@main/safe-url'
+import { searchParts, Store } from '@main/store'
+import { forwardSubject, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
+import type { MessageDetail } from '@main/store'
+import { secondVersionProfile } from './old-profile'
+
+/** The file the first version of the app wrote, before versioning. */
+const FIRST_SCHEMA = `
+CREATE TABLE messages(
+  id INTEGER PRIMARY KEY,
+  account TEXT NOT NULL, uid INTEGER NOT NULL, thread TEXT NOT NULL,
+  gmail_id TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '', from_name TEXT NOT NULL DEFAULT '', from_address TEXT NOT NULL DEFAULT '',
+  to_json TEXT NOT NULL DEFAULT '[]', cc_json TEXT NOT NULL DEFAULT '[]',
+  arrived INTEGER NOT NULL,
+  snippet TEXT NOT NULL DEFAULT '', body_text TEXT NOT NULL DEFAULT '', body_html TEXT,
+  attachments TEXT NOT NULL DEFAULT '[]', has_attachment INTEGER NOT NULL DEFAULT 0,
+  labels TEXT NOT NULL DEFAULT '[]', in_inbox INTEGER NOT NULL DEFAULT 0,
+  seen INTEGER NOT NULL DEFAULT 0, flagged INTEGER NOT NULL DEFAULT 0, read_here INTEGER NOT NULL DEFAULT 0,
+  truncated INTEGER NOT NULL DEFAULT 0, size INTEGER NOT NULL DEFAULT 0,
+  release_at INTEGER NOT NULL,
+  UNIQUE(account, uid));
+CREATE VIRTUAL TABLE search USING fts5(subject, sender, body, tokenize = "unicode61 remove_diacritics 2");
+CREATE TABLE sync_state(account TEXT PRIMARY KEY, uid_validity TEXT NOT NULL, modseq TEXT, hold_from INTEGER NOT NULL);
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO messages(account, uid, thread, subject, arrived, labels, in_inbox, read_here, release_at)
+  VALUES('me@example.com', 7, 't', 'Kept', 100, '["\\\\Inbox"]', 1, 1, 100);
+INSERT INTO meta(key, value) VALUES('accounts', '["me@example.com"]');
+`
+
+describe('an older file', () => {
+  const folder = (): string => mkdtempSync(join(tmpdir(), 'xrnmail-store-'))
+
+  it('upgrades in place and keeps everything', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    const old = new DatabaseSync(path)
+    old.exec(FIRST_SCHEMA)
+    old.close()
+    const store = new Store(path)
+    const [row] = store.list({ kind: 'inbox' }, 1000)
+    expect(row?.subject).toBe('Kept')
+    expect(row?.unread).toBe(0) // read here before becomes read
+    expect(store.meta('accounts')).toBe('["me@example.com"]')
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  describe('from the version before folders', () => {
+    const ME = 'me@example.com'
+    const upgraded = (messages: Parameters<typeof secondVersionProfile>[1]['messages'], pending: Parameters<typeof secondVersionProfile>[1]['pending'] = []): { store: Store; done(): void } => {
+      const dir = folder()
+      const path = join(dir, 'mail.sqlite')
+      secondVersionProfile(path, { account: ME, uidValidity: '5', modseq: '120', holdFrom: 50, messages, pending })
+      const store = new Store(path)
+      return { store, done: () => { store.close(); rmSync(dir, { recursive: true, force: true }) } }
+    }
+
+    it('keeps every row, its id, and search', () => {
+      const { store, done } = upgraded([{ uid: 7, subject: 'Lịch thi' }, { uid: 9, subject: 'Second' }])
+      expect(store.list({ kind: 'inbox' }, 1000).map((r) => r.subject).sort()).toEqual(['Lịch thi', 'Second'])
+      expect(store.list({ kind: 'search', text: 'lich' }, 1000).map((r) => r.subject)).toEqual(['Lịch thi'])
+      expect(store.locate([1, 2])).toEqual([{ id: 1, box: '@all', uid: 7 }, { id: 2, box: '@all', uid: 9 }])
+      done()
+    })
+
+    it('keeps where sync had got to, under All Mail', () => {
+      const { store, done } = upgraded([])
+      expect(store.boxState(ME, '@all')).toEqual({ uidValidity: '5', modseq: '120' })
+      expect(store.holdFrom(ME)).toBe(50)
+      done()
+    })
+
+    it('keeps held mail held, and Gmail\'s unsent drafts hidden', () => {
+      const { store, done } = upgraded([
+        { uid: 7, subject: 'Held', arrived: 900, releaseAt: 5000 },
+        { uid: 8, subject: 'Half written', labels: ['\\Draft'], hidden: true }
+      ])
+      expect(store.list({ kind: 'all' }, 1000)).toEqual([])
+      expect(store.list({ kind: 'all' }, 6000).map((r) => r.subject)).toEqual(['Held'])
+      done()
+    })
+
+    it('sets aside what was already there and sent to everyone', () => {
+      const { store, done } = upgraded([{ uid: 7, subject: 'Person' }, { uid: 8, subject: 'List', unsubscribe: 'https://x.example/u' }])
+      expect(store.list({ kind: 'inbox', focus: 'focused' }, 1000).map((r) => r.subject)).toEqual(['Person'])
+      expect(store.list({ kind: 'inbox', focus: 'other' }, 1000).map((r) => r.subject)).toEqual(['List'])
+      done()
+    })
+
+    it('turns queued changes from UIDs into rows, as real JSON', () => {
+      const { store, done } = upgraded([{ uid: 7, subject: 'One' }, { uid: 9, subject: 'Two' }], [{ action: { kind: 'archive' }, uids: [9, 7] }])
+      const [change] = store.dueActions(ME, 1000)
+      expect(change?.ids.sort()).toEqual([1, 2])
+      expect(change?.before.map((s) => [s.id, s.box, s.labels]).sort()).toEqual([[1, '@all', ['\\Inbox']], [2, '@all', ['\\Inbox']]])
+      done()
+    })
+
+    it('lets go of a change to a message that has gone', () => {
+      const { store, done } = upgraded([{ uid: 7, subject: 'One' }], [{ action: { kind: 'star' }, uids: [999] }])
+      expect(store.dueActions(ME, 1000)[0]).toMatchObject({ ids: [], before: [] })
+      done()
+    })
+
+    it('puts mail on its way to Trash or Spam there, instead of out of sight', () => {
+      const { store, done } = upgraded([
+        { uid: 7, subject: 'Binned', labels: ['\\Inbox', 'Work'], hidden: true },
+        { uid: 8, subject: 'Junk', hidden: true },
+        { uid: 9, subject: 'Half written', labels: ['\\Draft'], hidden: true }
+      ], [{ action: { kind: 'trash' }, uids: [7] }, { action: { kind: 'spam' }, uids: [8] }])
+      expect(store.list({ kind: 'trash' }, 1000).map((r) => r.subject)).toEqual(['Binned'])
+      expect(store.list({ kind: 'spam' }, 1000).map((r) => r.subject)).toEqual(['Junk'])
+      expect(store.list({ kind: 'inbox' }, 1000)).toEqual([])
+      expect(store.visibleMail({ account: ME, thread: 't7' }, 1000, true)[0]?.labels).toEqual(['Work', '\\Trash'])
+      done()
+    })
+  })
+
+  it('opens again without running anything twice', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    new Store(path).close()
+    const store = new Store(path)
+    expect(store.drafts()).toEqual([])
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('search', () => {
+  it('reads plain words, scoped words and flags', () => {
+    expect(searchParts('lich thi')).toEqual({ match: '"lich"* "thi"*', filters: [], params: [] })
+    expect(searchParts('from:ada subject:tax')).toEqual({ match: 'sender : "ada"* subject : "tax"*', filters: [], params: [] })
+    expect(searchParts('has:attachment is:unread').filters).toEqual(['has_attachment = 1', 'seen = 0'])
+  })
+
+  it('reads who it went to and when', () => {
+    const { filters, params } = searchParts('to:ada after:2026-1-5 before:2026-02')
+    expect(filters).toHaveLength(3)
+    expect(params).toEqual(['%ada%', Date.parse('2026-01-05'), Date.parse('2026-02-01')])
+  })
+
+  it('never lets what is typed become search syntax', () => {
+    expect(searchParts('a" OR "b').match).toBe('"a"* "OR"* "b"*')
+    expect(searchParts('NEAR(x y)').match).toBe('"NEAR(x"* "y)"*')
+    expect(searchParts('from:"').match).toBe('')
+  })
+})
+
+describe('what a stranger chooses', () => {
+  it('one-click only goes to a public https name', () => {
+    expect(isPublicHttps('https://list.example.com/u/1')).toBe(true)
+    for (const url of [
+      'http://list.example.com/u', 'https://127.0.0.1/x', 'https://2130706433/x', 'https://[::1]/x', 'https://localhost/x',
+      'https://router.local/x', 'https://intranet/x', 'https://a:b@list.example.com/', 'file:///etc/passwd', 'not a url'
+    ]) expect(isPublicHttps(url), url).toBe(false)
+  })
+
+  it('anything that runs is saved, never opened directly', () => {
+    for (const name of ['report.pdf', 'photo.JPG', 'sheet.xlsx', 'notes.txt']) expect(canOpenDirectly(name), name).toBe(true)
+    for (const name of ['evil.desktop', 'run.sh', 'a.AppImage', 'page.html', 'x.svg', 'invoice.pdf.exe', 'noextension', 'b.js ', 'macro.docm', 'odd.xyz']) {
+      expect(canOpenDirectly(name), name).toBe(false)
+    }
+  })
+
+  it('a file name cannot climb out of where it is saved', () => {
+    expect(safeFileName('../../.ssh/authorized_keys')).toBe('authorized_keys')
+    expect(safeFileName('..\\..\\evil.exe')).toBe('evil.exe')
+    expect(safeFileName('.bashrc')).toBe('bashrc')
+    expect(safeFileName('')).toBe('attachment')
+    expect(safeFileName('a\u0000b\r\n.txt')).toBe('ab.txt')
+  })
+})
+
+describe('writing back', () => {
+  const message = (over: Partial<MessageDetail> = {}): MessageDetail => ({
+    id: 1, box: '@all', uid: 1, account: 'me@example.com', thread: 't', subject: 'Plan', date: 0, text: 'Line one\nLine two', html: null,
+    from: { name: 'Ada', address: 'ada@example.com' },
+    to: [{ name: '', address: 'me@example.com' }, { name: 'Bo', address: 'bo@example.com' }],
+    cc: [{ name: '', address: 'cy@example.com' }],
+    attachments: [], truncated: false, labels: [], seen: true, flagged: false, unsubscribe: false,
+    focused: true, facts: null, warnings: [],
+    messageId: '<m@example.com>', references: '', replyTo: [], unsubscribeTo: null, ...over
+  })
+
+  it('reply goes to the sender, or their Reply-To', () => {
+    expect(replyTargets(message(), ['me@example.com'], false)).toEqual({ to: '"Ada" <ada@example.com>', cc: '' })
+    const desk = message({ replyTo: [{ name: '', address: 'desk@example.com' }] })
+    expect(replyTargets(desk, ['me@example.com'], false).to).toBe('desk@example.com')
+  })
+
+  it('reply all leaves you out and names nobody twice', () => {
+    const copied = message({ cc: [{ name: '', address: 'CY@example.com' }, { name: '', address: 'ada@example.com' }, { name: '', address: 'Me@Example.com' }] })
+    expect(replyTargets(copied, ['me@example.com'], true)).toEqual({ to: '"Ada" <ada@example.com>', cc: '"Bo" <bo@example.com>, CY@example.com' })
+  })
+
+  it('answering your own message goes to whoever you wrote to', () => {
+    const mine = message({ from: { name: 'Me', address: 'me@example.com' }, to: [{ name: '', address: 'bo@example.com' }] })
+    expect(replyTargets(mine, ['me@example.com'], false).to).toBe('bo@example.com')
+  })
+
+  it('does not stack prefixes', () => {
+    expect(replySubject('Re: Plan')).toBe('Re: Plan')
+    expect(replySubject('RE: Plan')).toBe('RE: Plan')
+    expect(replySubject('Plan')).toBe('Re: Plan')
+    expect(forwardSubject('Fw: Plan')).toBe('Fw: Plan')
+    expect(forwardSubject('Plan')).toBe('Fwd: Plan')
+  })
+
+  it('reads what was typed, and says what it cannot', () => {
+    expect(parseRecipients('Ada <ada@example.com>, bo@example.com')).toEqual([
+      { name: 'Ada', address: 'ada@example.com' }, { name: '', address: 'bo@example.com' }
+    ])
+    expect(parseRecipients('"Last, First" <a@example.com>')).toEqual([{ name: 'Last, First', address: 'a@example.com' }])
+    expect(parseRecipients('  ')).toEqual([])
+    expect(() => parseRecipients('bo@example')).toThrow('Check this address: bo@example')
+  })
+
+  it('a header cannot be smuggled in through a name', () => {
+    const [who] = parseRecipients('"x\r\nBcc: evil@example.com" <a@example.com>')
+    expect(who?.address).toBe('a@example.com')
+    expect(who?.name).not.toMatch(/[\r\n]/)
+  })
+
+  it('quotes the words, not the sender-chosen layout', () => {
+    expect(quoteOf(message(), 'reply').intro).toContain('"Ada" <ada@example.com> wrote:')
+    expect(quoteOf(message(), 'forward').intro).toContain('Subject: Plan')
+  })
+})

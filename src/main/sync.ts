@@ -1,6 +1,8 @@
+import { labelsOf } from './actions'
+import type { Sorted } from './assistant'
 import { releaseAt, type BatchRules } from './batches'
 import { MAX_SOURCE, parseMail, type ParsedMail } from './parse'
-import type { MailSource, RemoteMail } from './source'
+import { threadOf, type MailboxRef, type MailSource, type RemoteMail } from './source'
 import type { Store, StoredMail } from './store'
 
 const CHUNK = 40
@@ -16,7 +18,13 @@ export interface SyncOptions {
   rules: BatchRules
   now: number
   /** Told after each chunk, so the list fills as it goes on a first sync. */
-  progress?: () => void
+  progress?: (done: number, total: number) => void
+  /** Told about each new message, except when a folder is starting over. */
+  added?: (mail: StoredMail, id: number, holdFrom: number) => void
+  /** Messages in a folder with a change on its way. What the server says about them is out of date. */
+  busy?: (box: string) => Set<number>
+  /** Which side of the inbox it goes, and what the Assistant makes of it. */
+  sort?: (mail: ParsedMail) => Sorted
 }
 
 export interface SyncResult {
@@ -30,62 +38,73 @@ const UNREADABLE: ParsedMail = {
   from: { name: '', address: '' },
   to: [],
   cc: [],
+  replyTo: [],
   messageId: '',
-  text: 'Open it in Gmail to read it.',
+  inReplyTo: '',
+  references: '',
+  unsubscribe: null,
+  text: 'Open it in your mail service to read it.',
   html: null,
-  snippet: 'Open it in Gmail to read it.',
-  attachments: []
+  snippet: 'Open it in your mail service to read it.',
+  attachments: [],
+  bulk: false,
+  warnings: [],
+  invite: null
 }
 
-async function toStored(remote: RemoteMail, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
+async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
   let mail = UNREADABLE
   try {
     mail = await parseMail(remote.source)
   } catch {
     // A mail that won't parse still arrived, so it stays listed.
   }
+  const labels = labelsOf(box, remote.labels, gmail)
+  const sorted = options.sort?.(mail) ?? { focused: true, facts: null }
   return {
     account: options.account,
+    box: box.id,
     uid: remote.uid,
-    thread: remote.thread,
+    thread: remote.thread || threadOf(mail.references, mail.inReplyTo, mail.messageId, `${box.id}:${remote.uid}`),
     gmailId: remote.gmailId,
     messageId: mail.messageId,
     subject: mail.subject,
     from: mail.from,
     to: mail.to,
     cc: mail.cc,
+    replyTo: mail.replyTo,
+    references: mail.references,
+    unsubscribe: mail.unsubscribe,
     arrived: remote.arrived,
     snippet: mail.snippet,
     text: mail.text,
     html: mail.html,
     attachments: mail.attachments,
-    labels: remote.labels,
+    labels,
     seen: remote.seen,
     flagged: remote.flagged,
     truncated: remote.size > MAX_SOURCE,
     size: remote.size,
-    releaseAt: releaseAt(
-      { arrived: remote.arrived, fromAddress: mail.from.address, labels: remote.labels },
-      options.email, holdFrom, options.rules
-    )
+    releaseAt: releaseAt({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, options.rules),
+    focused: sorted.focused,
+    facts: sorted.facts,
+    warnings: mail.warnings
   }
 }
 
-/** One pass: new mail, changed labels, mail that's gone. Safe to stop anywhere: what's stored stays
- *  right, and the next pass carries on from what's still missing. */
-export async function syncAccount(source: MailSource, store: Store, options: SyncOptions): Promise<SyncResult> {
-  const box = await source.open()
+async function syncBox(source: MailSource, store: Store, options: SyncOptions, box: MailboxRef, holdFrom: number): Promise<SyncResult> {
+  const info = await source.open(box)
+  const { account } = options
   try {
-    let state = store.syncState(options.account)
-    if (state && state.uidValidity !== box.uidValidity) {
-      // Gmail renumbered the mailbox, so every UID here now points at the wrong message.
-      store.wipeAccount(options.account)
-      state = { ...state, modseq: null, uidValidity: box.uidValidity }
+    let state = store.boxState(account, box.id)
+    const startingOver = state !== null && state.uidValidity !== info.uidValidity
+    if (startingOver) {
+      store.wipeBox(account, box.id)
+      state = null
     }
-    const holdFrom = state?.holdFrom ?? options.now
     const since = options.now - options.backfillDays * DAY_MS
     const remoteUids = await source.uidsSince(new Date(since))
-    const have = store.uids(options.account)
+    const have = store.uids(account, box.id)
     // Newest first, so the top of the inbox is there straight away on a first sync.
     const missing = remoteUids.filter((uid) => !have.has(uid)).reverse()
     let added = 0
@@ -93,24 +112,59 @@ export async function syncAccount(source: MailSource, store: Store, options: Syn
       const wanted = new Set(missing.slice(i, i + CHUNK))
       for await (const remote of source.fetch([...wanted], MAX_SOURCE)) {
         if (!wanted.has(remote.uid)) continue
-        store.addMail(await toStored(remote, options, holdFrom))
+        const stored = await toStored(remote, box, source.gmail, options, holdFrom)
+        const id = store.addMail(stored)
         added++
+        if (id !== null && !startingOver) options.added?.(stored, id, holdFrom)
       }
-      options.progress?.()
+      options.progress?.(Math.min(i + CHUNK, missing.length), missing.length)
     }
     let changed = 0
-    if (state?.modseq && box.modseq) {
+    const busy = options.busy?.(box.id)
+    if (state?.modseq && info.modseq) {
       for await (const header of source.changesSince(state.modseq)) {
-        if (!have.has(header.uid)) continue
-        store.applyChange(options.account, header.uid, header.labels, header.seen, header.flagged)
-        changed++
+        if (!have.has(header.uid) || busy?.has(header.uid)) continue
+        const labels = source.gmail ? labelsOf(box, header.labels, true) : null
+        if (store.applyChange(account, box.id, header.uid, labels, header.seen, header.flagged)) changed++
+      }
+    } else if (state) {
+      // No way to ask what changed, so look at the flags of everything held.
+      for await (const header of source.flagsOf(remoteUids.filter((uid) => have.has(uid)))) {
+        if (!have.has(header.uid) || busy?.has(header.uid)) continue
+        if (store.applyChange(account, box.id, header.uid, null, header.seen, header.flagged)) changed++
       }
     }
-    const removed = store.removeMissing(options.account, new Set(remoteUids), since + EDGE_MS)
-    store.dropOlderThan(options.account, since - EDGE_MS)
-    store.saveSyncState(options.account, { uidValidity: box.uidValidity, modseq: box.modseq, holdFrom })
+    const removed = store.removeMissing(account, box.id, new Set(remoteUids), since + EDGE_MS)
+    store.saveBoxState(account, box.id, { uidValidity: info.uidValidity, modseq: info.modseq })
     return { added, changed, removed }
   } finally {
     source.done()
   }
+}
+
+/** A folder an account lists but won't open shouldn't stop the rest being read. Anything else ends
+ *  the pass, including one that didn't open read-only. */
+const refusedFolder = (e: unknown, box: MailboxRef): boolean =>
+  box.role === 'folder' && (e as { responseStatus?: string })?.responseStatus === 'NO'
+
+/** One pass over every folder: new mail, changed flags, mail that's gone. Safe to stop anywhere:
+ *  what's stored stays right, and the next pass carries on from what's still missing. */
+export async function syncAccount(source: MailSource, store: Store, options: SyncOptions): Promise<SyncResult> {
+  const holdFrom = store.holdFrom(options.account) ?? options.now
+  const total: SyncResult = { added: 0, changed: 0, removed: 0 }
+  const boxes = source.mailboxes()
+  for (const box of boxes) {
+    try {
+      const result = await syncBox(source, store, options, box, holdFrom)
+      total.added += result.added
+      total.changed += result.changed
+      total.removed += result.removed
+    } catch (e) {
+      if (!refusedFolder(e, box)) throw e
+    }
+  }
+  store.keepBoxes(options.account, boxes.map((box) => box.id))
+  store.dropOlderThan(options.account, options.now - options.backfillDays * DAY_MS - EDGE_MS)
+  store.saveHoldFrom(options.account, holdFrom)
+  return total
 }

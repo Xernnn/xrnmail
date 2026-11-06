@@ -1,5 +1,8 @@
+import { htmlToText } from 'html-to-text'
 import { simpleParser, type AddressObject, type Attachment } from 'mailparser'
-import type { Address, AttachmentInfo } from '@shared/types'
+import { splitQuoted } from '@shared/quoted'
+import type { Address, AttachmentInfo, SenderWarning } from '@shared/types'
+import { inviteOf, type Invite } from './invite'
 
 /** The most of one message kept on this laptop. Attachments are the usual reason to go past it,
  *  and text and HTML normally come first, so a cut message still reads. */
@@ -8,16 +11,32 @@ const MAX_HTML = 2 * 1024 * 1024
 const MAX_TEXT = 512 * 1024
 const SNIPPET = 180
 
+/** Where a sender says to go to stop hearing from them. */
+export interface Unsubscribe {
+  web: string | null
+  mail: string | null
+  /** The sender takes a plain POST to [web], so no page has to be opened (RFC 8058). */
+  oneClick: boolean
+}
+
 export interface ParsedMail {
   subject: string
   from: Address
   to: Address[]
   cc: Address[]
+  replyTo: Address[]
   messageId: string
+  inReplyTo: string
+  references: string
+  unsubscribe: Unsubscribe | null
   text: string
   html: string | null
   snippet: string
   attachments: AttachmentInfo[]
+  /** Sent to a list or by a machine, by its own headers. */
+  bulk: boolean
+  warnings: SenderWarning[]
+  invite: Invite | null
 }
 
 function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
@@ -40,23 +59,142 @@ function attachmentInfo(parts: Attachment[]): AttachmentInfo[] {
     .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, size: a.size }))
 }
 
-export function makeSnippet(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, SNIPPET)
+const headerValue = (lines: readonly { key: string; line: string }[], key: string): string => {
+  const found = lines.find((h) => h.key === key)?.line ?? ''
+  return found.slice(found.indexOf(':') + 1).replace(/\r?\n[ \t]*/g, ' ').trim()
+}
+
+/** A header a stranger wrote: only what's between angle brackets, and only web and mail addresses. */
+export function parseUnsubscribe(list: string, post: string): Unsubscribe | null {
+  let web: string | null = null
+  let mail: string | null = null
+  for (const [, target = ''] of list.matchAll(/<([^<>\s]+)>/g)) {
+    if (!web && /^https?:\/\//i.test(target)) web = target
+    else if (!mail && /^mailto:/i.test(target)) mail = target
+  }
+  if (!web && !mail) return null
+  const oneClick = /^https:/i.test(web ?? '') && /List-Unsubscribe\s*=\s*One-Click/i.test(post)
+  return { web, mail, oneClick }
+}
+
+const domainOf = (address: string): string => address.split('@')[1]?.toLowerCase() ?? ''
+
+/** The part of a domain that's bought, so mail.example.com and example.com count as the same. */
+const baseOf = (domain: string): string => domain.split('.').slice(-2).join('.')
+
+/**
+ * Whether a sender may not be who they say. Only ever a warning: the top Authentication-Results is
+ * the receiving server's, but a sender can add their own below it, so a pass proves nothing here and
+ * none is ever shown. A sender can only forge a failure against themselves.
+ */
+export function senderWarnings(mail: { from: Address; replyTo: Address[]; authentication: string; bulk: boolean }): SenderWarning[] {
+  const found: SenderWarning[] = []
+  const said = (check: string): string => new RegExp(`\\b${check}=(\\w+)`, 'i').exec(mail.authentication)?.[1]?.toLowerCase() ?? ''
+  const both = said('spf') === 'fail' && said('dkim') === 'fail'
+  if (said('dmarc') === 'fail' || both) found.push('forged')
+  const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(mail.from.name.slice(0, 300))?.[0]?.toLowerCase()
+  if (inName && inName !== mail.from.address.toLowerCase()) found.push('name-mismatch')
+  const domain = domainOf(mail.from.address)
+  if (domain.split('.').some((part) => part.startsWith('xn--')) || /[^\x00-\x7f]/.test(domain)) found.push('lookalike')
+  const elsewhere = mail.replyTo.find((who) => baseOf(domainOf(who.address)) !== baseOf(domain))
+  if (elsewhere && !mail.bulk) found.push('replies-elsewhere')
+  return found
+}
+
+const PLAIN_MAIL = /^(no|false)?$/i
+
+function looksBulk(lines: readonly { key: string; line: string }[]): boolean {
+  const header = (key: string): string => headerValue(lines, key)
+  return Boolean(header('list-id') || header('x-campaign') || header('x-mailchimp-campaign')) ||
+    /^(bulk|list|junk)$/i.test(header('precedence')) ||
+    !PLAIN_MAIL.test(header('auto-submitted'))
+}
+
+const PREVIEW_TEXT = {
+  wordwrap: false as const,
+  limits: { maxDepth: 200, maxInputLength: MAX_HTML },
+  selectors: [
+    ...['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map((selector) => ({ selector, options: { uppercase: false } })),
+    { selector: 'table', format: 'dataTable', options: { uppercaseHeaderCells: false } },
+    { selector: 'a', options: { ignoreHref: true } },
+    { selector: 'img', format: 'skip' },
+    { selector: 'hr', format: 'skip' }
+  ]
+}
+
+/** What a mail's HTML says, for a preview: no shouted headings, no addresses, no picture names. */
+const readableHtml = (html: string): string => {
+  try {
+    return htmlToText(html, PREVIEW_TEXT)
+  } catch {
+    return ''
+  }
+}
+
+/** Addresses in brackets, as plain parts of newsletters are full of, and rows of dashes. */
+const NOISE = /[([<]?https?:\/\/[^\s)\]>]{1,2000}[)\]>]?|[-=_*~#]{4,}/g
+
+/** The line newsletters open with, which is about the email and not in it. */
+const BROWSER_LINE = /^\s{0,20}(?:view|read|open|having trouble|trouble viewing|can'?t see)\b.{0,80}\bbrowser\b.{0,30}$/im
+const BROWSER_LINE_WITHIN = 400
+
+const withoutBrowserLine = (text: string): string =>
+  text.slice(0, BROWSER_LINE_WITHIN).replace(BROWSER_LINE, ' ') + text.slice(BROWSER_LINE_WITHIN)
+
+/** A line or two about what's new in a message: not what it quotes, and not its machinery. */
+export function makeSnippet(text: string, html: string | null = null): string {
+  const tidy = (words: string): string => withoutBrowserLine(splitQuoted(words).fresh).replace(NOISE, ' ').replace(/\s+/g, ' ').trim()
+  const preview = tidy(text) || (html ? tidy(readableHtml(html)) : '') || text.replace(/\s+/g, ' ').trim()
+  return preview.slice(0, SNIPPET)
+}
+
+/** Whether a message carries its own plain text, instead of only HTML for the parser to turn into it. */
+function hasTextPart(lines: readonly { key: string; line: string }[], source: Buffer): boolean {
+  const type = headerValue(lines, 'content-type')
+  if (/^text\/plain/i.test(type)) return true
+  if (/^text\/html/i.test(type)) return false
+  return source.subarray(0, MAX_SOURCE).includes('text/plain')
 }
 
 /** Anything a stranger can put in an email ends up here, so it must never throw on bad input. */
 export async function parseMail(source: Buffer): Promise<ParsedMail> {
   const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
   const text = (mail.text ?? '').slice(0, MAX_TEXT)
+  const from = addresses(mail.from)[0] ?? { name: '', address: '' }
+  const replyTo = addresses(mail.replyTo)
+  const bulk = looksBulk(mail.headerLines)
+  const calendar = (mail.attachments ?? []).find((a) => a.contentType === 'text/calendar')
   return {
     subject: mail.subject ?? '',
-    from: addresses(mail.from)[0] ?? { name: '', address: '' },
+    from,
     to: addresses(mail.to),
     cc: addresses(mail.cc),
+    replyTo,
     messageId: mail.messageId ?? '',
+    inReplyTo: mail.inReplyTo ?? '',
+    references: [mail.references ?? []].flat().join(' '),
+    unsubscribe: parseUnsubscribe(headerValue(mail.headerLines, 'list-unsubscribe'), headerValue(mail.headerLines, 'list-unsubscribe-post')),
     text,
     html: typeof mail.html === 'string' ? mail.html.slice(0, MAX_HTML) : null,
-    snippet: makeSnippet(text),
-    attachments: attachmentInfo(mail.attachments ?? [])
+    // Text a server made from the HTML shouts its headings, so it only counts if the sender wrote it.
+    snippet: makeSnippet(mail.html && !hasTextPart(mail.headerLines, source) ? '' : text, typeof mail.html === 'string' ? mail.html : null),
+    attachments: attachmentInfo(mail.attachments ?? []),
+    bulk,
+    warnings: senderWarnings({ from, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),
+    invite: calendar ? inviteOf(calendar.content.toString('utf8')) : null
   }
+}
+
+export interface WholeAttachment {
+  name: string
+  type: string
+  content: Buffer
+}
+
+/** The attachments of a message fetched whole, in the same order as `ParsedMail.attachments`. */
+export async function attachmentsOf(source: Buffer): Promise<WholeAttachment[]> {
+  const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
+  return (mail.attachments ?? [])
+    .filter((a) => !a.related)
+    .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
 }
