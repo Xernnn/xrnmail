@@ -1,4 +1,8 @@
-# xrnmail
+<p align="center">
+  <img src="resources/icon.svg" width="72" height="72" alt="">
+</p>
+
+<h1 align="center">xrnmail</h1>
 
 All your mail accounts in one place, delivered in batches. Gmail, Outlook, Yahoo, iCloud or any IMAP
 server sit side by side, and mail lands a few times a day instead of whenever someone sends it, with
