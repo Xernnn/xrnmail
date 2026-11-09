@@ -84,6 +84,8 @@ export class FakeGmail {
   dropNextConnection = false
   /** Answer NO to anything that would change the mailbox. */
   refuseWrites = false
+  /** Folders whose SEARCH is answered NO, as Gmail does when it's short of time. */
+  refuseSearch = new Set<string>()
   /** What was moved out of All Mail, by the folder it went to. */
   moved: { uid: number; to: string }[] = []
   /** Gmail's documentation shows \\Inbox bare, and real sessions show it quoted. */
@@ -430,6 +432,7 @@ export class FakeGmail {
   }
 
   private search(socket: Socket, tag: string, rest: string): void {
+    if (this.refuseSearch.has(this.selected(socket).path)) return void socket.write(`${tag} NO [UNAVAILABLE] Temporary System Error\r\n`)
     const since = /SINCE (\S+)/i.exec(rest)
     const from = since?.[1] ? parseSearchDate(since[1].replace(/"/g, '')) : null
     const wanted = /HEADER "?MESSAGE-ID"? "?([^"]+)"?/i.exec(rest)?.[1]

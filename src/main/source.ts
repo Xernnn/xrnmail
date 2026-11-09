@@ -67,7 +67,8 @@ export interface MailSource {
   readonly gmail: boolean
   mailboxes(): MailboxRef[]
   open(box: MailboxRef): Promise<MailboxInfo>
-  /** Every UID that arrived on or after [since], lowest first. */
+  /** Every UID that arrived on or after [since], lowest first. Throws if the server won't say:
+   *  sync forgets whatever isn't in the answer. */
   uidsSince(since: Date): Promise<number[]>
   fetch(uids: number[], maxBytes: number): AsyncIterable<RemoteMail>
   /** Labels and flags changed since [modseq]. */
@@ -155,6 +156,12 @@ export function threadOf(references: string, inReplyTo: string, messageId: strin
 
 const labelsOf = (labels: Set<string> | undefined): string[] => [...(labels ?? [])]
 
+/** The server said NO or BAD to a search. It carries the status imapflow's own refusals do, so an
+ *  ordinary folder that won't be searched is skipped like one that won't open. */
+class SearchRefused extends Error {
+  readonly responseStatus = 'NO'
+}
+
 export class ImapSource implements MailSource {
   private client: ImapFlow
   private lock: { release(): void } | null = null
@@ -190,9 +197,13 @@ export class ImapSource implements MailSource {
     return { uidValidity: String(opened.uidValidity), modseq: opened.highestModseq ? String(opened.highestModseq) : null }
   }
 
+  /** imapflow answers false when the server turns a search down, and nothing at all once the
+   *  connection has gone. Neither means the folder is empty. */
   async uidsSince(since: Date): Promise<number[]> {
     const found = await this.client.search({ since }, { uid: true })
-    return (found || []).slice().sort((a, b) => a - b)
+    if (found === false) throw new SearchRefused()
+    if (!Array.isArray(found)) throw new Error('The connection went during a search.')
+    return found.slice().sort((a, b) => a - b)
   }
 
   async *fetch(uids: number[], maxBytes: number): AsyncIterable<RemoteMail> {

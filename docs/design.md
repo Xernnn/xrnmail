@@ -105,8 +105,12 @@ brings the next one forward.
 
 A pass goes through each folder in turn, inbox first. For each it fetches what's missing, newest first,
 then applies label and flag changes, then forgets what's gone. A folder the server has stopped listing
-is forgotten too, and an ordinary folder that refuses to open is skipped rather than stopping the rest.
+is forgotten too, and an ordinary folder that refuses to open or to be searched is skipped rather than
+stopping the rest.
 
+- What's gone is whatever the folder's search didn't return, so a search that's turned down or cut off
+  has to fail, and forgets nothing. imapflow answers those with `false` or nothing at all, and taking
+  either for an empty folder would forget every message in it.
 - `UIDVALIDITY` changing means every stored UID in that folder now points at the wrong message, so that
   folder starts over, keeping the moment holding began.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is

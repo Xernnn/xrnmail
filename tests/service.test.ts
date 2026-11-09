@@ -489,6 +489,32 @@ describe('changing mail', () => {
   })
 })
 
+describe('a search the server turns down', () => {
+  beforeEach(signedIn)
+
+  it('forgets nothing, loses no change, and announces nothing old as new', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    gmail.add(rawMail({ subject: 'Fresh' }), { arrived: new Date(at(10, 5)) })
+    gmail.add(rawMail({ subject: 'Kept' }), { arrived: past(30) })
+    clock = at(10, 6)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).toHaveBeenCalledTimes(1)
+    landed.mockClear()
+    service.act([ref('Fresh')], { kind: 'archive' })
+    gmail.refuseSearch.add(gmail.allMail)
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBe("Couldn't reach Gmail.")
+    expect(service.list({ kind: 'all' }).map((r) => r.subject).sort()).toEqual(['Fresh', 'Kept'])
+    gmail.refuseSearch.clear()
+    await later(UNDO_MS)
+    await service.syncAll()
+    expect(gmail.mails.find((m) => m.raw.toString().includes('Subject: Fresh'))?.labels).not.toContain('\\Inbox')
+    expect(ids()).toEqual(['Kept'])
+    expect(landed).not.toHaveBeenCalled()
+  })
+})
+
 describe('snoozing', () => {
   beforeEach(signedIn)
 

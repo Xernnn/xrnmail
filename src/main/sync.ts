@@ -142,8 +142,8 @@ async function syncBox(source: MailSource, store: Store, options: SyncOptions, b
   }
 }
 
-/** A folder an account lists but won't open shouldn't stop the rest being read. Anything else ends
- *  the pass, including one that didn't open read-only. */
+/** A folder an account lists but won't open or search shouldn't stop the rest being read, and is
+ *  left as it was. Anything else ends the pass, including one that didn't open read-only. */
 const refusedFolder = (e: unknown, box: MailboxRef): boolean =>
   box.role === 'folder' && (e as { responseStatus?: string })?.responseStatus === 'NO'
 

@@ -186,6 +186,17 @@ describe('accounts on different services', () => {
     expect(service.list({ kind: 'inbox' })[0]).toEqual(stays)
   })
 
+  it('leaves a folder that will not be searched as it was, and reads the rest', async () => {
+    yahoo.add(rawMail({ subject: 'Filed' }), { box: 'Work', arrived: new Date(at(8)) })
+    await add(Y, yahoo)
+    yahoo.refuseSearch.add('Work')
+    yahoo.add(rawMail({ subject: 'New' }), { arrived: new Date(at(10, 1)) })
+    clock = at(10, 2)
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+    expect(subjects(service.list({ kind: 'all' }))).toEqual(['Filed', 'New'])
+  })
+
   it('forgets a folder the server stopped listing', async () => {
     yahoo.add(rawMail({ subject: 'Old' }), { box: 'Work', arrived: new Date(at(8)) })
     await add(Y, yahoo)
