@@ -10,6 +10,7 @@ import type {
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
+import { passwordStoreSwitch } from './password-store'
 import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
@@ -35,6 +36,11 @@ if (test['XRNMAIL_DATA']) app.setPath('userData', test['XRNMAIL_DATA'])
 // A debugging port would let any program running as this user read the window.
 const DEBUG_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'inspect', 'inspect-brk']
 if (app.isPackaged && DEBUG_SWITCHES.some((name) => app.commandLine.hasSwitch(name))) app.exit(1)
+
+// Save passwords to the system keyring on desktops Electron doesn't recognise (Hyprland and
+// other Wayland compositors), where it would otherwise fall back to basic_text and refuse.
+const passwordStore = passwordStoreSwitch(process.platform, process.env.XDG_CURRENT_DESKTOP, (s) => app.commandLine.hasSwitch(s))
+if (passwordStore) app.commandLine.appendSwitch('password-store', passwordStore)
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
