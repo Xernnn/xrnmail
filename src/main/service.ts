@@ -164,6 +164,12 @@ const WATCH_RETRY_MS = 60_000
 /** How many previews are remade at a time, so the app stays quick while it happens. */
 const SNIPPET_STEP = 50
 
+/** One account's watch on its inbox, from the moment it starts signing in. */
+interface Watch {
+  stopped: boolean
+  watcher: MailWatcher | null
+}
+
 export class MailService {
   private status = new Map<string, AccountStatus>()
   private lastTick: number
@@ -179,7 +185,9 @@ export class MailService {
   private tokens = new Map<string, Tokens>()
   private signingIn: { email: string; clientId: string; code: DeviceCode } | null = null
   private notes = new Map<string, { text: string; until: number }>()
-  private watchers = new Map<string, MailWatcher>()
+  /** In here before it has signed in, so a second can't start alongside it, and only a watch's own
+   *  entry is taken out when it ends: a newer one may have it by then. */
+  private watchers = new Map<string, Watch>()
   private watching = false
   private rewatch: NodeJS.Timeout | null = null
   /** Something arrived during a sync, too late for it to have seen. */
@@ -414,7 +422,9 @@ export class MailService {
 
   removeAccount(email: string): void {
     this.saveEmails(this.emails().filter((e) => e !== email))
-    background(this.watchers.get(email)?.close() ?? Promise.resolve())
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
     this.deps.secrets.remove(`account:${email}`)
     this.store.deleteMeta(`config:${email}`)
     this.store.deleteMeta(`folders:${email}`)
@@ -457,28 +467,38 @@ export class MailService {
     this.watching = false
     if (this.rewatch) clearTimeout(this.rewatch)
     this.rewatch = null
-    for (const watcher of this.watchers.values()) background(watcher.close())
+    for (const watch of this.watchers.values()) this.endWatch(watch)
     this.watchers.clear()
+  }
+
+  private endWatch(watch: Watch): void {
+    watch.stopped = true
+    if (watch.watcher) background(watch.watcher.close())
   }
 
   private watch(email: string): void {
     const open = this.deps.openWatcher
     if (!open || !this.watching || this.watchers.has(email)) return
+    const mine: Watch = { stopped: false, watcher: null }
+    this.watchers.set(email, mine)
     const arrived = (): void => {
       if (this.statusOf(email).syncing) this.syncAgain.add(email)
       else background(this.syncOne(email))
     }
     const run = async (): Promise<void> => {
       const login = await this.login(email)
-      if (!this.watching || !this.emails().includes(email)) return
-      const watcher = open(this.config(email), login)
-      this.watchers.set(email, watcher)
-      await watcher.watch(arrived)
+      if (mine.stopped || !this.emails().includes(email)) return
+      mine.watcher = open(this.config(email), login)
+      await mine.watcher.watch(arrived)
     }
     const lost = (): void => {
+      if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email)) return
-      this.rewatch = setTimeout(() => this.emails().forEach((each) => this.watch(each)), WATCH_RETRY_MS)
+      if (!this.watching || !this.emails().includes(email) || this.rewatch) return
+      this.rewatch = setTimeout(() => {
+        this.rewatch = null
+        this.emails().forEach((each) => this.watch(each))
+      }, WATCH_RETRY_MS)
       this.rewatch.unref?.()
     }
     void run().catch(() => undefined).finally(lost)

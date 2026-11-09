@@ -195,6 +195,16 @@ export class FakeGmail {
     ].join(' ')
   }
 
+  /** Connections open now. */
+  get connections(): number {
+    return this.sockets.size
+  }
+
+  /** Connections waiting in IDLE now. */
+  get idling(): number {
+    return this.idlers.size
+  }
+
   /** What was asked of the mailbox that would have changed it. */
   writes(): string[] {
     return this.commands.filter((c) => WRITE_COMMANDS.test(c))

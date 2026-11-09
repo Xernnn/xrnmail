@@ -960,6 +960,21 @@ describe('new mail as it lands', () => {
     service.stopWatching()
     expect(gmail.writes()).toEqual([])
   })
+
+  it('keeps one watch per account however often the laptop wakes, and stopping ends it', async () => {
+    await signedIn()
+    service.watchAll()
+    service.watchAll() // asked twice before the first has signed in
+    await eventually(() => expect(gmail.idling).toBe(1))
+    for (let wake = 0; wake < 3; wake++) {
+      service.stopWatching()
+      service.watchAll()
+      await eventually(() => expect([gmail.connections, gmail.idling]).toEqual([1, 1]))
+      await new Promise((resolve) => setTimeout(resolve, 50)) // the old watch has finished closing
+    }
+    service.stopWatching()
+    await eventually(() => expect(gmail.connections).toBe(0))
+  })
 })
 
 describe('going back over old previews', () => {

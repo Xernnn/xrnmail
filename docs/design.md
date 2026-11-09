@@ -131,6 +131,10 @@ store and the batches apply as usual. If the sync is already running it's asked 
 because what landed may have missed it. A lost connection is retried after a minute, and the
 three-minute passes carry on regardless, so watching can fail without anything being missed.
 
+There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
+them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
+connection running that nothing will close. Gmail allows fifteen at once.
+
 ## Staying open
 
 Closing the window hides it while the tray exists and "Keep running in the tray" is on, so
