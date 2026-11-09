@@ -311,7 +311,14 @@ export class Store {
     })
   }
 
+  private closed = false
+
+  /** Safe to call twice: a second quit request on the way out (the window closing after the tray's
+   *  Quit, or a signal) reaches the close again, and closing a closed database throws in the main
+   *  process, which left the app hanging on an error box. */
   close(): void {
+    if (this.closed) return
+    this.closed = true
     this.db.close()
   }
 

@@ -248,3 +248,15 @@ describe('writing back', () => {
     expect(quoteOf(message(), 'forward').intro).toContain('Subject: Plan')
   })
 })
+
+describe('closing', () => {
+  // The app closes the store in before-quit, and a second quit request on the way out (the window
+  // closing after the tray's Quit, or a signal) reaches that close again.
+  it('can be asked twice on the way out', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xrnmail-store-'))
+    const store = new Store(join(dir, 'mail.sqlite'))
+    store.close()
+    expect(() => store.close()).not.toThrow()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
