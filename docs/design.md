@@ -271,7 +271,9 @@ card. A hub that's down changes nothing here.
 
 Most of a reply is what it quotes. `splitQuoted` finds where a plain message starts quoting, walking
 lines and testing short slices so a stranger's text can't stall it, and previews and the plain-text
-body share it. HTML is different: taking clean HTML apart and putting it back together is how sanitised
-markup gets turned hostile again, so nothing is removed. A class on the frame's root hides the known
-quote markers with CSS, and the `•••` toggles that class. A forward keeps everything, because the
-quote is what was sent.
+body share it. Quoted lines only count as the quote when nothing new follows them, and where the last
+new line is gets worked out once, from the end: asking again at every quoted line took minutes over
+the half a megabyte of text a message keeps. HTML is different: taking clean HTML apart and putting it
+back together is how sanitised markup gets turned hostile again, so nothing is removed. A class on the
+frame's root hides the known quote markers with CSS, and the `•••` toggles that class. A forward keeps
+everything, because the quote is what was sent.

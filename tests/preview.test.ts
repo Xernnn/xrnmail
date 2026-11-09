@@ -38,9 +38,17 @@ describe('finding what a reply quotes', () => {
     expect(splitQuoted('Hello\nthere')).toEqual({ fresh: 'Hello\nthere', quoted: '' })
   })
 
+  it('a quote is only what nothing new follows, however long', () => {
+    const answered = `${'> question\n'.repeat(3)}answer`
+    expect(splitQuoted(answered)).toEqual({ fresh: answered, quoted: '' })
+    expect(splitQuoted(`Fresh.\n\n${'> old\n\n'.repeat(3)}`)).toEqual({ fresh: 'Fresh.', quoted: `${'> old\n\n'.repeat(3)}` })
+  })
+
   it('is quick over what a stranger made to be slow', () => {
     quick(() => splitQuoted('On '.repeat(200_000)))
     quick(() => splitQuoted(`${'On a\n'.repeat(50_000)}wrote`))
+    quick(() => splitQuoted(`${'> a\n'.repeat(130_000)}fresh`)) // 512 KB of it was minutes, during sync
+    quick(() => makeSnippet(`${'>\n'.repeat(250_000)}fresh`))
     quick(() => splitQuoted('>'.repeat(500_000)))
   })
 })

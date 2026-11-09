@@ -13,11 +13,15 @@ const quotedLine = (line: string): boolean => line.trimStart().startsWith('>')
 
 /** The line a quote starts on, or the line count if nothing in it is a quote. */
 export function quoteStart(lines: string[]): number {
+  // The last line that's neither quoted nor blank, found once from the end: asking again at every
+  // quoted line whether all the rest is quoted takes minutes over a long enough quote.
+  let answered = lines.length - 1
+  while (answered >= 0 && (quotedLine(lines[answered] ?? '') || (lines[answered] ?? '').trim() === '')) answered--
   for (let i = 0; i < lines.length; i++) {
     const line = (lines[i] ?? '').slice(0, LINE_LIMIT).trim()
     if (quotedLine(line)) {
       // One quoted line in the middle of an answer is a reply between the lines: leave those whole.
-      if (lines.slice(i).every((later) => quotedLine(later) || later.trim() === '')) return i
+      if (i > answered) return i
       continue
     }
     const next = (lines[i + 1] ?? '').slice(0, LINE_LIMIT).trim()
