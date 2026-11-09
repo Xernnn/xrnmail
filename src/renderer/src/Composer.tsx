@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import type { AccountView, Address, Draft, DraftEdit, Settings } from '@shared/types'
+import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
 import { Avatar } from './Common'
 import { fileSize, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
 import { IconButton, Popover, TimeMenu } from './Menus'
 
 const SAVE_AFTER_MS = 700
+
+/** What's quoted came from a stranger, so it's cleaned on its way into the draft: this copy is what gets sent. */
+export const cleanQuote = (quote: Quote | null): Quote | null =>
+  quote ? { ...quote, html: quote.html ? sanitize(quote.html) : null } : null
 
 const asRecipient = (who: Address): string => {
   if (!who.name) return who.address
@@ -131,7 +135,7 @@ export function Composer(props: {
   const [saved, setSaved] = useState(false)
   // Sanitised on the way in, because this copy is what gets sent. It's never put in this page: only
   // a frame shows it, which is why the editor below holds nothing but what's typed here.
-  const [quote] = useState(() => (draft.quote ? { ...draft.quote, html: draft.quote.html ? sanitize(draft.quote.html) : null } : null))
+  const [quote] = useState(() => cleanQuote(draft.quote))
   const editor = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gone = useRef(false)

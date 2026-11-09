@@ -80,7 +80,7 @@ export function TimeMenu(props: { title: string; extra?: [string, number][]; up?
   )
 }
 
-export function LabelMenu(props: { labels: string[]; active: string[]; set(label: string, add: boolean): void; close(): void }): ReactNode {
+export function LabelMenu(props: { labels: string[]; active: string[]; right?: boolean; set(label: string, add: boolean): void; close(): void }): ReactNode {
   const [name, setName] = useState('')
   const all = [...new Set([...props.labels, ...props.active.filter((l) => !l.startsWith('\\'))])].sort()
   const create = (): void => {
@@ -90,7 +90,7 @@ export function LabelMenu(props: { labels: string[]; active: string[]; set(label
     setName('')
   }
   return (
-    <Popover close={props.close}>
+    <Popover close={props.close} right={props.right}>
       <h4>Labels</h4>
       {all.map((label) => (
         <label key={label} className="menu-item">
@@ -108,9 +108,9 @@ export function LabelMenu(props: { labels: string[]; active: string[]; set(label
 }
 
 /** Where a folder account files mail: one place at a time, unlike a label. */
-export function FolderMenu(props: { folders: string[]; pick(folder: string): void; close(): void }): ReactNode {
+export function FolderMenu(props: { folders: string[]; right?: boolean; pick(folder: string): void; close(): void }): ReactNode {
   return (
-    <Popover close={props.close}>
+    <Popover close={props.close} right={props.right}>
       <h4>Move to</h4>
       {props.folders.map((folder) => (
         <button type="button" key={folder} className="menu-item" onClick={() => props.pick(folder)}>{folder}</button>

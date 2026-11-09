@@ -1,12 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Archive, ArrowLeft, Ban, CalendarRange, ChevronDown, Clock, Download, ExternalLink, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo,
-  Filter, FolderInput, Forward, Inbox, Mail, MoreVertical, OctagonAlert, Package, Plane, Presentation, Printer, Receipt, Reply, ReplyAll, Star, Tag, Trash2,
-  TriangleAlert, Undo2, type LucideIcon
+  Filter, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Package, Plane, Presentation, Printer, Receipt, Reply, ReplyAll,
+  Send, Star, Tag, Trash2, TriangleAlert, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
 import { Avatar, Empty } from './Common'
-import { factLine, fileKind, fileSize, longTime, problem, shortTime, userLabels, type FileKind } from './format'
+import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels, type FileKind } from './format'
 import { MailBody } from './MailBody'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 import icon from './icon.svg'
@@ -15,6 +15,8 @@ const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
 
 export type ReplyKind = 'reply' | 'replyAll' | 'forward'
 export type Panel = 'snooze' | 'labels' | 'more' | null
+/** What becomes of words typed under a thread. */
+export type QuickSend = 'send' | 'open' | 'keep'
 
 const FORWARDED = /^\s*(fwd?|tr|wg|rv|i)\s*:/i
 /** Threads longer than this show their ends, with the middle folded away. */
@@ -76,7 +78,7 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
     window.mail.saveAttachment(m.id, index).then((done) => { if (done) say('Saved') }, (e) => say(problem(e)))
   }
   return (
-    <ul className="attachments">
+    <ul className="attachments" aria-label="Attachments">
       {m.attachments.map((file, i) => {
         const kind = fileKind(file.name)
         const Icon = KIND_ICONS[kind]
@@ -103,13 +105,13 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
 function Recipients(props: { message: MessageView; own: string[] }): ReactNode {
   const { message: m, own } = props
   const [open, setOpen] = useState(false)
-  const label = (who: Address): string => (own.includes(who.address.toLowerCase()) ? 'Me' : nameOf(who))
+  const label = (who: Address): string => (own.includes(who.address.toLowerCase()) ? 'me' : nameOf(who))
   const everyone = [...m.to, ...m.cc]
   const line = (who: Address[]): string => who.map((one) => (one.name ? `${one.name} <${one.address}>` : one.address)).join(', ')
   return (
     <>
       <button className="who-to" aria-expanded={open} onClick={() => setOpen(!open)}>
-        To: {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
+        to {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
         <ChevronDown size={13} aria-hidden="true" />
       </button>
       {open && (
@@ -137,6 +139,8 @@ function Message(props: {
   bins: boolean
   own: string[]
   settings: Settings | null
+  /** The sender skips the wait for a delivery. */
+  straight: boolean
   toggle(): void
   onPeek(url: string | null): void
   say(text: string): void
@@ -154,11 +158,11 @@ function Message(props: {
     return (
       <article className="message">
         <button className="message-head closed" onClick={toggle} aria-expanded={false}>
-          <Avatar name={m.from.name} address={m.from.address} size={28} />
+          <Avatar name={m.from.name} address={m.from.address} size={32} />
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
-            <span className="muted"> {m.text.replace(/\s+/g, ' ').slice(0, 140)}</span>
+            <span className="muted"> {m.text.replace(/\s+/g, ' ').slice(0, 160)}</span>
           </span>
           <span className="muted when">{shortTime(m.date)}</span>
         </button>
@@ -173,7 +177,12 @@ function Message(props: {
           <div className="who-name">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
-            {m.from.name && <span className="muted"> {m.from.address}</span>}
+            {m.from.name && <span className="muted who-address"> {m.from.address}</span>}
+            {props.straight && (
+              <span className="straight" title="Comes straight through, without waiting for a delivery">
+                <Zap size={11} aria-hidden="true" />Straight through
+              </span>
+            )}
           </div>
           <div className="anchor"><Recipients message={m} own={own} /></div>
         </div>
@@ -181,26 +190,109 @@ function Message(props: {
         {leaving && (
           <button className="pill strong" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>
         )}
-        <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />
+        {!bins && <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />}
       </div>
-      <Cautions message={m} />
-      {m.facts && <FactCard message={m} facts={m.facts} rsvp={rsvp} />}
-      <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust}
-        keepQuoted={FORWARDED.test(m.subject)} />
-      {m.attachments.length > 0 && <Attachments message={m} say={say} />}
-      {m.truncated && <p className="muted note message-note">Too big to keep whole here.</p>}
+      <div className="message-body">
+        <Cautions message={m} />
+        {m.facts && <FactCard message={m} facts={m.facts} rsvp={rsvp} />}
+        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust}
+          keepQuoted={FORWARDED.test(m.subject)} />
+        {m.attachments.length > 0 && <Attachments message={m} say={say} />}
+        {m.truncated && <p className="muted note message-note">Too big to keep whole here.</p>}
+      </div>
     </article>
   )
 }
 
 /** A few ready answers to a person's message, in the language they wrote in. Nothing leaves the
- *  laptop to come up with these, and pressing one only starts a reply. */
+ *  laptop to come up with these, and pressing one only puts the words in the reply box. */
 function quickAnswers(message: MessageView, own: string[]): string[] {
   if (message.unsubscribe || own.includes(message.from.address.toLowerCase())) return []
   if (/no-?reply|notifications?@|mailer-daemon/i.test(message.from.address)) return []
   return /[ăâđêôơưạảãáàậẩẫấầặẳẵắằẹẻẽéèệểễếềịỉĩíìọỏõóòộổỗốồợởỡớờụủũúùựửữứừỵỷỹýỳ]/i.test(message.text.slice(0, 2000))
     ? ['Cảm ơn bạn!', 'Mình đã nhận được.', 'Được nhé.']
     : ['Thanks!', 'Sounds good.', 'Got it, thank you.']
+}
+
+/** Who a plain reply goes to: the same choice the main process makes when it starts one. */
+function replyingTo(message: MessageView, own: string[]): string {
+  const fromMe = own.includes(message.from.address.toLowerCase())
+  const to = fromMe ? message.to : message.replyTo.length > 0 ? message.replyTo : [message.from]
+  return to.map((who) => (own.includes(who.address.toLowerCase()) ? 'me' : nameOf(who))).join(', ') || 'no one yet'
+}
+
+/** The box under a thread. What's typed goes out as an ordinary reply, through the same door. */
+function QuickReply(props: {
+  to: string
+  answers: string[]
+  /** The sender may not be who they say, so the reply opens where its address can be seen first. */
+  careful: boolean
+  send(text: string): Promise<boolean>
+  open(text: string): void
+  keep(text: string): void
+}): ReactNode {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const box = useRef<HTMLTextAreaElement>(null)
+  const typed = useRef('')
+  typed.current = text
+  const keep = useRef(props.keep)
+  keep.current = props.keep
+
+  // Leaving the thread with words in the box keeps them, in Drafts.
+  useEffect(() => () => { if (typed.current.trim()) keep.current(typed.current) }, [])
+
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+  }, [text])
+
+  const send = async (): Promise<void> => {
+    if (!text.trim() || busy) return
+    setBusy(true)
+    const done = await props.send(text)
+    setBusy(false)
+    if (done) {
+      typed.current = ''
+      setText('')
+    }
+  }
+
+  const open = (): void => {
+    const words = text
+    typed.current = ''
+    setText('')
+    props.open(words)
+  }
+
+  return (
+    <section className="quick-reply" aria-label="Quick reply">
+      {props.answers.length > 0 && !text && (
+        <div className="quick">
+          {props.answers.map((words) => (
+            <button key={words} className="pill" onClick={() => { setText(words); box.current?.focus() }}>{words}</button>
+          ))}
+        </div>
+      )}
+      <div className={text ? 'quick-box typing' : 'quick-box'}>
+        <textarea ref={box} rows={1} value={text} aria-label="Quick reply" placeholder={`Reply to ${props.to}`} spellCheck
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void send() }
+            else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur() }
+          }} />
+        <div className="quick-tools">
+          <IconButton icon={Maximize2} label="Expand reply" click={open} />
+          <button type="button" className="primary" disabled={!text.trim() || busy} title={props.careful ? 'Opens the reply first, to check where it goes' : 'Send (Ctrl+Enter)'}
+            onClick={() => (props.careful ? open() : void send())}>
+            <Send size={14} aria-hidden="true" /> Send
+          </button>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 export function Reader(props: {
@@ -214,20 +306,26 @@ export function Reader(props: {
   settings: Settings | null
   unread: number
   held: number
+  /** Who comes straight through, while mail is held for deliveries at all. */
+  vip: string[] | null
+  /** Several accounts are signed in, so the thread says whose it is. */
+  many: boolean
   setPanel(panel: Panel): void
   back(): void
   act(action: MailAction, label?: string): void
   snooze(at: number): void
-  reply(kind: ReplyKind, message: number, text?: string): void
+  reply(kind: ReplyKind, message: number): void
+  replyWith(message: MessageView, text: string, then: QuickSend): Promise<boolean>
   unsubscribe(message: number): void
   block(address: string): void
   rsvp(message: number, answer: Rsvp): void
   setFocus(address: string, focused: boolean): void
   trust(address: string): void
+  straight(address: string, on: boolean): void
   forever(): void
   say(text: string): void
 }): ReactNode {
-  const { messages, account, labels, bins, panel, setPanel, back, act, own, settings } = props
+  const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
   const last = messages.at(-1)
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [unfolded, setUnfolded] = useState(false)
@@ -244,7 +342,7 @@ export function Reader(props: {
   if (!last) {
     return (
       <main className="reader reader-empty">
-        <img src={icon} alt="" width={56} height={56} />
+        <img src={icon} alt="" width={52} height={52} />
         <Empty icon={Mail} title={props.unread > 0 ? `${props.unread} unread` : 'Pick something to read'}
           note={props.held > 0 ? `${props.held} more waiting for the next delivery` : 'Press ? for the keys'} />
       </main>
@@ -264,11 +362,13 @@ export function Reader(props: {
   const person = messages.find((m) => m.from.address && m.from.address !== last.account)
   const sender = person?.from.address
   const gmail = account?.labels ?? false
-  const answers = quickAnswers(last, own)
   const folded = !unfolded && messages.length > LONG_THREAD
   const hidden = folded ? messages.slice(1, -2).filter((m) => !open.has(m.id)) : []
   const shown = messages.filter((m) => !hidden.includes(m))
   const leaving = [...messages].reverse().find((m) => m.unsubscribe)
+  const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
+  // Only the address itself can be taken off here; a whole @domain stays a decision for Settings.
+  const listedExactly = sender !== undefined && (vip ?? []).some((v) => v.trim().toLowerCase() === sender.toLowerCase())
 
   const moreItem = (Icon: LucideIcon, label: string, run: () => void): ReactNode => (
     <button type="button" className="menu-item" onClick={() => { setPanel(null); run() }}>
@@ -279,7 +379,12 @@ export function Reader(props: {
   return (
     <main className="reader">
       <div className="toolbar" role="toolbar" aria-label="Thread">
-        <button className="icon back" onClick={back} aria-label="Back"><ArrowLeft size={17} aria-hidden="true" /></button>
+        <button className="icon back" onClick={back} aria-label="Back"><ArrowLeft size={18} aria-hidden="true" /></button>
+        {props.many && account && (
+          <span className="reader-account" title="The account this thread is in">
+            <span className="dot" style={{ background: account.color }} aria-hidden="true" /><span className="reader-account-name">{account.email}</span>
+          </span>
+        )}
         <span className="grow" />
         {bins ? (
           <>
@@ -288,10 +393,15 @@ export function Reader(props: {
           </>
         ) : (
           <>
+            <IconButton icon={Reply} label="Reply" hint="r" click={() => props.reply('reply', last.id)} />
+            <IconButton icon={ReplyAll} label="Reply all" hint="a" click={() => props.reply('replyAll', last.id)} />
+            <IconButton icon={Forward} label="Forward" hint="f" click={() => props.reply('forward', last.id)} />
+            <span className="tool-gap" />
             {inInbox
               ? <IconButton icon={Archive} label="Archive" hint="e" click={() => act({ kind: 'archive' }, 'Archived')} />
               : <IconButton icon={Inbox} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />}
             <IconButton icon={Trash2} label="Delete" hint="#" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
+            <span className="tool-gap" />
             <IconButton icon={Star} label={starred ? 'Remove star' : 'Star'} hint="s" on={starred}
               click={() => act({ kind: starred ? 'unstar' : 'star' })} />
             <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />
@@ -302,8 +412,8 @@ export function Reader(props: {
             <div className="anchor">
               <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint="l" click={() => setPanel(panel === 'labels' ? null : 'labels')} />
               {panel === 'labels' && (gmail
-                ? <LabelMenu labels={labels} active={active} set={(label, add) => act({ kind: 'label', label, add })} close={() => setPanel(null)} />
-                : <FolderMenu folders={account?.folders ?? []} close={() => setPanel(null)} pick={(to) => { setPanel(null); act({ kind: 'move', to }, `Moved to ${to}`) }} />)}
+                ? <LabelMenu labels={labels} active={active} right set={(label, add) => act({ kind: 'label', label, add })} close={() => setPanel(null)} />
+                : <FolderMenu folders={account?.folders ?? []} right close={() => setPanel(null)} pick={(to) => { setPanel(null); act({ kind: 'move', to }, `Moved to ${to}`) }} />)}
             </div>
           </>
         )}
@@ -313,6 +423,8 @@ export function Reader(props: {
             <Popover right close={() => setPanel(null)}>
               {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
+              {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
+              {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
               {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
@@ -321,34 +433,29 @@ export function Reader(props: {
         </div>
       </div>
       <div className="messages">
-        <h2 className="thread-subject">{messages[0]?.subject || 'No subject'}</h2>
-        {active.length > 0 && (
-          <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>
-        )}
+        <div className="thread-head">
+          <h2 className="thread-subject">{messages[0]?.subject || 'No subject'}</h2>
+          {active.length > 0 && (
+            <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>
+          )}
+        </div>
         {shown.map((m, i) => (
-          <div key={m.id}>
+          <div key={m.id} className="message-slot">
             {hidden.length > 0 && i === 1 && (
               <button className="fold" onClick={() => setUnfolded(true)}>
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>
             )}
-            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own} settings={settings} toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
+            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own} settings={settings} straight={isStraight(m.from.address)}
+              toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
               unsubscribe={props.unsubscribe} trust={props.trust} />
           </div>
         ))}
         {!bins && (
-          <div className="answers">
-            {answers.length > 0 && (
-              <div className="quick">
-                {answers.map((words) => <button key={words} className="pill" onClick={() => props.reply('reply', last.id, words)}>{words}</button>)}
-              </div>
-            )}
-            <div className="answer">
-              <button className="pill" onClick={() => props.reply('reply', last.id)}><Reply size={15} aria-hidden="true" /> Reply</button>
-              <button className="pill" onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={15} aria-hidden="true" /> Reply all</button>
-              <button className="pill" onClick={() => props.reply('forward', last.id)}><Forward size={15} aria-hidden="true" /> Forward</button>
-            </div>
-          </div>
+          <QuickReply key={`${last.account}/${last.thread}`} to={replyingTo(last, own)} answers={quickAnswers(last, own)} careful={last.warnings.length > 0}
+            send={(text) => props.replyWith(last, text, 'send')}
+            open={(text) => void props.replyWith(last, text, 'open')}
+            keep={(text) => void props.replyWith(last, text, 'keep')} />
         )}
       </div>
       {peek && <div className="peek">{peek}</div>}

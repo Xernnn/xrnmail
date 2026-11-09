@@ -5,15 +5,50 @@ const DAY_MS = 86_400_000
 export const clock = (at: number): string =>
   new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 
-/** The list's time: a clock today, a weekday this week, a date after that. */
+/** The list's time: a clock today, a short date any other day. */
 export function shortTime(at: number, now = Date.now()): string {
   const then = new Date(at)
   const today = new Date(now)
   if (then.toDateString() === today.toDateString()) return clock(at)
-  if (now - at < 6 * DAY_MS) return then.toLocaleDateString([], { weekday: 'short' })
   const sameYear = then.getFullYear() === today.getFullYear()
   return then.toLocaleDateString([], { day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' })
 }
+
+const startOfDay = (at: number): number => {
+  const day = new Date(at)
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()
+}
+
+/** Calendar days from one moment to the next, so 23:59 and 00:01 are a day apart. Rounded for clock changes. */
+const daysBetween = (from: number, to: number): number => Math.round((startOfDay(to) - startOfDay(from)) / DAY_MS)
+
+/** The heading a thread sits under in the list. Weeks start on Monday. */
+export function dayGroup(at: number, now = Date.now()): string {
+  const days = daysBetween(at, now)
+  if (days <= 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  const intoWeek = (new Date(now).getDay() + 6) % 7
+  if (days <= intoWeek) return 'This week'
+  if (days <= intoWeek + 7) return 'Last week'
+  const then = new Date(at)
+  const today = new Date(now)
+  if (then.getFullYear() === today.getFullYear() && then.getMonth() === today.getMonth()) return 'This month'
+  return then.toLocaleDateString([], { month: 'long', year: then.getFullYear() === today.getFullYear() ? undefined : 'numeric' })
+}
+
+/** The same test as `isVip` in the main process's batches.ts: an address, or a whole @domain. */
+export function straightThrough(address: string, vip: string[]): boolean {
+  const who = address.trim().toLowerCase()
+  if (!who) return false
+  return vip.some((entry) => {
+    const rule = entry.trim().toLowerCase()
+    return rule !== '' && (rule.startsWith('@') ? who.endsWith(rule) : who === rule)
+  })
+}
+
+/** Typed words as the editor would hold them. */
+export const textToHtml = (text: string): string =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>')
 
 export const longTime = (at: number): string =>
   new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })

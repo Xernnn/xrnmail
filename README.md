@@ -18,10 +18,11 @@ your mail service, with no server of ours in between. Everything clever happens 
   the messages. Aliases work too, and a reply goes out from the address the mail came to.
 - **Batches:** new inbox mail waits for the next slot (09:00, 13:00, 17:00 by default). Waiting mail
   stays out of the list, threads and search until then.
-- **Straight through:** addresses or whole @domains that skip the wait.
+- **Straight through:** addresses or whole @domains that skip the wait, set in Settings or from a
+  message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
-- **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
-  that survive a restart, and addresses suggested from your mail.
+- **Writing:** reply, reply all, forward with attachments, a reply box under every thread, formatting,
+  signatures, templates, drafts that survive a restart, and addresses suggested from your mail.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, star, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
@@ -43,8 +44,8 @@ your mail service, with no server of ours in between. Everything clever happens 
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
-- **Comfortable to live in:** swipe, drag to the sidebar, right-click menus, recipient chips, side-by-side
-  or one-at-a-time reading, and Settings you can search.
+- **Comfortable to live in:** actions on hover, swipe, drag to the sidebar, right-click menus, recipient
+  chips, side-by-side or one-at-a-time reading, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.

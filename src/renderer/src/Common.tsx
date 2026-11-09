@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 
-const AVATAR_COLORS = ['#b4532a', '#2f6fb2', '#7a4fb5', '#0f8a7e', '#b03a6a', '#8a6a14', '#4a7c3a', '#5b5fc7', '#a34a4a', '#3b7a8c']
+/** Mid tones that carry white letters, light or dark. */
+const AVATAR_COLORS = ['#3a74d9', '#5b5bd6', '#8150c9', '#c0437a', '#d14a3d', '#c8651f', '#a87a12', '#2f8a4f', '#16878a', '#2b7fb0', '#5e6b80']
 
 function hash(text: string): number {
   let value = 7
@@ -20,16 +21,15 @@ export function initials(name: string, address: string): string {
 
 /** A face for a sender. Pictures would have to be fetched, which would say who writes to you, so
  *  it's made here from their name, and always comes out the same for the same address. */
-export function Avatar(props: { name: string; address: string; size?: number; marker?: string }): ReactNode {
-  const size = props.size ?? 36
+export function Avatar(props: { name: string; address: string; size?: number }): ReactNode {
+  const size = props.size ?? 40
   const style: CSSProperties = {
-    width: size, height: size, fontSize: Math.round(size * 0.38),
+    width: size, height: size, fontSize: Math.round(size * 0.37),
     background: AVATAR_COLORS[hash(props.address.toLowerCase() || props.name) % AVATAR_COLORS.length]
   }
   return (
     <span className="avatar" style={style} aria-hidden="true">
       {initials(props.name, props.address)}
-      {props.marker && <span className="avatar-mark" style={{ background: props.marker }} />}
     </span>
   )
 }

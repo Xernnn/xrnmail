@@ -220,6 +220,9 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **The editor holds only what's typed.** A quoted message would otherwise put a stranger's HTML in the
   app's own page, next to the bridge. The quote stays out of the editor, is sanitised on its way into
   the draft, and shows only in a sandboxed frame. Pasting is as plain text, for the same reason.
+- **The reply box under a thread is the composer without its window.** It's a plain text field, and what's
+  typed becomes the same reply draft, its quote cleaned the same way, sent through the same door with
+  Undo. When the sender has a warning, Send opens the composer instead, so where it goes is seen first.
 - **Files enter a draft only through the system's picker, or as bytes that were dropped or pasted.** The
   page never names a path, so a compromised page can't attach `~/.ssh/id_ed25519` and send it. Being able
   to send mail is the new thing a compromised page could do, which is why this line is held so firmly.

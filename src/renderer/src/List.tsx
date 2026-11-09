@@ -35,6 +35,7 @@ export function Row(props: {
   row: ThreadRow
   account: AccountView | undefined
   own: string[]
+  /** Several accounts share this list, so each row says whose it is. */
   many: boolean
   bins: boolean
   /** Showing what the Assistant found, not who wrote. */
@@ -46,6 +47,7 @@ export function Row(props: {
   open(): void
   pick(event: MouseEvent): void
   act(action: MailAction, label?: string): void
+  snooze(): void
   swiped(action: SwipeAction): void
   menu(x: number, y: number): void
   drag(event: DragEvent): void
@@ -54,9 +56,12 @@ export function Row(props: {
   const [shift, setShift] = useState(0)
   const moved = useRef(0)
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const box = useRef<HTMLDivElement>(null)
   const swipes = !bins && !picked
 
   useEffect(() => () => { if (settle.current) clearTimeout(settle.current) }, [])
+  // Moving with j and k keeps the open thread in sight.
+  useEffect(() => { if (on) box.current?.scrollIntoView({ block: 'nearest' }) }, [on])
 
   const wheel = (event: WheelEvent): void => {
     if (!swipes || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
@@ -79,10 +84,12 @@ export function Row(props: {
   const head = facts ? factHead(facts) : null
   const style: CSSProperties | undefined = shift !== 0 ? { transform: `translateX(${shift}px)`, transition: 'none' } : undefined
   const names = peopleLine(row.people.length > 0 ? row.people : [{ name: row.fromName, address: row.fromAddress }], own)
-  const stateClass = `${on ? 'on' : ''} ${row.unread > 0 ? 'unread' : ''} ${picked ? 'picked' : ''}`
+  const unread = row.unread > 0
+  const stateClass = `${on ? 'on' : ''} ${unread ? 'unread' : ''} ${picked ? 'picked' : ''}`
+  const files = row.file ? `Has attachment: ${row.file}${row.files > 1 ? ` and ${row.files - 1} more` : ''}` : 'Has attachment'
 
   return (
-    <div className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
+    <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
       onContextMenu={(e) => { e.preventDefault(); props.menu(e.clientX, e.clientY) }}>
       {look && LookIcon && (
         <div className={`swipe-under ${look.tone} ${shift > 0 ? 'from-left' : 'from-right'} ${Math.abs(shift) >= SWIPE_COMMIT ? 'ready' : ''}`}>
@@ -90,28 +97,27 @@ export function Row(props: {
         </div>
       )}
       <div className="thread-card" style={style}>
-        {facts && FactIcon
-          ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={17} /></span>
-          : <Avatar name={row.fromName} address={row.fromAddress} marker={many ? account?.color : undefined} />}
-        <input type="checkbox" className="pick" aria-label={`Select ${row.subject}`} checked={picked} onClick={pick} readOnly />
+        {many && account && <span className="account-mark" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
+        {unread && <span className="unread-dot" aria-hidden="true" />}
+        <span className="face">
+          {facts && FactIcon
+            ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={18} /></span>
+            : <Avatar name={row.fromName} address={row.fromAddress} />}
+          <input type="checkbox" className="pick" aria-label={`Select ${row.subject}`} checked={picked} onClick={pick} readOnly />
+        </span>
         <button className="thread-open" onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? pick(e) : open())}>
           <span className="thread-top">
-            {row.unread > 0 && <span className="unread-dot" aria-hidden="true" />}
+            {unread && <span className="sr-only">Unread, </span>}
             <span className="sender">{head ? head.title : names}</span>
-            {!head && row.count > 1 && <span className="count">({row.count})</span>}
-            {row.starred && <Star className="mark star" size={13} aria-label="Starred" />}
-            {row.attachment && !row.file && <Paperclip className="mark" size={13} aria-label="Has attachment" />}
-            <time>{head?.side || shortTime(row.date)}</time>
+            {!head && row.count > 1 && <span className="count">{row.count}</span>}
+            <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>
           </span>
-          <span className="subject">{row.subject || 'No subject'}</span>
-          <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet}</span>
-          {row.file && (
-            <span className="file-chip" aria-label="Has attachment">
-              <Paperclip size={12} aria-hidden="true" />
-              <span className="file-chip-name">{row.file}</span>
-              {row.files > 1 && <span className="muted">+{row.files - 1}</span>}
-            </span>
-          )}
+          <span className="thread-mid">
+            <span className="subject">{row.subject || 'No subject'}</span>
+            {row.starred && <Star className="mark star" size={13} aria-label="Starred" />}
+            {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
+          </span>
+          <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>
         </button>
         <span className="row-actions">
           {bins ? (
@@ -119,9 +125,10 @@ export function Row(props: {
           ) : (
             <>
               <IconButton icon={Archive} label="Archive" click={() => act({ kind: 'archive' }, 'Archived')} />
-              <IconButton icon={Star} label={row.starred ? 'Remove star' : 'Star'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
               <IconButton icon={Trash2} label="Delete" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-              <IconButton icon={row.unread > 0 ? MailOpen : Mail} label={row.unread > 0 ? 'Mark read' : 'Mark unread'} click={() => act({ kind: row.unread > 0 ? 'read' : 'unread' })} />
+              <IconButton icon={unread ? MailOpen : Mail} label={unread ? 'Mark read' : 'Mark unread'} click={() => act({ kind: unread ? 'read' : 'unread' })} />
+              <IconButton icon={Star} label={row.starred ? 'Remove star' : 'Star'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
+              <IconButton icon={Clock} label="Snooze" click={props.snooze} />
             </>
           )}
         </span>
@@ -138,13 +145,13 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   return (
     <div className={draft.error ? 'thread problem' : 'thread'}>
       <div className="thread-card">
-        <Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} />
+        <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} /></span>
         <button className="thread-open" onClick={open}>
           <span className="thread-top">
             <span className="sender">{people.map(chipLabel).join(', ') || 'No recipients'}</span>
-            <time>{shortTime(draft.updated)}</time>
+            <time dateTime={new Date(draft.updated).toISOString()}>{shortTime(draft.updated)}</time>
           </span>
-          <span className="subject">{draft.subject || 'No subject'}</span>
+          <span className="thread-mid"><span className="subject">{draft.subject || 'No subject'}</span></span>
           <span className="snippet">{status || draft.text.slice(0, 120) || ' '}</span>
         </button>
         <span className="row-actions">
@@ -183,7 +190,7 @@ export function Subscriptions(props: { version: number; unsubscribe(message: num
   )
 }
 
-/** Delivering early is possible, on purpose not instant. */
+/** When mail lands next. Delivering early is possible, on purpose not instant. */
 export function BatchStrip({ overview }: { overview: Overview }): ReactNode {
   const [left, setLeft] = useState<number | null>(null)
   const [error, setError] = useState('')
@@ -216,14 +223,14 @@ export function BatchStrip({ overview }: { overview: Overview }): ReactNode {
   const canAsk = overview.held > 0 && overview.earlyLeft > 0
   return (
     <div className="batch">
-      <Clock size={14} aria-hidden="true" />
-      <span className="grow">
-        <span className="muted">Next delivery </span><strong>{clock(overview.nextBatch)}</strong>
-        {overview.held > 0 && <span className="muted"> · {overview.held} waiting</span>}
+      <Clock size={13} aria-hidden="true" />
+      <span className="batch-words">
+        Next delivery <strong>{clock(overview.nextBatch)}</strong>
+        {overview.held > 0 && <span> · {overview.held} waiting</span>}
       </span>
       {error && <span className="error">{error}</span>}
-      {left === null && canAsk && <button className="pill" onClick={() => void begin()}>Deliver now</button>}
-      {left !== null && left > 0 && <button className="pill" onClick={() => setLeft(null)}>Cancel {left}</button>}
+      {left === null && canAsk && <><span aria-hidden="true">·</span><button className="link" onClick={() => void begin()}>Deliver now</button></>}
+      {left !== null && left > 0 && <><span aria-hidden="true">·</span><button className="link" onClick={() => setLeft(null)}>Cancel {left}</button></>}
       {left === 0 && <button className="pill strong" onClick={() => void finish()}>Deliver {overview.held}</button>}
     </div>
   )
