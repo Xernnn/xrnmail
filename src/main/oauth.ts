@@ -26,7 +26,7 @@ export interface Tokens {
 
 type Post = typeof fetch
 
-async function form(post: Post, url: string, fields: Record<string, string>): Promise<{ ok: boolean; body: Record<string, unknown> }> {
+async function form(post: Post, url: string, fields: Record<string, string>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   const response = await post(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -34,8 +34,11 @@ async function form(post: Post, url: string, fields: Record<string, string>): Pr
     redirect: 'error',
     signal: AbortSignal.timeout(20_000)
   })
-  return { ok: response.ok, body: (await response.json()) as Record<string, unknown> }
+  return { ok: response.ok, status: response.status, body: (await response.json()) as Record<string, unknown> }
 }
+
+/** OAuth errors that only mean "not now". */
+const PASSING = new Set(['temporarily_unavailable', 'server_error'])
 
 const tokensFrom = (body: Record<string, unknown>, now: number, fallback = ''): Tokens => ({
   access: String(body['access_token'] ?? ''),
@@ -68,15 +71,19 @@ export async function pollDeviceCode(post: Post, clientId: string, code: DeviceC
   throw new Error(error === 'authorization_declined' ? 'The sign-in was declined.' : 'The sign-in code ran out. Try again.')
 }
 
+/** Only Microsoft refusing in so many words means signing in again. Being busy, failing or
+ *  rate-limited passes, and taking it for final would give up mail that's waiting to go. */
 export async function refreshTokens(post: Post, clientId: string, refresh: string, now: number): Promise<Tokens> {
-  const { ok, body } = await form(post, `${AUTHORITY}/token`, {
+  const { ok, status, body } = await form(post, `${AUTHORITY}/token`, {
     client_id: clientId,
     grant_type: 'refresh_token',
     refresh_token: refresh,
     scope: MICROSOFT_SCOPE
   })
-  if (!ok || !body['access_token']) throw new SignInExpired()
-  return tokensFrom(body, now, refresh)
+  if (ok && body['access_token']) return tokensFrom(body, now, refresh)
+  const error = typeof body['error'] === 'string' ? body['error'] : ''
+  if (error && !PASSING.has(error) && status !== 429 && !(status >= 500)) throw new SignInExpired()
+  throw new Error("Microsoft didn't renew the sign-in this time.")
 }
 
 /** Microsoft won't renew this any more, so the person has to sign in again. */

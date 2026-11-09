@@ -715,6 +715,20 @@ describe('sending', () => {
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'The app stopped while sending this. Check Sent before trying again.' })
   })
 
+  it('waits for a keyring that is not open yet, and gives nothing up', async () => {
+    const draft = await write()
+    secrets.locked = true
+    service.send(draft.id)
+    await later(10_000)
+    expect(service.drafts()[0]).toMatchObject({ state: 'queued', error: 'Waiting for the system keyring.' })
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBe('Unlock your system keyring, then restart xrnmail.')
+    secrets.locked = false
+    await later(61_000)
+    expect(smtp.sent).toHaveLength(1)
+    expect(service.drafts()).toEqual([])
+  })
+
   it('says a wrong password in fixed words', async () => {
     const draft = await write()
     smtp.secret = 'changed'

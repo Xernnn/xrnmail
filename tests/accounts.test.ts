@@ -510,14 +510,17 @@ describe('aliases', () => {
 describe('Outlook sign-in', () => {
   const CLIENT = '11111111-2222-3333-4444-555555555555'
   const O = 'me@outlook.com'
-  const json = (body: unknown, ok = true): unknown => ({ ok, json: async () => body })
+  const json = (body: unknown, ok = true, status = ok ? 200 : 400): unknown => ({ ok, status, json: async () => body })
   let outlook: FakeGmail
 
+  /** [refresh] is the answer to a renewal, or makes one from what was sent. */
   const microsoft = (handlers: { poll?: unknown[]; refresh?: unknown } = {}): void => {
     const polls = [...(handlers.poll ?? [json({ access_token: 'token-1', refresh_token: 'renew-1', expires_in: 3600 })])]
     post.mockImplementation(async (url: string, init: { body: string }) => {
       if (url.endsWith('/devicecode')) return json({ device_code: 'dev', user_code: 'ABC-123', verification_uri: 'https://microsoft.com/devicelogin', interval: 0, expires_in: 900 })
-      if (init.body.includes('grant_type=refresh_token')) return handlers.refresh
+      if (init.body.includes('grant_type=refresh_token')) {
+        return typeof handlers.refresh === 'function' ? (handlers.refresh as (body: string) => unknown)(init.body) : handlers.refresh
+      }
       return polls.shift()
     })
   }
@@ -569,6 +572,31 @@ describe('Outlook sign-in', () => {
     await service.syncAll()
     expect(service.accounts()[0]?.error).toBe('Sign in to this account again.')
     expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Kept'])
+  })
+
+  it('waits out a Microsoft that is busy or rate-limited, with mail due to go still queued', async () => {
+    let renewal = json({ error: 'temporarily_unavailable' }, false, 503)
+    microsoft({ refresh: () => renewal })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    const draft = await service.startDraft({ kind: 'new', account: O })
+    service.saveDraft(draft.id, { account: O, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Note', html: 'Hi', text: 'Hi', quote: null })
+    clock += 3_600_000 // the token has run out
+    service.send(draft.id)
+    clock += 11_000
+    await service.tick()
+    expect(service.drafts()[0]).toMatchObject({ state: 'queued', error: 'Waiting for a connection.' })
+    renewal = json({}, false, 429)
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBe("Couldn't reach Outlook.")
+    renewal = json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 })
+    outlook.options.token = 'token-2'
+    smtp.token = 'token-2'
+    clock += 61_000
+    await service.tick()
+    await vi.waitFor(() => expect(smtp.sent).toHaveLength(1), { timeout: 15_000, interval: 15 })
+    expect(service.drafts()).toEqual([])
   })
 
   it('a declined sign-in keeps nothing', async () => {

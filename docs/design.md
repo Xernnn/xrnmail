@@ -39,7 +39,9 @@ filter on `bin = 0`.
   value that only code can set.
 - Outlook has no passwords, so it signs in with the device-code flow and XOAUTH2. The Application ID is
   the person's own: reusing another mail app's would be pretending to be that app. The refresh token
-  goes in the keyring like a password, and access tokens stay in memory.
+  goes in the keyring like a password, and access tokens stay in memory. Only Microsoft refusing a
+  renewal outright asks to sign in again. Busy, failing and rate-limited answers (5xx, 429,
+  `temporarily_unavailable`) are waited out like a lost connection, and mail due to go stays queued.
 
 ## Reading and changing are kept apart
 
@@ -233,6 +235,11 @@ Writing and acting on mail gave strangers new things to aim at, so:
 App passwords are encrypted by the system keyring through `safeStorage`. Linux's `basic_text` fallback
 is a key built into every Chromium, so it counts as no keyring and adding an account is refused. The
 page never receives a password.
+
+A password that's kept but can't be read, because the keyring wasn't open when the app first asked,
+isn't gone. Chromium keeps that first answer until the app quits, so the sidebar asks to unlock the
+keyring and restart, and mail due to go waits. Only a password that isn't kept at all, or that an open
+keyring can't decrypt, asks for the account to be added again.
 
 Mail itself sits in `mail.sqlite` in the app's profile, readable only by this user, and isn't
 encrypted. Full-disk encryption covers that.

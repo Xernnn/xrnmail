@@ -28,6 +28,9 @@ const RETRY_MS = 60_000
 const REFUSALS_ALLOWED = 3
 const NOT_SURE_SENT = 'The app stopped while sending this. Check Sent before trying again.'
 const SECRET_GONE = 'Add this account again: its password is gone.'
+/** The password is still kept, behind a keyring that wasn't open when the app first asked. The
+ *  answer to that first question lasts as long as the app does, hence the restart. */
+const KEYRING_SHUT = 'Unlock your system keyring, then restart xrnmail.'
 const SIGN_IN_AGAIN = 'Sign in to this account again.'
 /** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
 const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
@@ -127,7 +130,7 @@ export function describeFailure(error: unknown, service = 'the mail server'): st
   const e = error as { authenticationFailed?: boolean; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
   if (e?.authenticationFailed) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
-  if (e?.message === SECRET_GONE) return SECRET_GONE
+  if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
   return `Couldn't reach ${service}.`
@@ -411,8 +414,9 @@ export class MailService {
 
   /** What to sign in with. A token is renewed here, ahead of it running out. */
   private async login(email: string): Promise<Login> {
-    const secret = this.deps.secrets.get(`account:${email}`)
-    if (!secret) throw new Error(SECRET_GONE)
+    const key = `account:${email}`
+    const secret = this.deps.secrets.get(key)
+    if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
     if (this.config(email).signIn !== 'microsoft') return { secret }
     const held = this.tokens.get(email)
     const now = this.deps.now()
@@ -1062,11 +1066,13 @@ export class MailService {
     } catch (e) {
       const draft = due()
       if (!draft) return null
-      // Nothing has left. A lost connection can wait; a sign-in that's gone needs the person.
+      // Nothing has left. A lost connection or a keyring not open yet can wait; a sign-in that's gone
+      // needs the person.
       const gone = (e as Error).message === SECRET_GONE || e instanceof SignInExpired
+      const waiting = (e as Error).message === KEYRING_SHUT ? 'Waiting for the system keyring.' : 'Waiting for a connection.'
       this.store.saveDraft(gone
         ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
-        : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
+        : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: waiting })
       this.deps.changed()
       return null
     }
