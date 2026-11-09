@@ -611,6 +611,23 @@ describe('attachments', () => {
     const id = Number(store['one']('SELECT id FROM messages WHERE subject = ?', 'Held')?.['id'])
     await expect(service.attachment(id, 0)).rejects.toThrow("That message isn't here any more.")
   })
+
+  it('lists, opens and forwards every file of a message too big to keep whole', async () => {
+    const files = ['a', 'b', 'c'].map((c) => ({ name: `${c}.pdf`, type: 'application/pdf', body: c.repeat(2.5 * 1024 * 1024) }))
+    gmail.add(rawMail({ subject: 'Scans', attachments: files }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Scans')
+    const names = (): string[] => service.thread(thread.account, thread.thread)[0]?.attachments.map((a) => a.name) ?? []
+    const [cut] = service.thread(thread.account, thread.thread)
+    expect(cut?.truncated).toBe(true)
+    expect(cut?.attachments.length).toBeLessThan(3) // all the part that was kept could say
+    await eventually(() => expect(names()).toEqual(['a.pdf', 'b.pdf', 'c.pdf']))
+    expect(service.thread(thread.account, thread.thread)[0]?.attachments.map((a) => a.size)).toEqual(files.map((f) => f.body.length))
+    expect((await service.attachment(cut?.id ?? 0, 2)).content.equals(Buffer.from(files[2]?.body ?? ''))).toBe(true)
+    const forward = await service.startDraft({ kind: 'forward', message: cut?.id ?? 0 })
+    expect(forward.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf', 'c.pdf'])
+    expect(forward.error).toBeNull()
+  })
 })
 
 describe('sending', () => {

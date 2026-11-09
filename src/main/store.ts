@@ -193,6 +193,12 @@ const MIGRATIONS = [
   INSERT INTO box_state SELECT account, '@all', uid_validity, modseq FROM sync_state;
   ALTER TABLE sync_state DROP COLUMN uid_validity;
   ALTER TABLE sync_state DROP COLUMN modseq;
+  `,
+  // A message cut short lists only the files in the part that was kept, so its list waits to be made
+  // again from the whole message.
+  `
+  ALTER TABLE messages ADD COLUMN files_cut INTEGER NOT NULL DEFAULT 0;
+  UPDATE messages SET files_cut = 1 WHERE truncated = 1;
   `
 ]
 
@@ -362,9 +368,9 @@ export class Store {
         .prepare(
           `INSERT OR IGNORE INTO messages(account, box, uid, thread, gmail_id, message_id, subject, from_name, from_address,
              to_json, cc_json, reply_to, refs, unsubscribe, arrived, snippet, body_text, body_html, attachments,
-             has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, size, release_at,
+             has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, files_cut, size, release_at,
              focus, kind, facts, warnings)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           mail.account, mail.box, mail.uid, mail.thread, mail.gmailId, mail.messageId, mail.subject, mail.from.name, mail.from.address,
@@ -375,7 +381,7 @@ export class Store {
           JSON.stringify(mail.labels), mail.labels.includes(INBOX) ? 1 : 0, binOf(mail.labels),
           // Gmail's own unsent drafts live in All Mail too; a thread shouldn't show them as sent.
           mail.seen ? 1 : 0, mail.flagged ? 1 : 0, mail.labels.includes(DRAFT) ? 1 : 0,
-          mail.truncated ? 1 : 0, mail.size, mail.releaseAt,
+          mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt,
           mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings)
         )
       if (Number(result.changes) === 0) return null
@@ -657,6 +663,19 @@ export class Store {
       references: String(r['refs']),
       unsubscribeTo: unsubscribe ? (JSON.parse(unsubscribe) as Unsubscribe) : null
     }
+  }
+
+  /** Of these messages, the ones whose list of files came from a cut copy and may be short. */
+  filesCut(ids: number[]): number[] {
+    return this.all('SELECT id FROM messages WHERE files_cut = 1 AND id IN (SELECT value FROM json_each(?))', JSON.stringify(ids))
+      .map((r) => Number(r['id']))
+  }
+
+  /** The list of files as the whole message has it, in place of one made from a cut copy. */
+  wholeFiles(id: number, files: AttachmentInfo[]): void {
+    this.db
+      .prepare('UPDATE messages SET attachments = ?, has_attachment = ?, files_cut = 0 WHERE id = ? AND files_cut = 1')
+      .run(JSON.stringify(files), files.length > 0 ? 1 : 0, id)
   }
 
   private stateFrom(r: Row): MailState {

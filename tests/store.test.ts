@@ -130,6 +130,22 @@ describe('an older file', () => {
     store.close()
     rmSync(dir, { recursive: true, force: true })
   })
+
+  it('knows which lists of files came from a message that was cut', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    const old = new DatabaseSync(path)
+    old.exec(FIRST_SCHEMA)
+    old.exec("INSERT INTO messages(account, uid, thread, subject, arrived, truncated, release_at) VALUES('me@example.com', 8, 'u', 'Big', 100, 1, 100)")
+    old.close()
+    const store = new Store(path)
+    expect(store.filesCut([1, 2])).toEqual([2])
+    store.wholeFiles(2, [{ name: 'c.pdf', type: 'application/pdf', size: 3 }])
+    expect(store.filesCut([1, 2])).toEqual([])
+    expect(store.list({ kind: 'attachments' }, 1000).map((r) => [r.subject, r.file])).toEqual([['Big', 'c.pdf']])
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 describe('search', () => {

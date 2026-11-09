@@ -498,6 +498,8 @@ export function rawMail(options: {
   html?: string
   date?: Date
   attachment?: { name: string; type: string; body: string }
+  /** More of them, after [attachment]. */
+  attachments?: { name: string; type: string; body: string }[]
   headers?: string[]
 }): string {
   const boundary = 'BOUNDARY-xrn'
@@ -515,8 +517,7 @@ export function rawMail(options: {
     parts.push(`Content-Type: text/plain; charset=utf-8\n\n${options.text ?? 'Hi there'}`)
   }
   if (options.html) parts.push(`Content-Type: text/html; charset=utf-8\n\n${options.html}`)
-  if (options.attachment) {
-    const { name, type, body } = options.attachment
+  for (const { name, type, body } of [...(options.attachment ? [options.attachment] : []), ...(options.attachments ?? [])]) {
     parts.push(
       `Content-Type: ${type}; name="${name}"\nContent-Disposition: attachment; filename="${name}"\n` +
         `Content-Transfer-Encoding: base64\n\n${Buffer.from(body).toString('base64')}`

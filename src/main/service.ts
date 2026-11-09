@@ -198,6 +198,8 @@ export class MailService {
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
    *  changes, even if the account has been added back since. */
   private removals = new Map<string, number>()
+  /** Messages whose files are being listed from the whole message right now. */
+  private listing = new Set<number>()
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
@@ -766,15 +768,37 @@ export class MailService {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages
+  }
+
+  /** A message cut short when it was stored lists only the files in the part that was kept. Once
+   *  it's opened, the list is made again from the whole message, so each file can be opened, saved
+   *  and forwarded. Failing says nothing: the next look tries again. */
+  private async listFiles(id: number): Promise<void> {
+    if (this.listing.has(id)) return
+    this.listing.add(id)
+    try {
+      await this.wholeAttachments(id)
+      this.deps.changed()
+    } finally {
+      this.listing.delete(id)
+    }
   }
 
   contacts(text: string): Address[] {
     return text.trim() ? this.store.contacts(text, this.deps.now()) : []
   }
 
-  /** Fetched whole on demand: attachments aren't kept here. */
   async attachment(id: number, index: number): Promise<WholeAttachment> {
+    const found = (await this.wholeAttachments(id))[index]
+    if (!found) throw new Error("That attachment isn't in the message any more.")
+    return found
+  }
+
+  /** Fetched whole on demand: attachments aren't kept here. Their list is, and if it was made from a
+   *  cut copy, it's made again from this. */
+  private async wholeAttachments(id: number): Promise<WholeAttachment[]> {
     const message = this.store.message(id, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
     let source: MailSource | null = null
@@ -792,8 +816,9 @@ export class MailService {
     } finally {
       await source?.close().catch(() => undefined)
     }
-    const found = whole && (await attachmentsOf(whole))[index]
-    if (!found) throw new Error("That attachment isn't in the message any more.")
+    if (!whole) throw new Error("That attachment isn't in the message any more.")
+    const found = await attachmentsOf(whole)
+    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
     return found
   }
 
@@ -897,7 +922,8 @@ export class MailService {
       const id = this.store.addDraft({
         ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward')
       })
-      await this.carryAttachments(id, message.id, message.attachments.length)
+      // A cut message may have files its stored list doesn't know about.
+      if (message.attachments.length > 0 || message.truncated) await this.carryAttachments(id, message.id)
       return this.draftOrThrow(id)
     }
     const own = this.ownAddresses(message.account)
@@ -920,12 +946,12 @@ export class MailService {
     return draft
   }
 
-  /** A forward takes the attachments with it. Being offline loses them and says so. */
-  private async carryAttachments(id: number, message: number, count: number): Promise<void> {
+  /** A forward takes every attachment the whole message has, not only those in the list kept here.
+   *  Being offline loses them and says so. */
+  private async carryAttachments(id: number, message: number): Promise<void> {
     const draft = this.draftOrThrow(id)
     try {
-      for (let index = 0; index < count; index++) {
-        const found = await this.attachment(message, index)
+      for (const found of await this.wholeAttachments(message)) {
         draft.files.push(this.deps.files.fromBytes(id, found.name, found.type, found.content))
       }
       this.store.saveDraft(draft)
