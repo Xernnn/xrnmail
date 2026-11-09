@@ -268,7 +268,7 @@ function QuickReply(props: {
   }
 
   return (
-    <section className="quick-reply" aria-label="Quick reply">
+    <div className="quick-reply">
       {props.answers.length > 0 && !text && (
         <div className="quick">
           {props.answers.map((words) => (
@@ -291,7 +291,7 @@ function QuickReply(props: {
           </button>
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 

@@ -105,6 +105,8 @@ export function App(): ReactNode {
   const searchBox = useRef<HTMLInputElement>(null)
   const listAsked = useRef(0)
   const anchor = useRef<number | null>(null)
+  /** A draft on its way to the composer, which Esc can still call off. */
+  const starting = useRef<{ off: boolean } | null>(null)
 
   const bump = useCallback(() => setVersion((v) => v + 1), [])
   const say = useCallback((text: string): void => setToast({ text }), [])
@@ -241,14 +243,22 @@ export function App(): ReactNode {
 
   const compose = useCallback(
     async (start: DraftStart) => {
+      const attempt = { off: false }
+      starting.current = attempt
       try {
         setComposing(await window.mail.startDraft(start))
       } catch (e) {
+        if (starting.current === attempt) starting.current = null
         say(problem(e))
       }
     },
     [say]
   )
+
+  // Once the composer is on screen it hears its own keys.
+  useEffect(() => {
+    starting.current = null
+  }, [composing?.id])
 
   /** The search box sits over the list, which one-pane reading hides, so that comes back first. */
   const focusSearch = useCallback((): void => {
@@ -489,7 +499,8 @@ export function App(): ReactNode {
         ArrowDown: () => move(1),
         ArrowUp: () => move(-1),
         Escape: () => {
-          if (picked.size > 0) setPicked(new Set())
+          if (starting.current) starting.current.off = true
+          else if (picked.size > 0) setPicked(new Set())
           else setOpen(null)
         },
         c: () => void compose({ kind: 'new' }),
@@ -697,7 +708,7 @@ export function App(): ReactNode {
         </div>
       </div>
       {composing && (
-        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent}
+        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
           close={(saved) => {
             setComposing(null)
             if (saved) say('Saved to Drafts')

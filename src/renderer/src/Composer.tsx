@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
@@ -114,6 +114,8 @@ export function Composer(props: {
   settings: Settings | null
   close(saved: boolean): void
   sent(id: number, when: number, scheduled: boolean): void
+  /** How it was asked for: Esc may have been pressed before it could open. */
+  starting?: { off: boolean } | null
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -196,6 +198,11 @@ export function Composer(props: {
     gone.current = true
     props.close(true)
   }
+
+  // An Esc pressed while this was on its way counts as pressed here.
+  useLayoutEffect(() => {
+    if (props.starting?.off) void closeUp()
+  }, [])
 
   const discard = async (): Promise<void> => {
     gone.current = true

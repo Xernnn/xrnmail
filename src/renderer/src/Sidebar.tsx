@@ -93,11 +93,12 @@ export function Sidebar(props: {
   }
 
   /** A heading that folds what's under it away, remembered on this laptop. */
-  const section = (id: string, title: string, label: string, body: ReactNode): ReactNode => {
+  const section = (id: string, title: string, label: string, body: ReactNode, color?: string): ReactNode => {
     const open = !closed.has(id)
     return (
       <div className="nav-section" key={id}>
         <button className="nav-section-head" aria-expanded={open} aria-label={label} onClick={() => toggle(id)}>
+          {color && <span className="dot" style={{ background: color }} aria-hidden="true" />}
           <span className="grow">{title}</span>
           <ChevronDown className="nav-chevron" size={14} aria-hidden="true" />
         </button>
@@ -155,7 +156,7 @@ export function Sidebar(props: {
           {item('Today', { kind: 'today' }, { icon: CalendarDays })}
           {item('Attachments', { kind: 'attachments' }, { icon: Paperclip })}
         </div>
-        {accounts.map((a) => section(`account:${a.email}`, a.email, `Folders of ${a.email}`, folders(a)))}
+        {accounts.map((a) => section(`account:${a.email}`, a.email, `Folders of ${a.email}`, folders(a), many ? a.color : undefined))}
         {section('assistant', 'Assistant', 'Assistant', (
           <>
             {ASSISTANT.map(([kind, label, icon]) => (

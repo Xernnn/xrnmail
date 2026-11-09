@@ -63,7 +63,7 @@
     --muted: #9aa0a9;
     --accent: #5b93ff;
     --accent-ink: #8ab4ff;
-    --accent-soft: rgb(91 147 255 / 0.16);
+    --accent-soft: #1f2a40;
     --primary: #2f6fe4;
     --primary-hover: #3a7af0;
     --on-primary: #ffffff;
@@ -99,7 +99,7 @@
   --muted: #9aa0a9;
   --accent: #5b93ff;
   --accent-ink: #8ab4ff;
-  --accent-soft: rgb(91 147 255 / 0.16);
+  --accent-soft: #1f2a40;
   --primary: #2f6fe4;
   --primary-hover: #3a7af0;
   --on-primary: #ffffff;
@@ -221,6 +221,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .nav-section-head { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 10px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 600; transition: color 0.1s; }
 .nav-section-head .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-section-head:hover { color: var(--text); }
+.nav-section-head .dot { width: 7px; height: 7px; margin-right: 2px; }
 .nav-chevron { flex: none; opacity: 0.8; transition: transform 0.15s var(--ease); }
 .nav-section-head[aria-expanded="false"] .nav-chevron { transform: rotate(-90deg); }
 .nav-section-body { padding-top: 2px; }
@@ -289,13 +290,14 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .list-section { position: sticky; top: 0; z-index: 2; padding: 10px 20px 6px; background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
 
 .thread { position: relative; margin: 0 8px; border-radius: 10px; overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 76px; scroll-margin: 36px 0 8px; }
-.thread-card { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 22px; background: var(--bg); transition: transform 0.15s var(--ease); }
+.thread-card { --row-bg: var(--bg); position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 22px; background: var(--row-bg); transition: transform 0.15s var(--ease); }
 .thread-card::after { content: ""; position: absolute; left: 74px; right: 12px; bottom: 0; height: 1px; background: var(--line-soft); }
-.thread:hover .thread-card { background: var(--hover-solid); }
-.thread.picked .thread-card { background: var(--accent-soft); }
-.thread.on .thread-card { background: var(--selected); color: var(--on-selected); }
+.thread:hover .thread-card { --row-bg: var(--hover-solid); }
+.thread.picked .thread-card { --row-bg: var(--accent-soft); }
+.thread.on .thread-card { --row-bg: var(--selected); color: var(--on-selected); }
 .thread:hover .thread-card::after, .thread.on .thread-card::after, .thread.picked .thread-card::after,
-.thread:has(+ .thread.on) .thread-card::after, .thread:has(+ .list-section) .thread-card::after, .thread:last-child .thread-card::after { opacity: 0; }
+.thread:has(+ .thread.on) .thread-card::after, .thread:has(+ .list-section) .thread-card::after, .thread:last-child .thread-card::after,
+.thread-card:has(:focus-visible)::after { opacity: 0; }
 .thread-card:has(.thread-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
 .thread.on .thread-card:has(.thread-open:focus-visible) { outline-color: var(--on-selected); }
 .thread-open:focus-visible { outline: none; }
@@ -327,12 +329,10 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .thread.on time, .thread.on .mark { color: rgb(255 255 255 / 0.9); }
 .thread.on .mark.star { color: #ffd166; }
 .thread.on .snippet { color: rgb(255 255 255 / 0.9); }
-.row-actions { position: absolute; top: 6px; right: 8px; display: none; align-items: center; padding-left: 18px; background: linear-gradient(to right, transparent, var(--hover-solid) 16px); }
+.row-actions { position: absolute; top: 6px; right: 8px; display: none; align-items: center; padding-left: 18px; background: linear-gradient(to right, transparent, var(--row-bg) 16px); }
 .row-actions .icon { width: 28px; height: 28px; border-radius: 7px; }
 .thread:hover .row-actions, .thread:has(:focus-visible) .row-actions { display: flex; }
 .thread:hover time, .thread:has(:focus-visible) time { visibility: hidden; }
-.thread.picked .row-actions { background: linear-gradient(to right, transparent, var(--accent-soft) 16px); }
-.thread.on .row-actions { background: linear-gradient(to right, transparent, var(--selected) 16px); }
 .thread.on .row-actions .icon { color: var(--on-selected); }
 .thread.on .row-actions .icon:hover { background: rgb(255 255 255 / 0.18); }
 .compact .thread-card { padding-block: 6px; }
@@ -431,6 +431,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .quick-box textarea::placeholder { color: var(--muted); }
 .quick-tools { flex: none; display: flex; align-items: center; gap: 4px; }
 .quick-tools .primary { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 10px; }
+.quick-tools .primary:disabled { background: var(--surface-2); color: var(--muted); opacity: 1; }
 .peek { position: absolute; left: 0; bottom: 0; max-width: 80%; padding: 4px 12px; background: var(--surface); border: 1px solid var(--line); border-left: 0; border-bottom: 0; border-top-right-radius: 9px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Dialogs of the app's own */
