@@ -9,6 +9,8 @@ export class FakeSmtp {
   received = 0
   /** Takes the message, then hangs up instead of confirming: the sender can't tell if it went. */
   dropAfterData = false
+  /** Waits for this before confirming a message, as a slow server does. */
+  hold: Promise<void> | null = null
   delivered: (raw: string) => void = () => undefined
   /** Takes this token and no password. */
   token: string | null = null
@@ -58,9 +60,14 @@ export class FakeSmtp {
           body = null
           this.received++
           if (this.dropAfterData) return void socket.destroy()
-          this.sent.push({ from, to, raw })
-          this.delivered(raw)
-          socket.write('250 2.0.0 accepted\r\n')
+          const message = { from, to, raw }
+          const accept = (): void => {
+            this.sent.push(message)
+            this.delivered(raw)
+            socket.write('250 2.0.0 accepted\r\n')
+          }
+          if (this.hold) void this.hold.then(accept)
+          else accept()
           continue
         }
         const verb = line.split(/[ :]/)[0]?.toUpperCase()

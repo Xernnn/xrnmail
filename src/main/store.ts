@@ -837,6 +837,15 @@ export class Store {
     return this.all("SELECT * FROM drafts WHERE state = 'queued' AND send_at <= ? ORDER BY send_at", now).map((r) => this.draftFrom(r))
   }
 
+  /** Marks a draft as on its way, only if it's still queued from [account] and its time has come, and
+   *  returns it as it is now. After this the page can neither change it nor throw it away. */
+  claimDraft(id: number, account: string, now: number): Draft | null {
+    const taken = this.db
+      .prepare("UPDATE drafts SET state = 'sending' WHERE id = ? AND account = ? AND state = 'queued' AND send_at <= ?")
+      .run(id, account, now)
+    return Number(taken.changes) === 1 ? this.draft(id) : null
+  }
+
   /** Whatever was mid-send when the app stopped may or may not have gone. It's never sent twice on a
    *  guess, so it's handed back to be looked at. */
   failInterrupted(message: string): void {

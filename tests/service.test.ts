@@ -668,6 +668,27 @@ describe('sending', () => {
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'This may not have been sent. Check Sent before trying again.' })
   })
 
+  it('sends nothing called back, changed or thrown away while another message was going', async () => {
+    const [first, second, third] = [await write({ subject: 'First' }), await write({ subject: 'Second' }), await write({ subject: 'Third' })]
+    let release = (): void => undefined
+    smtp.hold = new Promise((resolve) => (release = resolve))
+    for (const draft of [first, second, third]) {
+      service.send(draft.id)
+      clock += 1
+    }
+    clock += 10_000
+    const sending = service.tick()
+    await eventually(() => expect(smtp.received).toBe(1)) // the first is with the server, and taking its time
+    service.unsend(second.id)
+    service.saveDraft(second.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Second, changed', html: 'x', text: 'x', quote: null })
+    service.discardDraft(third.id)
+    smtp.hold = null
+    release()
+    await sending
+    expect(smtp.sent.map((m) => /^Subject: ([^\r\n]*)/m.exec(m.raw)?.[1])).toEqual(['First'])
+    expect(service.drafts()).toMatchObject([{ id: second.id, state: 'draft', subject: 'Second, changed' }])
+  })
+
   it('a send cut off by the app stopping comes back to be checked, not sent again', async () => {
     const draft = await write()
     store.saveDraft({ ...store.draft(draft.id)!, state: 'sending' })

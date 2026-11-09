@@ -93,6 +93,10 @@ is all Undo and "send later" are. `tick()` sends what's due.
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
 - Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
   attempt, so a crash comes back the same way instead of as a retry.
+- **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
+  changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
+  written if the draft is still queued and due at that moment, and what goes is the draft as it is
+  then, never as it was when the round began.
 
 Drafts stay on this laptop. Attachments are copied into the profile when chosen, so a message scheduled
 for later doesn't depend on where the file was.

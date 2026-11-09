@@ -1001,8 +1001,10 @@ export class MailService {
     this.sending = true
     const sent = new Set<string>()
     try {
-      for (const draft of this.store.dueDrafts(this.deps.now())) {
-        if (await this.sendOne(draft)) sent.add(draft.account)
+      // Only which ones: sending those before it can take a while, so each is read again at its turn.
+      for (const { id } of this.store.dueDrafts(this.deps.now())) {
+        const from = await this.sendOne(id)
+        if (from) sent.add(from)
       }
     } finally {
       this.sending = false
@@ -1010,21 +1012,33 @@ export class MailService {
     await Promise.all([...sent].map((email) => this.syncOne(email))) // brings it into Sent
   }
 
-  private async sendOne(draft: Draft): Promise<boolean> {
+  /** The account it went from, if it went. Until it's marked as sending, the person can call it
+   *  back, change it or throw it away, so it's read again after every wait, and sent as it is then. */
+  private async sendOne(id: number): Promise<string | null> {
+    const due = (): Draft | null => {
+      const draft = this.store.draft(id)
+      return draft?.state === 'queued' && draft.sendAt !== null && draft.sendAt <= this.deps.now() ? draft : null
+    }
+    const account = due()?.account
+    if (!account) return null
     let login: Login
     try {
-      login = await this.login(draft.account)
+      login = await this.login(account)
     } catch (e) {
+      const draft = due()
+      if (!draft) return null
       // Nothing has left. A lost connection can wait; a sign-in that's gone needs the person.
       const gone = (e as Error).message === SECRET_GONE || e instanceof SignInExpired
       this.store.saveDraft(gone
         ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
         : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
       this.deps.changed()
-      return false
+      return null
     }
-    // Written down first: if the app dies here, this comes back as "check Sent", not sent twice.
-    this.store.saveDraft({ ...draft, state: 'sending' })
+    // Written down first: if the app dies here, this comes back as "check Sent", not sent twice. Moved
+    // to another account meanwhile, it waits for the next turn and a sign-in of its own.
+    const draft = this.store.claimDraft(id, account, this.deps.now())
+    if (!draft) return null
     this.deps.changed()
     const config = this.config(draft.account)
     const sender = this.deps.openSender(config, login)
@@ -1033,14 +1047,14 @@ export class MailService {
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
-      return true
+      return draft.account
     } catch (e) {
       if (e instanceof NeverLeft) {
         this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
       } else {
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
       }
-      return false
+      return null
     } finally {
       sender.close()
       this.deps.changed()
