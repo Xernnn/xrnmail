@@ -562,6 +562,37 @@ describe('Outlook sign-in', () => {
     expect(secrets.get(`account:${O}`)).toBe('renew-2')
   })
 
+  /** As Microsoft does: a renewal works only with the application ID the sign-in was given to. */
+  const onlyFor = (clientId: string) => (body: string): unknown => body.includes(`client_id=${clientId}&`)
+    ? json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 })
+    : json({ error: 'invalid_grant' }, false)
+
+  it('renews each account with the application ID it signed in with', async () => {
+    microsoft({ refresh: onlyFor(CLIENT) })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    await service.startMicrosoft('you@outlook.com', '99999999-8888-7777-6666-555555555555') // begun, and left
+    outlook.options.token = 'token-2'
+    clock += 3_600_000
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+  })
+
+  it('an account from before each kept its own ID renews with the one in settings', async () => {
+    microsoft({ refresh: onlyFor(CLIENT) })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    const { clientId: _kept, ...before } = JSON.parse(store.meta(`config:${O}`) ?? '{}') as { clientId?: string }
+    store.setMeta(`config:${O}`, JSON.stringify(before))
+    store.setMeta('settings', JSON.stringify({ ...service.settings(), microsoftClientId: CLIENT }))
+    outlook.options.token = 'token-2'
+    clock += 3_600_000
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+  })
+
   it('asks to sign in again once Microsoft stops renewing, and keeps mail safe', async () => {
     outlook.add(rawMail({ subject: 'Kept' }), { arrived: new Date(at(8)) })
     microsoft({ refresh: json({ error: 'invalid_grant' }, false) })

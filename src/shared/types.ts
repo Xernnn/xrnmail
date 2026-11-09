@@ -95,7 +95,8 @@ export interface Settings {
   alwaysOther: string[]
   /** Senders left behind, so the list of subscriptions shrinks as it's worked through. */
   unsubscribed: string[]
-  /** For Outlook sign-in. Microsoft only lets a registered app in, and that's per person here. */
+  /** The application ID Outlook accounts added before each kept its own renew with. Left as it is:
+   *  a renewal only works with the ID its account signed in with. */
   microsoftClientId: string
   /** `panes` reads beside the list, `list` is one thing at a time. */
   layout: 'panes' | 'list'

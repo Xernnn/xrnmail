@@ -357,7 +357,6 @@ export class MailService {
     } catch (e) {
       throw new Error((e as Error).message.includes('application ID') ? (e as Error).message : "Couldn't reach Microsoft.")
     }
-    this.saveSettings({ ...this.settings(), microsoftClientId: clientId })
     this.signingIn = { email, clientId, code }
     return { code: code.userCode, url: code.url }
   }
@@ -378,7 +377,7 @@ export class MailService {
     const chosen = provider('outlook')
     // Personal addresses and company ones use different outgoing servers.
     const smtp = chosen.domains.includes(domain) ? chosen.smtp : { ...chosen.smtp, host: 'smtp.office365.com' }
-    const config = await this.verify(configFor(email, chosen, { smtp }), { secret: '', accessToken: tokens.access })
+    const config = await this.verify(configFor(email, chosen, { smtp, clientId }), { secret: '', accessToken: tokens.access })
     this.tokens.set(email, tokens)
     this.keepAccount(email, config, tokens.refresh)
   }
@@ -417,11 +416,13 @@ export class MailService {
     const key = `account:${email}`
     const secret = this.deps.secrets.get(key)
     if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
-    if (this.config(email).signIn !== 'microsoft') return { secret }
+    const config = this.config(email)
+    if (config.signIn !== 'microsoft') return { secret }
     const held = this.tokens.get(email)
     const now = this.deps.now()
     if (held && held.expiresAt > now + TOKEN_MARGIN_MS) return { secret: '', accessToken: held.access }
-    const tokens = await refreshTokens(this.post, this.settings().microsoftClientId, secret, now)
+    // An account from before each kept its own ID used the one in settings, which nothing changes now.
+    const tokens = await refreshTokens(this.post, config.clientId || this.settings().microsoftClientId, secret, now)
     this.tokens.set(email, tokens)
     if (tokens.refresh !== secret) this.deps.secrets.set(`account:${email}`, tokens.refresh)
     return { secret: '', accessToken: tokens.access }

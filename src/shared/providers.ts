@@ -86,6 +86,8 @@ export interface AccountConfig {
   savesSent: boolean
   /** Has Gmail's labels and threads, which only the server can say for sure. */
   gmail: boolean
+  /** For Microsoft sign-in: the application ID it signed in with. Its renewals work with no other. */
+  clientId?: string
 }
 
 export function configFor(email: string, chosen: Provider, over: Partial<AccountConfig> = {}): AccountConfig {

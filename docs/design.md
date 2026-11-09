@@ -38,10 +38,11 @@ filter on `bin = 0`.
   offering it never gets the password. Plain text isn't accepted from the form. The fake servers use a
   value that only code can set.
 - Outlook has no passwords, so it signs in with the device-code flow and XOAUTH2. The Application ID is
-  the person's own: reusing another mail app's would be pretending to be that app. The refresh token
-  goes in the keyring like a password, and access tokens stay in memory. Only Microsoft refusing a
-  renewal outright asks to sign in again. Busy, failing and rate-limited answers (5xx, 429,
-  `temporarily_unavailable`) are waited out like a lost connection, and mail due to go stays queued.
+  the person's own: reusing another mail app's would be pretending to be that app. Each account keeps
+  the ID it signed in with, because its renewals work with no other. The refresh token goes in the
+  keyring like a password, and access tokens stay in memory. Only Microsoft refusing a renewal outright
+  asks to sign in again. Busy, failing and rate-limited answers (5xx, 429, `temporarily_unavailable`)
+  are waited out like a lost connection, and mail due to go stays queued.
 
 ## Reading and changing are kept apart
 
