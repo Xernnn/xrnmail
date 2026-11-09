@@ -192,6 +192,9 @@ export class MailService {
   private rewatch: NodeJS.Timeout | null = null
   /** Something arrived during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** How many times each account has been removed. A pass notes it as it starts, and stops when it
+   *  changes, even if the account has been added back since. */
+  private removals = new Map<string, number>()
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
@@ -422,6 +425,7 @@ export class MailService {
 
   removeAccount(email: string): void {
     this.saveEmails(this.emails().filter((e) => e !== email))
+    this.removals.set(email, (this.removals.get(email) ?? 0) + 1)
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
@@ -444,6 +448,7 @@ export class MailService {
   }
 
   private async syncOne(email: string): Promise<void> {
+    if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
     if (status.syncing) return
     status.syncing = true
@@ -505,6 +510,9 @@ export class MailService {
   }
 
   private async pass(email: string): Promise<void> {
+    if (!this.emails().includes(email)) return // removed while this waited its turn
+    const removals = this.removals.get(email) ?? 0
+    const removed = (): boolean => (this.removals.get(email) ?? 0) !== removals
     const status = this.statusOf(email)
     const settings = this.settings()
     const config = this.config(email)
@@ -539,6 +547,7 @@ export class MailService {
           this.deps.changed()
         },
         busy: (box) => this.store.busyUids(email, box),
+        stopped: removed,
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
@@ -558,6 +567,12 @@ export class MailService {
       status.syncing = false
       status.progress = null
       this.deps.changed()
+    }
+    if (removed()) {
+      // It stopped at its next step. Anything it kept before that goes the way of the account.
+      this.store.wipeAccount(email)
+      this.store.deleteMeta(`folders:${email}`)
+      return
     }
     const unwanted = this.store.locate(blocked).map((row) => this.store.visibleState(row.id)).filter((s) => s !== null)
     if (unwanted.length > 0) this.change(email, unwanted, { kind: 'trash' }, this.nextGroup(), 0)

@@ -114,6 +114,23 @@ describe('accounts', () => {
     expect(secrets.get(`account:${ME}`)).toBeNull()
   })
 
+  it('removing one in the middle of its first sync leaves none of its mail behind', async () => {
+    for (let i = 0; i < 120; i++) gmail.add(rawMail({ subject: `Old ${i}` }), { arrived: new Date(at(8)) })
+    let removed = false
+    changed.mockImplementation(() => {
+      if (removed || !service.accounts()[0]?.progress) return
+      removed = true // the first of three batches is in
+      setImmediate(() => service.removeAccount(ME))
+    })
+    await service.addAccount({ email: ME, secret: gmail.secret, provider: GMAIL })
+    await eventually(() => expect(removed).toBe(true))
+    await eventually(() => expect(gmail.connections).toBe(0)) // the pass has ended
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(service.list({ kind: 'inbox' })).toEqual([])
+    expect(store.uids(ME, '@all').size).toBe(0)
+    expect([store.holdFrom(ME), store.boxState(ME, '@all')]).toEqual([null, null])
+  })
+
   it('says what went wrong without showing what a server said', () => {
     expect(describeFailure({ authenticationFailed: true })).toContain('refused')
     expect(describeFailure(new Error('<b>server text</b>'))).toBe("Couldn't reach the mail server.")

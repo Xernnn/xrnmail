@@ -25,6 +25,16 @@ export interface SyncOptions {
   busy?: (box: string) => Set<number>
   /** Which side of the inbox it goes, and what the Assistant makes of it. */
   sort?: (mail: ParsedMail) => Sorted
+  /** True once the account has been removed. Asked before every folder, batch and message, so a
+   *  pass that's under way stops instead of putting the mail back. */
+  stopped?: () => boolean
+}
+
+/** The account was removed while its pass was running. */
+class SyncStopped extends Error {}
+
+function goOn(options: SyncOptions): void {
+  if (options.stopped?.()) throw new SyncStopped('The account was removed.')
 }
 
 export interface SyncResult {
@@ -109,10 +119,12 @@ async function syncBox(source: MailSource, store: Store, options: SyncOptions, b
     const missing = remoteUids.filter((uid) => !have.has(uid)).reverse()
     let added = 0
     for (let i = 0; i < missing.length; i += CHUNK) {
+      goOn(options)
       const wanted = new Set(missing.slice(i, i + CHUNK))
       for await (const remote of source.fetch([...wanted], MAX_SOURCE)) {
         if (!wanted.has(remote.uid)) continue
         const stored = await toStored(remote, box, source.gmail, options, holdFrom)
+        goOn(options)
         const id = store.addMail(stored)
         added++
         if (id !== null && !startingOver) options.added?.(stored, id, holdFrom)
@@ -154,6 +166,7 @@ export async function syncAccount(source: MailSource, store: Store, options: Syn
   const total: SyncResult = { added: 0, changed: 0, removed: 0 }
   const boxes = source.mailboxes()
   for (const box of boxes) {
+    goOn(options)
     try {
       const result = await syncBox(source, store, options, box, holdFrom)
       total.added += result.added
@@ -163,6 +176,7 @@ export async function syncAccount(source: MailSource, store: Store, options: Syn
       if (!refusedFolder(e, box)) throw e
     }
   }
+  goOn(options)
   store.keepBoxes(options.account, boxes.map((box) => box.id))
   store.dropOlderThan(options.account, options.now - options.backfillDays * DAY_MS - EDGE_MS)
   store.saveHoldFrom(options.account, holdFrom)

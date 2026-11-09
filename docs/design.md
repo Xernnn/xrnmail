@@ -115,6 +115,9 @@ stopping the rest.
 - What's gone is whatever the folder's search didn't return, so a search that's turned down or cut off
   has to fail, and forgets nothing. imapflow answers those with `false` or nothing at all, and taking
   either for an empty folder would forget every message in it.
+- Removing an account stops a pass that's under way at its next folder, batch or message, and anything
+  it kept goes with the account. Otherwise a first sync carried on filling the shared inbox with mail
+  from an account that was no longer there, and nothing would ever take it out.
 - `UIDVALIDITY` changing means every stored UID in that folder now points at the wrong message, so that
   folder starts over, keeping the moment holding began.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
