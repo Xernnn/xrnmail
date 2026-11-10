@@ -33,7 +33,7 @@ beforeEach(async () => {
   gmail = new FakeGmail()
   const port = await gmail.listen()
   store = new Store(':memory:')
-  config = { host: '127.0.0.1', port, secure: false, user: 'me@example.com', secret: gmail.secret }
+  config = { host: '127.0.0.1', port, security: 'none', user: 'me@example.com', secret: gmail.secret }
   now = Date.now()
 })
 
@@ -167,10 +167,10 @@ describe('later syncs', () => {
   it('keeps when holding started, even after a renumbering', async () => {
     gmail.add(rawMail({ subject: 'Before' }))
     await sync()
-    const first = store.syncState(ACCOUNT)?.holdFrom
+    const first = store.holdFrom(ACCOUNT)
     gmail.uidValidity = 2
     await sync({ now: now + 5000 })
-    expect(store.syncState(ACCOUNT)?.holdFrom).toBe(first)
+    expect(store.holdFrom(ACCOUNT)).toBe(first)
   })
 })
 

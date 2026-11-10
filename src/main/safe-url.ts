@@ -21,6 +21,56 @@ export function isSafeHubUrl(raw: string): boolean {
   }
 }
 
+/** For a request the app makes itself because a stranger's header said to: https to a public name
+ *  only, so an email can't aim it at this laptop or the network it's on. */
+export function isPublicHttps(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.username || url.password) return false
+    const host = url.hostname.toLowerCase()
+    if (host.startsWith('[') || /^[\d.]+$/.test(host) || !host.includes('.')) return false
+    return !/(^|\.)(localhost|local|internal|intranet|lan|home|corp)$/.test(host)
+  } catch {
+    return false
+  }
+}
+
+const OPENABLE = new Set([
+  'pdf', 'txt', 'md', 'csv', 'tsv', 'log', 'rtf',
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic',
+  'mp3', 'wav', 'ogg', 'flac', 'm4a', 'mp4', 'mov', 'mkv', 'webm',
+  'zip', 'tar', 'gz', '7z', 'rar', 'ics', 'vcf'
+])
+
+/** Whether an attachment may be opened straight away, which hands a stranger's file to whatever
+ *  handles its type. A list of what's fine, because a list of what isn't would miss something, and
+ *  everything else can still be saved. */
+export function canOpenDirectly(name: string): boolean {
+  const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
+  return extension !== undefined && OPENABLE.has(extension)
+}
+
+/** A name fit to suggest for saving: a stranger wrote it. */
+export function safeFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? ''
+  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '').replace(/^\.+/, '').trim().slice(-200)
+  return clean || 'attachment'
+}
+
+const TRACKING: Record<string, (number: string) => string> = {
+  UPS: (n) => `https://www.ups.com/track?tracknum=${n}`,
+  USPS: (n) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}`,
+  FedEx: (n) => `https://www.fedex.com/fedextrack/?trknbr=${n}`,
+  DHL: (n) => `https://www.dhl.com/global-en/home/tracking.html?tracking-id=${n}`
+}
+
+/** A carrier's own page for a parcel. The address is ours, never one from the message, so a fake
+ *  shipping notice can't turn "Track" into a link of its choosing. */
+export function trackingUrl(carrier: string, number: string): string | null {
+  return /^[A-Za-z0-9-]+$/.test(number) ? (TRACKING[carrier]?.(number) ?? null) : null
+}
+
 /** Gmail's own page for a thread. IMAP gives the id in decimal; the web address wants hex. */
 export function gmailThreadUrl(email: string, thread: string): string {
   const id = /^\d+$/.test(thread) ? BigInt(thread).toString(16) : ''

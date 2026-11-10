@@ -1,67 +1,217 @@
-import type { AccountView, BatchSettings, ListQuery, MessageView, Overview, Settings, ThreadRow } from '@shared/types'
-import { dayKey, isTime, nextBatchAfter, releaseAt } from './batches'
-import { gmailThreadUrl, isSafeHubUrl } from './safe-url'
+import type {
+  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView,
+  NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+} from '@shared/types'
+import { configFor, provider, providerFor, type Provider } from '@shared/providers'
+import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
+import { sortMail } from './assistant'
+import { dayKey, isTime, isVip, nextBatchAfter, releaseAt } from './batches'
+import { escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
+import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
+import { replyIcs } from './invite'
+import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
+import { attachmentsOf, makeSnippet, type WholeAttachment } from './parse'
+import { gmailThreadUrl, isPublicHttps, isSafeHubUrl } from './safe-url'
 import type { Secrets } from './secrets'
-import type { MailSource } from './source'
-import type { Store } from './store'
+import { describeSendFailure, NeverLeft, type MailSender } from './sender'
+import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import type { Located, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
+import { Refused, type MailWriter, type Moved } from './writer'
 
 /** Everything the app does, with the clock and the outside world passed in. */
 
 export const EARLY_WAIT_S = 30
+/** How long Undo has before a change sets off for the server. The page offers it for less than this. */
+export const UNDO_MS = 6_000
+const RETRY_MS = 60_000
+const REFUSALS_ALLOWED = 3
+const NOT_SURE_SENT = 'The app stopped while sending this. Check Sent before trying again.'
+const SECRET_GONE = 'Add this account again: its password is gone.'
+/** The password is still kept, behind a keyring that wasn't open when the app first asked. The
+ *  answer to that first question lasts as long as the app does, hence the restart. */
+const KEYRING_SHUT = 'Unlock your system keyring, then restart xrnmail.'
+const SIGN_IN_AGAIN = 'Sign in to this account again.'
+/** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
+const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
+const TOKEN_MARGIN_MS = 60_000
+/** A successful sync clears a sync error, and something like a change that was put back has to
+ *  stay on screen longer than that to be read at all. */
+const NOTE_MS = 10 * 60_000
 
 const DEFAULT_SETTINGS: Settings = {
   batch: { times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
   backfillDays: 90,
-  hub: { url: '', user: '', connected: false }
+  hub: { url: '', user: '', connected: false },
+  identities: {},
+  templates: [],
+  blocked: [],
+  undoSeconds: 10,
+  theme: 'system',
+  focused: true,
+  alwaysFocused: [],
+  alwaysOther: [],
+  unsubscribed: [],
+  microsoftClientId: '',
+  layout: 'panes',
+  density: 'comfortable',
+  swipeLeft: 'trash',
+  swipeRight: 'archive',
+  background: true,
+  startAtLogin: false,
+  images: 'ask',
+  imagesFrom: []
 }
+
+const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
+const swipe = (value: SwipeAction | undefined, fallback: SwipeAction): SwipeAction => (value && SWIPES.includes(value) ? value : fallback)
+
+const ACCOUNT_COLORS = ['#5e7f1b', '#2f6fb2', '#b4532a', '#7a4fb5', '#0f8a7e', '#b03a6a']
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 const HUB_SECRET = 'hub'
 
+/** What signs in: a password, or a token for services that have dropped passwords. */
+export interface Login {
+  secret: string
+  accessToken?: string
+}
+
+/** A domain's public records, for working out who runs its mail. */
+export interface DomainRecords {
+  mx(domain: string): Promise<string[]>
+  srv(name: string): Promise<{ name: string; port: number } | null>
+}
+
 export interface ServiceDeps {
   store: Store
   secrets: Secrets
-  openSource(email: string, secret: string): MailSource
+  openSource(account: AccountConfig, login: Login): MailSource
+  openWriter(account: AccountConfig, login: Login): MailWriter
+  openSender(account: AccountConfig, login: Login): MailSender
+  /** Not given, the inbox is only looked at on each sync. */
+  openWatcher?(account: AccountConfig, login: Login): MailWatcher
+  files: DraftFiles
   now(): number
   /** Something on screen may be out of date. */
   changed(): void
-  /** A batch just landed. */
-  landed?(count: number): void
+  /** New mail landed. [preview] says who and what, when it's one message found the moment it came. */
+  landed?(count: number, preview?: { from: string; subject: string }): void
   post?: typeof fetch
+  records?: DomainRecords
   earlyWaitSeconds?: number
 }
+
+/** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
+ *  was unfinished is still queued and carries on next time. */
+export const background = (work: Promise<unknown>): void => void work.catch(() => undefined)
 
 const clamp = (value: number, low: number, high: number): number =>
   Math.min(high, Math.max(low, Math.round(Number.isFinite(value) ? value : low)))
 
 const unique = (items: string[]): string[] => [...new Set(items)]
 
+const cleanSenders = (senders: string[]): string[] =>
+  unique(senders.map((v) => v.trim().toLowerCase()).filter((v) => v.includes('@'))).slice(0, 200)
+
+/** Text set as a new draft's body, in the form the editor keeps. */
+const escapeForEditor = (text: string): string => escapeHtml(text).replace(/\r?\n/g, '<br>')
+
 export function cleanBatch(batch: BatchSettings): BatchSettings {
   return {
     times: unique(batch.times.filter(isTime)).sort().slice(0, 12),
-    vip: unique(batch.vip.map((v) => v.trim().toLowerCase()).filter((v) => v.includes('@'))).slice(0, 200),
+    vip: cleanSenders(batch.vip),
     earlyPerDay: clamp(batch.earlyPerDay, 0, 5)
   }
 }
 
 /** Fixed words: what a server says is never shown, and can't carry anything back to the page. */
-export function describeFailure(error: unknown): string {
+export function describeFailure(error: unknown, service = 'the mail server'): string {
   const e = error as { authenticationFailed?: boolean; message?: string }
-  if (e?.authenticationFailed) return 'Gmail refused this app password.'
-  if (e?.message?.includes('All Mail')) return e.message
-  if (e?.message?.includes('read-only')) return e.message
-  return "Couldn't reach Gmail."
+  if (error instanceof SignInExpired) return SIGN_IN_AGAIN
+  if (e?.authenticationFailed) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
+  if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
+  if (e?.message?.includes('read-only')) return String(e.message)
+  return `Couldn't reach ${service}.`
+}
+
+const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i
+
+/** A server someone typed in. Plain connections aren't possible: only the two kinds of TLS pass. */
+function checkServer(server: Server | undefined, what: string): Server {
+  const fine = server && HOST.test(server.host) && Number.isInteger(server.port) && server.port > 0 && server.port < 65536 &&
+    (server.security === 'tls' || server.security === 'starttls')
+  if (!fine) throw new Error(`Check the ${what} server.`)
+  return { host: server.host.toLowerCase(), port: server.port, security: server.security }
+}
+
+/** Who runs a domain's mail, by where its MX records point. */
+const MX_OWNERS: [RegExp, string][] = [
+  [/\.(google|googlemail)\.com\.?$/i, 'gmail'],
+  [/\.(outlook|hotmail)\.com\.?$/i, 'outlook'],
+  [/\.mail\.icloud\.com\.?$/i, 'icloud'],
+  [/\.messagingengine\.com\.?$/i, 'fastmail'],
+  [/\.zoho\.[a-z.]+$/i, 'zoho'],
+  [/\.yahoodns\.net\.?$/i, 'yahoo']
+]
+
+const lower = (items: string[]): string[] => items.map((v) => v.trim().toLowerCase())
+
+type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progress'>
+
+/** How many messages have to be coming before it's worth saying so. */
+const WORTH_SHOWING = 40
+/** How long a lost watch on the inbox waits before trying again. Syncs carry on regardless. */
+const WATCH_RETRY_MS = 60_000
+/** How many previews are remade at a time, so the app stays quick while it happens. */
+const SNIPPET_STEP = 50
+
+/** One account's watch on its inbox, from the moment it starts signing in. */
+interface Watch {
+  stopped: boolean
+  watcher: MailWatcher | null
 }
 
 export class MailService {
-  private status = new Map<string, Pick<AccountView, 'syncedAt' | 'syncing' | 'error'>>()
+  private status = new Map<string, AccountStatus>()
   private lastTick: number
   private earlyStarted: number | null = null
   private lastHeld: number | null = null
+  /** One thing at a time per account: a sync reading Gmail while a change is on its way could put
+   *  back what was just archived. */
+  private lanes = new Map<string, Promise<unknown>>()
+  private flushQueued = new Set<string>()
+  private sending = false
+  private group: number
+  /** Short-lived tokens, kept only in memory. What renews them is in the keyring. */
+  private tokens = new Map<string, Tokens>()
+  private signingIn: { email: string; clientId: string; code: DeviceCode } | null = null
+  private notes = new Map<string, { text: string; until: number }>()
+  /** In here before it has signed in, so a second can't start alongside it, and only a watch's own
+   *  entry is taken out when it ends: a newer one may have it by then. */
+  private watchers = new Map<string, Watch>()
+  private watching = false
+  private rewatch: NodeJS.Timeout | null = null
+  /** Something arrived during a sync, too late for it to have seen. */
+  private syncAgain = new Set<string>()
+  /** How many times each account has been removed. A pass notes it as it starts, and stops when it
+   *  changes, even if the account has been added back since. */
+  private removals = new Map<string, number>()
+  /** Messages whose files are being listed from the whole message right now. */
+  private listing = new Set<number>()
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
+    this.group = Math.max(deps.store.lastActionGroup(), deps.now())
+    deps.store.failInterrupted(NOT_SURE_SENT)
+  }
+
+  private inLane<T>(email: string, work: () => Promise<T>): Promise<T> {
+    const last = this.lanes.get(email) ?? Promise.resolve()
+    const next = last.then(work, work)
+    this.lanes.set(email, next.catch(() => undefined))
+    return next
   }
 
   private get store(): Store {
@@ -80,45 +230,222 @@ export class MailService {
     this.store.setMeta('accounts', JSON.stringify(emails))
   }
 
-  private statusOf(email: string): Pick<AccountView, 'syncedAt' | 'syncing' | 'error'> {
+  private statusOf(email: string): AccountStatus {
     let found = this.status.get(email)
     if (!found) {
-      found = { syncedAt: null, syncing: false, error: null }
+      found = { syncedAt: null, syncing: false, error: null, progress: null }
       this.status.set(email, found)
     }
     return found
   }
 
-  accounts(): AccountView[] {
-    return this.emails().map((email) => ({ id: email, email, ...this.statusOf(email) }))
+  /** How to reach an account. One added before there were other services is Gmail. */
+  private config(email: string): AccountConfig {
+    try {
+      const saved = JSON.parse(this.store.meta(`config:${email}`) ?? 'null') as AccountConfig | null
+      if (saved) return saved
+    } catch {
+      // Falls through.
+    }
+    return configFor(email, provider('gmail'))
   }
 
-  /** Signs in first, so a wrong app password is said here and not found later. */
-  async addAccount(rawEmail: string, secret: string): Promise<void> {
-    const email = rawEmail.trim().toLowerCase()
-    if (!EMAIL.test(email)) throw new Error("That isn't an email address.")
-    if (!secret.trim()) throw new Error('Paste the app password.')
-    if (!this.deps.secrets.available()) throw new Error('Unlock your system keyring first.')
-    if (this.emails().includes(email)) throw new Error('That account is already here.')
-    const source = this.deps.openSource(email, secret)
+  private serviceName(email: string): string {
+    const name = provider(this.config(email).provider).name
+    return name === 'Other' ? 'the mail server' : name
+  }
+
+  private folders(email: string): string[] {
+    try {
+      return JSON.parse(this.store.meta(`folders:${email}`) ?? '[]') as string[]
+    } catch {
+      return []
+    }
+  }
+
+  private noteFolders(email: string, source: MailSource): void {
+    const paths = source.mailboxes().filter((box) => box.role === 'folder').map((box) => box.path)
+    this.store.setMeta(`folders:${email}`, JSON.stringify(paths))
+  }
+
+  accounts(): AccountView[] {
+    const now = this.deps.now()
+    return this.emails().map((email) => {
+      const config = this.config(email)
+      const status = this.statusOf(email)
+      const note = this.notes.get(email)
+      return {
+        id: email,
+        email,
+        ...status,
+        error: status.error ?? (note && note.until > now ? note.text : null),
+        provider: config.provider,
+        providerName: provider(config.provider).name,
+        labels: config.gmail,
+        folders: this.folders(email),
+        unread: this.store.unreadThreads(now, 'm.account = ?', email),
+        color: this.identity(email).color
+      }
+    })
+  }
+
+  /** Signs in to read and to send, so a wrong password is said here and not found later. */
+  private async verify(config: AccountConfig, login: Login): Promise<AccountConfig> {
+    const name = provider(config.provider).name
+    const service = name === 'Other' ? 'the mail server' : name
+    const source = this.deps.openSource(config, login)
+    let checked = config
     try {
       await source.connect()
-      await source.open()
+      const [first] = source.mailboxes()
+      if (first) await source.open(first)
+      checked = { ...config, gmail: source.gmail, savesSent: config.savesSent || source.gmail }
     } catch (e) {
-      throw new Error(describeFailure(e))
+      throw new Error(describeFailure(e, service))
     } finally {
       await source.close().catch(() => undefined)
     }
+    const sender = this.deps.openSender(checked, login)
+    try {
+      await sender.check()
+    } catch {
+      throw new Error(`Mail can be read, but ${service} wouldn't sign in to send.`)
+    } finally {
+      sender.close()
+    }
+    return checked
+  }
+
+  private keepAccount(email: string, config: AccountConfig, secret: string): void {
     this.deps.secrets.set(`account:${email}`, secret)
+    this.store.setMeta(`config:${email}`, JSON.stringify(config))
     this.saveEmails([...this.emails(), email])
     this.deps.changed()
-    void this.syncOne(email)
+    background(this.syncOne(email))
+    this.watch(email)
+  }
+
+  private cleanEmail(raw: string): string {
+    const email = raw.trim().toLowerCase()
+    if (!EMAIL.test(email)) throw new Error("That isn't an email address.")
+    if (!this.deps.secrets.available()) throw new Error('Unlock your system keyring first.')
+    if (this.emails().includes(email)) throw new Error('That account is already here.')
+    return email
+  }
+
+  async addAccount(account: NewAccount): Promise<void> {
+    const email = this.cleanEmail(account.email)
+    const chosen: Provider = provider(account.provider)
+    if (chosen.signIn === 'microsoft') throw new Error('Outlook signs in with Microsoft, not a password.')
+    if (!account.secret.trim()) throw new Error('Enter the password.')
+    const custom = chosen.id === 'other'
+    const config = configFor(email, chosen, custom ? {
+      imap: checkServer(account.imap, 'incoming'),
+      smtp: checkServer(account.smtp, 'outgoing'),
+      user: account.user?.trim() || email
+    } : {})
+    // A big service shows its app passwords in groups. On a server of someone's own, a space is a space.
+    const secret = custom ? account.secret : cleanSecret(account.secret)
+    this.keepAccount(email, await this.verify(config, { secret }), secret)
+  }
+
+  async startMicrosoft(rawEmail: string, rawClientId: string): Promise<{ code: string; url: string }> {
+    const email = this.cleanEmail(rawEmail)
+    const clientId = rawClientId.trim()
+    if (!/^[0-9a-f-]{36}$/i.test(clientId)) throw new Error('That application ID should look like 00000000-0000-0000-0000-000000000000.')
+    let code: DeviceCode
+    try {
+      code = await startDeviceCode(this.post, clientId, this.deps.now())
+    } catch (e) {
+      throw new Error((e as Error).message.includes('application ID') ? (e as Error).message : "Couldn't reach Microsoft.")
+    }
+    this.signingIn = { email, clientId, code }
+    return { code: code.userCode, url: code.url }
+  }
+
+  /** Waits for the person to finish on Microsoft's page. */
+  async finishMicrosoft(): Promise<void> {
+    const pending = this.signingIn
+    if (!pending) throw new Error('Start signing in first.')
+    const { email, clientId, code } = pending
+    let tokens: Tokens | null = null
+    while (!tokens) {
+      if (this.signingIn !== pending || this.deps.now() > code.expiresAt) throw new Error('The sign-in code ran out. Try again.')
+      tokens = await pollDeviceCode(this.post, clientId, code, this.deps.now())
+      if (!tokens) await new Promise((resolve) => setTimeout(resolve, code.intervalMs))
+    }
+    this.signingIn = null
+    const domain = email.split('@')[1] ?? ''
+    const chosen = provider('outlook')
+    // Personal addresses and company ones use different outgoing servers.
+    const smtp = chosen.domains.includes(domain) ? chosen.smtp : { ...chosen.smtp, host: 'smtp.office365.com' }
+    const config = await this.verify(configFor(email, chosen, { smtp, clientId }), { secret: '', accessToken: tokens.access })
+    this.tokens.set(email, tokens)
+    this.keepAccount(email, config, tokens.refresh)
+  }
+
+  /** Fills in the form for an address on a domain of its own, which is often a big service underneath.
+   *  Only ever a guess to be checked by signing in, and only the domain is looked up. */
+  async detectProvider(rawEmail: string): Promise<Detected> {
+    const email = rawEmail.trim().toLowerCase()
+    const known = providerFor(email)
+    const domain = email.split('@')[1] ?? ''
+    const records = this.deps.records
+    if (known.id !== 'other' || !records || !HOST.test(domain)) return { provider: known.id }
+    try {
+      const hosts = await records.mx(domain)
+      const owner = MX_OWNERS.find(([pattern]) => hosts.some((host) => pattern.test(host)))?.[1]
+      if (owner) return { provider: owner }
+      const imap = await records.srv(`_imaps._tcp.${domain}`)
+      const smtp = await records.srv(`_submission._tcp.${domain}`)
+      if (!imap || !smtp) return { provider: 'other' }
+      return {
+        provider: 'other',
+        imap: { host: imap.name, port: imap.port, security: 'tls' },
+        smtp: { host: smtp.name, port: smtp.port, security: smtp.port === 465 ? 'tls' : 'starttls' }
+      }
+    } catch {
+      return { provider: 'other' }
+    }
+  }
+
+  private get post(): typeof fetch {
+    return this.deps.post ?? fetch
+  }
+
+  /** What to sign in with. A token is renewed here, ahead of it running out. */
+  private async login(email: string): Promise<Login> {
+    const key = `account:${email}`
+    const secret = this.deps.secrets.get(key)
+    if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
+    const config = this.config(email)
+    if (config.signIn !== 'microsoft') return { secret }
+    const held = this.tokens.get(email)
+    const now = this.deps.now()
+    if (held && held.expiresAt > now + TOKEN_MARGIN_MS) return { secret: '', accessToken: held.access }
+    // An account from before each kept its own ID used the one in settings, which nothing changes now.
+    const tokens = await refreshTokens(this.post, config.clientId || this.settings().microsoftClientId, secret, now)
+    this.tokens.set(email, tokens)
+    if (tokens.refresh !== secret) this.deps.secrets.set(`account:${email}`, tokens.refresh)
+    return { secret: '', accessToken: tokens.access }
   }
 
   removeAccount(email: string): void {
     this.saveEmails(this.emails().filter((e) => e !== email))
+    this.removals.set(email, (this.removals.get(email) ?? 0) + 1)
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
     this.deps.secrets.remove(`account:${email}`)
+    this.store.deleteMeta(`config:${email}`)
+    this.store.deleteMeta(`folders:${email}`)
+    this.tokens.delete(email)
+    this.notes.delete(email)
     this.store.wipeAccount(email)
+    for (const draft of this.store.forgetAccount(email)) this.deps.files.clear(draft)
+    const { identities, ...rest } = this.settings()
+    const { [email]: _gone, ...kept } = identities
+    this.saveSettings({ ...rest, identities: kept })
     this.status.delete(email)
     this.deps.changed()
   }
@@ -128,48 +455,291 @@ export class MailService {
   }
 
   private async syncOne(email: string): Promise<void> {
+    if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
     if (status.syncing) return
-    const secret = this.deps.secrets.get(`account:${email}`)
-    if (!secret) {
-      status.error = 'Add this account again: its app password is gone.'
-      return this.deps.changed()
-    }
     status.syncing = true
     this.deps.changed()
-    const source = this.deps.openSource(email, secret)
+    await this.inLane(email, async () => {
+      await this.flushNow(email)
+      await this.pass(email)
+    })
+    await this.reportHeld()
+    if (this.syncAgain.delete(email)) await this.syncOne(email)
+  }
+
+  /** Mail shows up as it lands, instead of at the next sync. A sync does the actual reading, so
+   *  there's one way into the store, and this only says when. */
+  watchAll(): void {
+    this.watching = true
+    this.emails().forEach((email) => this.watch(email))
+  }
+
+  stopWatching(): void {
+    this.watching = false
+    if (this.rewatch) clearTimeout(this.rewatch)
+    this.rewatch = null
+    for (const watch of this.watchers.values()) this.endWatch(watch)
+    this.watchers.clear()
+  }
+
+  private endWatch(watch: Watch): void {
+    watch.stopped = true
+    if (watch.watcher) background(watch.watcher.close())
+  }
+
+  private watch(email: string): void {
+    const open = this.deps.openWatcher
+    if (!open || !this.watching || this.watchers.has(email)) return
+    const mine: Watch = { stopped: false, watcher: null }
+    this.watchers.set(email, mine)
+    const arrived = (): void => {
+      if (this.statusOf(email).syncing) this.syncAgain.add(email)
+      else background(this.syncOne(email))
+    }
+    const run = async (): Promise<void> => {
+      const login = await this.login(email)
+      if (mine.stopped || !this.emails().includes(email)) return
+      mine.watcher = open(this.config(email), login)
+      await mine.watcher.watch(arrived)
+    }
+    const lost = (): void => {
+      if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
+      this.watchers.delete(email)
+      if (!this.watching || !this.emails().includes(email) || this.rewatch) return
+      this.rewatch = setTimeout(() => {
+        this.rewatch = null
+        this.emails().forEach((each) => this.watch(each))
+      }, WATCH_RETRY_MS)
+      this.rewatch.unref?.()
+    }
+    void run().catch(() => undefined).finally(lost)
+  }
+
+  private async pass(email: string): Promise<void> {
+    if (!this.emails().includes(email)) return // removed while this waited its turn
+    const removals = this.removals.get(email) ?? 0
+    const removed = (): boolean => (this.removals.get(email) ?? 0) !== removals
+    const status = this.statusOf(email)
     const settings = this.settings()
+    const config = this.config(email)
+    const focusRules = new Map([...settings.alwaysOther.map((a) => [a, false] as const), ...settings.alwaysFocused.map((a) => [a, true] as const)])
+    const known = new Map<string, boolean>()
+    const knows = (address: string): boolean => {
+      const who = address.toLowerCase()
+      let answer = known.get(who)
+      if (answer === undefined) {
+        answer = isVip(who, settings.batch.vip) || this.store.wroteTo(email, who)
+        known.set(who, answer)
+      }
+      return answer
+    }
+    const own = this.ownAddresses(email)
+    let fresh = 0
+    let preview = { from: '', subject: '' }
+    const blocked: number[] = []
+    let source: MailSource | null = null
     try {
+      source = this.deps.openSource(config, await this.login(email))
       await source.connect()
+      this.noteFolders(email, source)
       await syncAccount(source, this.store, {
         account: email,
         email,
         backfillDays: settings.backfillDays,
         rules: settings.batch,
         now: this.deps.now(),
-        progress: this.deps.changed
+        progress: (done, total) => {
+          status.progress = total >= WORTH_SHOWING && done < total ? { done, total } : null
+          this.deps.changed()
+        },
+        busy: (box) => this.store.busyUids(email, box),
+        stopped: removed,
+        sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
+        added: (mail, id, holdFrom) => {
+          if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
+          if (isVip(mail.from.address, settings.blocked)) blocked.push(id)
+          else if (this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+            fresh++
+            preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
+          }
+        }
       })
       status.syncedAt = this.deps.now()
       status.error = null
     } catch (e) {
-      status.error = describeFailure(e)
+      status.error = describeFailure(e, this.serviceName(email))
     } finally {
-      await source.close().catch(() => undefined)
+      await source?.close().catch(() => undefined)
       status.syncing = false
+      status.progress = null
       this.deps.changed()
     }
-    await this.reportHeld()
+    if (removed()) {
+      // It stopped at its next step. Anything it kept before that goes the way of the account.
+      this.store.wipeAccount(email)
+      this.store.deleteMeta(`folders:${email}`)
+      return
+    }
+    const unwanted = this.store.locate(blocked).map((row) => this.store.visibleState(row.id)).filter((s) => s !== null)
+    if (unwanted.length > 0) this.change(email, unwanted, { kind: 'trash' }, this.nextGroup(), 0)
+    if (fresh > 0) this.deps.landed?.(fresh, fresh === 1 ? preview : undefined)
   }
 
-  /** Runs on a timer. Time passing is what delivers a batch, so nothing else would notice. */
+  /** Mail a sync finds that's already due never passes through a tick's window, which only sees
+   *  mail landing from now on, so a sync has to tell about it itself. */
+  private worthTelling(labels: string[], from: string, seen: boolean, email: string): boolean {
+    return !seen && labels.includes(INBOX) && !this.ownAddresses(email).includes(from.toLowerCase()) && this.identity(email).notify
+  }
+
+  /** Who someone is on an account, with anything not yet set filled in. */
+  private identity(email: string): Identity {
+    const at = this.emails().indexOf(email)
+    const spare = ACCOUNT_COLORS[Math.max(0, at) % ACCOUNT_COLORS.length] ?? ''
+    const saved: Partial<Identity> = this.settings().identities[email] ?? {}
+    return { name: '', signature: '', aliases: [], notify: true, ...saved, color: saved.color || spare }
+  }
+
+  private ownAddresses(email: string): string[] {
+    return lower([email, ...this.identity(email).aliases])
+  }
+
+  /** Runs on a timer. Time passing is what delivers a batch and sends what's due, so nothing else
+   *  would notice. */
   async tick(): Promise<void> {
     const now = this.deps.now()
-    const landed = this.store.landedBetween(this.lastTick, now)
+    const batch = this.store.landedBetween(this.lastTick, now)
+    const woken = this.store.wokenBetween(this.lastTick, now)
     this.lastTick = now
-    if (landed === 0) return
-    this.deps.landed?.(landed)
+    if (batch + woken > 0) {
+      this.deps.landed?.(batch + woken)
+      this.deps.changed()
+    }
+    if (batch > 0) await this.report('batch', batch)
+    await Promise.all(this.emails().map((email) => this.flush(email)))
+    await this.sendDue()
+  }
+
+  private nextGroup(): number {
+    this.group += 1
+    return this.group
+  }
+
+  private change(email: string, states: MailState[], action: MailAction, group: number, wait: number): void {
+    if (states.length === 0) return
+    this.store.setMailStates(states.map((state) => applied(state, action)))
+    this.store.enqueue({ group, account: email, action, ids: states.map((state) => state.id), before: states, due: this.deps.now() + wait })
     this.deps.changed()
-    await this.report('batch', landed)
+    if (wait === 0) background(this.flush(email))
+  }
+
+  /** Done here at once, then sent to the server: straight away, or after Undo's had its chance for
+   *  the ones that take mail out of sight. It survives a restart, and waits out being offline. */
+  act(targets: ThreadRef[], action: MailAction): number {
+    const now = this.deps.now()
+    const group = this.nextGroup()
+    const wait = takesAway(action) ? UNDO_MS : 0
+    for (const email of new Set(targets.map((t) => t.account))) {
+      const mine = targets.filter((t) => t.account === email)
+      const { gmail } = this.config(email)
+      if (action.kind === 'label' && !gmail) throw new Error('Only Gmail has labels. Use Move instead.')
+      if (action.kind === 'move' && !this.folders(email).includes(action.to)) throw new Error("That folder isn't there any more.")
+      const states = mine.flatMap((ref) => touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail))
+      this.change(email, states, action, group, wait)
+      if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
+    }
+    return group
+  }
+
+  undo(token: number): void {
+    for (const item of this.store.actionsInGroup(token)) {
+      this.store.restoreMail(item.before)
+      this.store.finishAction(item.id)
+    }
+    this.deps.changed()
+  }
+
+  /** At most one waits behind the one running, so a change made as a flush finishes isn't left for
+   *  the next tick, and a stalled connection doesn't pile them up. */
+  private async flush(email: string): Promise<void> {
+    if (this.flushQueued.has(email) || this.store.dueActions(email, this.deps.now()).length === 0) return
+    this.flushQueued.add(email)
+    await this.inLane(email, () => {
+      this.flushQueued.delete(email)
+      return this.flushNow(email)
+    })
+  }
+
+  private async flushNow(email: string): Promise<void> {
+    const due = this.store.dueActions(email, this.deps.now())
+    if (due.length === 0) return
+    let writer: MailWriter | null = null
+    try {
+      writer = this.deps.openWriter(this.config(email), await this.login(email))
+      await writer.connect()
+      for (const item of due) await this.perform(writer, email, item)
+    } catch (e) {
+      // Not reached, so nothing is lost: it all goes again later, in the same order.
+      this.statusOf(email).error = describeFailure(e, this.serviceName(email))
+      const later = this.deps.now() + RETRY_MS
+      for (const item of this.store.dueActions(email, this.deps.now())) this.store.retryAction(item.id, later, item.attempts)
+    } finally {
+      await writer?.close().catch(() => undefined)
+      this.deps.changed()
+    }
+  }
+
+  /** Each folder is its own command, and a message's folder and UID are looked up now, not when it
+   *  was queued: an earlier move in the queue may have changed both. */
+  private async perform(writer: MailWriter, email: string, item: PendingAction): Promise<void> {
+    const byBox = new Map<string, Located[]>()
+    for (const row of this.store.locate(item.ids)) byBox.set(row.box, [...(byBox.get(row.box) ?? []), row])
+    try {
+      for (const [box, rows] of byBox) {
+        const moved = await writer.apply(box, rows.map((row) => row.uid), item.action)
+        this.settle(email, item.action, rows, moved)
+      }
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e
+      if (item.attempts + 1 < REFUSALS_ALLOWED) return this.store.retryAction(item.id, this.deps.now() + RETRY_MS, item.attempts + 1)
+      this.store.restoreMail(item.before)
+      this.store.finishAction(item.id)
+      this.note(email, `${this.serviceName(email)} wouldn't make a change, so it's been put back.`)
+      return
+    }
+    this.store.finishAction(item.id)
+  }
+
+  private note(email: string, text: string): void {
+    this.notes.set(email, { text, until: this.deps.now() + NOTE_MS })
+    this.deps.changed()
+  }
+
+  /** Brings rows in line with where the server put the mail. Without a new UID to go on, the row goes
+   *  and the next sync finds the message where it landed. */
+  private settle(email: string, action: MailAction, rows: Located[], moved: Moved | null): void {
+    if (action.kind === 'forever') return this.store.dropIds(rows.map((row) => row.id))
+    if (!moved) return
+    const { to, map } = moved
+    if (!to || !map) return this.store.dropIds(rows.map((row) => row.id))
+    const { gmail } = this.config(email)
+    for (const row of rows) {
+      const uid = map.get(row.uid)
+      if (uid === undefined) this.store.dropIds([row.id])
+      else this.store.rehome(row.id, to.id, uid, gmail ? null : labelsOf(to, [], false))
+    }
+  }
+
+  snooze(targets: ThreadRef[], until: number): void {
+    const now = this.deps.now()
+    if (until <= now) throw new Error('Pick a time in the future.')
+    targets.forEach((ref) => this.store.snooze(ref, now, until))
+    this.deps.changed()
+  }
+
+  unsnooze(targets: ThreadRef[]): void {
+    targets.forEach((ref) => this.store.unsnooze(ref))
+    this.deps.changed()
   }
 
   overview(): Overview {
@@ -178,7 +748,10 @@ export class MailService {
       held: this.store.heldCount(now),
       nextBatch: this.nextBatch(now),
       earlyLeft: this.earlyLeft(),
-      labels: this.store.labelCounts(now)
+      labels: this.store.labelCounts(now),
+      otherUnread: this.store.unreadThreads(now, 'm.focus = 0'),
+      spam: this.store.spamCount(now),
+      assistant: this.store.assistantCounts(now)
     }
   }
 
@@ -186,15 +759,390 @@ export class MailService {
     return this.store.nextRelease(now) ?? nextBatchAfter(now, this.settings().batch.times)
   }
 
-  list(query: ListQuery): ThreadRow[] {
-    return this.store.list(query, this.deps.now())
+  list(query: ListQuery, limit?: number): ThreadRow[] {
+    return this.store.list(query, this.deps.now(), limit)
   }
 
-  thread(account: string, thread: string): MessageView[] {
+  /** Opening a thread reads it, here and on the server. Only what could be seen counts. */
+  thread(account: string, thread: string, bins = false): MessageView[] {
     const now = this.deps.now()
-    const messages = this.store.thread(account, thread, now)
-    this.store.markRead(account, thread, now)
+    const messages = this.store.thread(account, thread, now, bins)
+    this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages
+  }
+
+  /** A message cut short when it was stored lists only the files in the part that was kept. Once
+   *  it's opened, the list is made again from the whole message, so each file can be opened, saved
+   *  and forwarded. Failing says nothing: the next look tries again. */
+  private async listFiles(id: number): Promise<void> {
+    if (this.listing.has(id)) return
+    this.listing.add(id)
+    try {
+      await this.wholeAttachments(id)
+      this.deps.changed()
+    } finally {
+      this.listing.delete(id)
+    }
+  }
+
+  contacts(text: string): Address[] {
+    return text.trim() ? this.store.contacts(text, this.deps.now()) : []
+  }
+
+  async attachment(id: number, index: number): Promise<WholeAttachment> {
+    const found = (await this.wholeAttachments(id))[index]
+    if (!found) throw new Error("That attachment isn't in the message any more.")
+    return found
+  }
+
+  /** Fetched whole on demand: attachments aren't kept here. Their list is, and if it was made from a
+   *  cut copy, it's made again from this. */
+  private async wholeAttachments(id: number): Promise<WholeAttachment[]> {
+    const message = this.store.message(id, this.deps.now())
+    if (!message) throw new Error("That message isn't here any more.")
+    let source: MailSource | null = null
+    let whole: Buffer | null = null
+    try {
+      source = this.deps.openSource(this.config(message.account), await this.login(message.account))
+      await source.connect()
+      const box = source.mailboxes().find((b) => b.id === message.box)
+      if (box) {
+        await source.open(box)
+        whole = await source.whole(message.uid)
+      }
+    } catch (e) {
+      throw new Error(describeFailure(e, this.serviceName(message.account)))
+    } finally {
+      await source?.close().catch(() => undefined)
+    }
+    if (!whole) throw new Error("That attachment isn't in the message any more.")
+    const found = await attachmentsOf(whole)
+    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
+    return found
+  }
+
+  /** A stranger's header picks the address, so the app only ever sends the fixed request the
+   *  standard defines, without credentials, and only because the person pressed the button. */
+  async unsubscribe(id: number): Promise<UnsubscribeResult & { url?: string }> {
+    const message = this.store.message(id, this.deps.now())
+    const to = message?.unsubscribeTo
+    if (!message || !to) throw new Error('This sender gives no way to unsubscribe.')
+    if (to.oneClick && to.web && isPublicHttps(to.web)) {
+      try {
+        const response = await this.post(to.web, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'List-Unsubscribe=One-Click',
+          redirect: 'error',
+          signal: AbortSignal.timeout(10_000)
+        })
+        if (response.ok) {
+          this.leftBehind(message.from.address)
+          return { kind: 'done' }
+        }
+      } catch {
+        // Falls through to the sender's page, if there is one.
+      }
+    }
+    if (to.web) return { kind: 'opened', url: to.web }
+    const start = parseMailto(to.mail ?? '')
+    const draft = await this.startDraft({ ...start, account: message.account, subject: start.subject || 'Unsubscribe' })
+    return { kind: 'draft', draft }
+  }
+
+  private leftBehind(address: string): void {
+    const settings = this.settings()
+    this.saveSettings({ ...settings, unsubscribed: lower([...new Set([...settings.unsubscribed, address])]) })
+    this.deps.changed()
+  }
+
+  subscriptions(): Subscription[] {
+    const left = new Set(this.settings().unsubscribed)
+    return this.store.subscriptions(this.deps.now()).filter((s) => !left.has(s.address))
+  }
+
+  clearSender(account: string, address: string): number {
+    return this.act(this.store.threadsFrom(account, address, this.deps.now()), { kind: 'trash' })
+  }
+
+  /** A person's say about a sender beats any guess, for what they've sent and what comes next. */
+  setFocus(address: string, focused: boolean): void {
+    const who = address.trim().toLowerCase()
+    const settings = this.settings()
+    const without = (list: string[]): string[] => list.filter((a) => a !== who)
+    this.saveSettings({
+      ...settings,
+      alwaysFocused: focused ? [...without(settings.alwaysFocused), who] : without(settings.alwaysFocused),
+      alwaysOther: focused ? without(settings.alwaysOther) : [...without(settings.alwaysOther), who]
+    })
+    this.store.setFocus(who, focused)
+    this.deps.changed()
+  }
+
+  /** The answer is a draft like any other, so it waits out Undo and goes through the same door. The
+   *  organizer's address comes from a stranger, which is why it takes a press of a button. */
+  rsvp(id: number, answer: Rsvp): { id: number; when: number } {
+    const message = this.store.message(id, this.deps.now())
+    const facts = message?.facts
+    const invite = facts?.type === 'event' ? facts.invite : null
+    if (!message || !invite) throw new Error('This invitation has nothing to answer.')
+    const words: Record<Rsvp, string> = { ACCEPTED: 'Accepted', TENTATIVE: 'Maybe', DECLINED: 'Declined' }
+    const draft = this.store.addDraft({
+      account: message.account, from: invite.attendee, to: invite.organizer, cc: '', bcc: '',
+      subject: `${words[answer]}: ${invite.summary || message.subject}`,
+      html: '', text: `${words[answer]}: ${invite.summary || message.subject}`,
+      quote: null, inReplyTo: message.messageId, references: `${message.references} ${message.messageId}`.trim(),
+      files: [], ical: replyIcs(invite, invite.attendee, answer, this.deps.now()), updated: this.deps.now()
+    })
+    return { id: draft, when: this.send(draft) }
+  }
+
+  drafts(): Draft[] {
+    return this.store.drafts()
+  }
+
+  async startDraft(start: DraftStart): Promise<Draft> {
+    const base = {
+      from: '', to: '', cc: '', bcc: '', subject: '', html: '', text: '', quote: null, inReplyTo: '', references: '',
+      files: [], updated: this.deps.now()
+    }
+    if (start.kind === 'new') {
+      const account = start.account ?? this.emails()[0]
+      if (!account) throw new Error('Add an account first.')
+      const text = start.text ?? ''
+      const html = text ? escapeForEditor(text) : ''
+      return this.draftOrThrow(this.store.addDraft({
+        ...base, account, to: start.to ?? '', cc: start.cc ?? '', bcc: start.bcc ?? '', subject: start.subject ?? '', text, html
+      }))
+    }
+    const message = this.store.message(start.message, this.deps.now())
+    if (!message) throw new Error("That message isn't here any more.")
+    if (start.kind === 'forward') {
+      const id = this.store.addDraft({
+        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward')
+      })
+      // A cut message may have files its stored list doesn't know about.
+      if (message.attachments.length > 0 || message.truncated) await this.carryAttachments(id, message.id)
+      return this.draftOrThrow(id)
+    }
+    const own = this.ownAddresses(message.account)
+    return this.draftOrThrow(this.store.addDraft({
+      ...base,
+      account: message.account,
+      // Answered from whichever of your addresses it came to.
+      from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
+      ...replyTargets(message, own, start.kind === 'replyAll'),
+      subject: replySubject(message.subject),
+      quote: quoteOf(message, 'reply'),
+      inReplyTo: message.messageId,
+      references: `${message.references} ${message.messageId}`.trim()
+    }))
+  }
+
+  private draftOrThrow(id: number): Draft {
+    const draft = this.store.draft(id)
+    if (!draft) throw new Error("That draft isn't here any more.")
+    return draft
+  }
+
+  /** A forward takes every attachment the whole message has, not only those in the list kept here.
+   *  Being offline loses them and says so. */
+  private async carryAttachments(id: number, message: number): Promise<void> {
+    const draft = this.draftOrThrow(id)
+    try {
+      for (const found of await this.wholeAttachments(message)) {
+        draft.files.push(this.deps.files.fromBytes(id, found.name, found.type, found.content))
+      }
+      this.store.saveDraft(draft)
+    } catch {
+      this.store.saveDraft({ ...draft, error: "The attachments couldn't be fetched, so they're not on this forward." })
+    }
+  }
+
+  saveDraft(id: number, edit: DraftEdit): void {
+    const draft = this.draftOrThrow(id)
+    if (draft.state === 'queued' || draft.state === 'sending') throw new Error('This is already on its way.')
+    if (!this.emails().includes(edit.account)) throw new Error('That account is gone.')
+    this.store.saveDraft({ ...draft, ...edit, state: 'draft', error: null, updated: this.deps.now() })
+    this.deps.changed()
+  }
+
+  discardDraft(id: number): void {
+    const draft = this.store.draft(id)
+    if (draft?.state === 'sending') throw new Error('This is already on its way.')
+    this.store.deleteDraft(id)
+    this.deps.files.clear(id)
+    this.deps.changed()
+  }
+
+  private withFile(id: number, add: (draft: Draft) => Draft['files'][number]): Draft {
+    const draft = this.draftOrThrow(id)
+    const file = add(draft)
+    const files = [...draft.files, file]
+    if (files.reduce((sum, f) => sum + f.size, 0) > MAX_DRAFT_BYTES) {
+      this.deps.files.remove(id, file)
+      throw new Error(TOO_BIG)
+    }
+    this.store.saveDraft({ ...draft, files })
+    this.deps.changed()
+    return this.draftOrThrow(id)
+  }
+
+  /** Paths come from the system's file picker in the main process, never from the page. */
+  addFilesFromDisk(id: number, paths: string[]): Draft {
+    paths.forEach((path) => this.withFile(id, () => this.deps.files.fromDisk(id, path)))
+    return this.draftOrThrow(id)
+  }
+
+  addFileBytes(id: number, name: string, type: string, bytes: Buffer): Draft {
+    return this.withFile(id, () => this.deps.files.fromBytes(id, name, type, bytes))
+  }
+
+  removeFile(id: number, file: string): Draft {
+    const draft = this.draftOrThrow(id)
+    const found = draft.files.find((f) => f.id === file)
+    if (found) this.deps.files.remove(id, found)
+    this.store.saveDraft({ ...draft, files: draft.files.filter((f) => f.id !== file) })
+    return this.draftOrThrow(id)
+  }
+
+  /** A draft goes out only from an address that's yours, whatever the page sent. */
+  private outgoingFrom(draft: Draft): ReturnType<typeof outgoing> {
+    const from = (draft.from || draft.account).toLowerCase()
+    if (!this.ownAddresses(draft.account).includes(from)) throw new Error('That address isn\'t on this account.')
+    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now())
+  }
+
+  /** Nothing leaves here: it waits in the queue so Undo has something to call back. */
+  send(id: number, at?: number): number {
+    const draft = this.draftOrThrow(id)
+    if (draft.state === 'sending') throw new Error('This is already on its way.')
+    this.outgoingFrom(draft) // says what's wrong with it now, not later
+    const now = this.deps.now()
+    if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
+    const sendAt = at ?? now + this.settings().undoSeconds * 1000
+    this.store.saveDraft({ ...draft, state: 'queued', sendAt, error: null, updated: now })
+    this.deps.changed()
+    return sendAt
+  }
+
+  unsend(id: number): void {
+    const draft = this.draftOrThrow(id)
+    if (draft.state !== 'queued') throw new Error('Too late: this one has gone.')
+    this.store.saveDraft({ ...draft, state: 'draft', sendAt: null, updated: this.deps.now() })
+    this.deps.changed()
+  }
+
+  /** The app is closing for good. Mail that's only waiting out Undo goes now, and so do changes, or
+   *  both would sit here until the next launch. Mail set for later is left to wait for its time. */
+  async finishUp(): Promise<void> {
+    const now = this.deps.now()
+    for (const draft of this.store.dueDrafts(now + this.settings().undoSeconds * 1000)) {
+      this.store.saveDraft({ ...draft, sendAt: now })
+    }
+    this.store.hurryActions(now)
+    await Promise.all(this.emails().map((email) => this.flush(email)))
+    await this.sendDue()
+  }
+
+  /** Remakes the previews of mail stored by an older version, in small steps. The tag means it
+   *  happens once, and the steps mean a large mailbox doesn't hold everything else up. */
+  async refreshSnippets(tag: string): Promise<void> {
+    if (this.store.meta('snippets') === tag) return
+    let after = 0
+    for (;;) {
+      const rows = this.store.staleSnippets(after, SNIPPET_STEP)
+      if (rows.length === 0) break
+      for (const row of rows) this.store.setSnippet(row.id, makeSnippet(row.html ? '' : row.text, row.html))
+      after = rows.at(-1)?.id ?? after
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    this.store.setMeta('snippets', tag)
+    this.deps.changed()
+  }
+
+  private async sendDue(): Promise<void> {
+    if (this.sending) return
+    this.sending = true
+    const sent = new Set<string>()
+    try {
+      // Only which ones: sending those before it can take a while, so each is read again at its turn.
+      for (const { id } of this.store.dueDrafts(this.deps.now())) {
+        const from = await this.sendOne(id)
+        if (from) sent.add(from)
+      }
+    } finally {
+      this.sending = false
+    }
+    await Promise.all([...sent].map((email) => this.syncOne(email))) // brings it into Sent
+  }
+
+  /** The account it went from, if it went. Until it's marked as sending, the person can call it
+   *  back, change it or throw it away, so it's read again after every wait, and sent as it is then. */
+  private async sendOne(id: number): Promise<string | null> {
+    const due = (): Draft | null => {
+      const draft = this.store.draft(id)
+      return draft?.state === 'queued' && draft.sendAt !== null && draft.sendAt <= this.deps.now() ? draft : null
+    }
+    const account = due()?.account
+    if (!account) return null
+    let login: Login
+    try {
+      login = await this.login(account)
+    } catch (e) {
+      const draft = due()
+      if (!draft) return null
+      // Nothing has left. A lost connection or a keyring not open yet can wait; a sign-in that's gone
+      // needs the person.
+      const gone = (e as Error).message === SECRET_GONE || e instanceof SignInExpired
+      const waiting = (e as Error).message === KEYRING_SHUT ? 'Waiting for the system keyring.' : 'Waiting for a connection.'
+      this.store.saveDraft(gone
+        ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
+        : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: waiting })
+      this.deps.changed()
+      return null
+    }
+    // Written down first: if the app dies here, this comes back as "check Sent", not sent twice. Moved
+    // to another account meanwhile, it waits for the next turn and a sign-in of its own.
+    const draft = this.store.claimDraft(id, account, this.deps.now())
+    if (!draft) return null
+    this.deps.changed()
+    const config = this.config(draft.account)
+    const sender = this.deps.openSender(config, login)
+    try {
+      const copy = await sender.send(this.outgoingFrom(draft))
+      this.store.deleteDraft(draft.id)
+      this.deps.files.clear(draft.id)
+      if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
+      return draft.account
+    } catch (e) {
+      if (e instanceof NeverLeft) {
+        this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
+      } else {
+        this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+      }
+      return null
+    } finally {
+      sender.close()
+      this.deps.changed()
+    }
+  }
+
+  /** The message has gone by now, so a failure here can only cost the copy, never send it again. */
+  private async fileCopy(email: string, raw: Buffer, messageId: string): Promise<void> {
+    await this.inLane(email, async () => {
+      let writer: MailWriter | null = null
+      try {
+        writer = this.deps.openWriter(this.config(email), await this.login(email))
+        await writer.connect()
+        await writer.fileSent(raw, messageId)
+      } catch {
+        this.note(email, 'Sent, but no copy could be kept in Sent.')
+      } finally {
+        await writer?.close().catch(() => undefined)
+      }
+    })
   }
 
   threadUrl(email: string, thread: string): string {
@@ -204,11 +1152,10 @@ export class MailService {
   settings(): Settings {
     try {
       const saved = JSON.parse(this.store.meta('settings') ?? '{}') as Partial<Settings>
-      return {
-        batch: saved.batch ?? DEFAULT_SETTINGS.batch,
-        backfillDays: saved.backfillDays ?? DEFAULT_SETTINGS.backfillDays,
-        hub: saved.hub ?? DEFAULT_SETTINGS.hub
-      }
+      const merged = { ...DEFAULT_SETTINGS, ...saved }
+      const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
+        [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
+      return { ...merged, identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -225,15 +1172,44 @@ export class MailService {
     this.saveSettings({ ...this.settings(), batch: clean })
     const now = this.deps.now()
     this.store.retime((mail) => {
-      const holdFrom = this.store.syncState(mail.account)?.holdFrom ?? 0
+      const holdFrom = this.store.holdFrom(mail.account) ?? 0
       return releaseAt({ ...mail, arrived: now }, mail.account, holdFrom, clean)
     }, now)
     this.deps.changed()
   }
 
+  saveProfile(patch: ProfilePatch): void {
+    const settings = this.settings()
+    this.saveSettings({
+      ...settings,
+      identities: patch.identities ?? settings.identities,
+      templates: (patch.templates ?? settings.templates).slice(0, 50),
+      blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
+      undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
+      theme: patch.theme ?? settings.theme,
+      focused: patch.focused ?? settings.focused,
+      layout: patch.layout ?? settings.layout,
+      density: patch.density ?? settings.density,
+      swipeLeft: swipe(patch.swipeLeft, settings.swipeLeft),
+      swipeRight: swipe(patch.swipeRight, settings.swipeRight),
+      background: patch.background ?? settings.background,
+      startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
+      images: patch.images ?? settings.images,
+      imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom
+    })
+    this.deps.changed()
+  }
+
+  /** New mail from them goes to Trash from now on. */
+  block(address: string): void {
+    const settings = this.settings()
+    this.saveSettings({ ...settings, blocked: cleanSenders([...settings.blocked, address]) })
+    this.deps.changed()
+  }
+
   saveBackfill(days: number): void {
     this.saveSettings({ ...this.settings(), backfillDays: clamp(days, 7, 3650) })
-    void this.syncAll()
+    background(this.syncAll())
   }
 
   private earlyUsed(): number {
@@ -276,7 +1252,7 @@ export class MailService {
     const url = rawUrl.trim().replace(/\/+$/, '')
     if (!isSafeHubUrl(url)) throw new Error('Use an https address.')
     if (!user.trim() || !secret) throw new Error('Fill in the name and password.')
-    const ok = await this.send(url, user.trim(), secret, 'state.connected', 0)
+    const ok = await this.postToHub(url, user.trim(), secret, 'state.connected', 0)
     if (!ok) throw new Error("xrnhub didn't accept that.")
     this.deps.secrets.set(HUB_SECRET, secret)
     this.saveSettings({ ...this.settings(), hub: { url, user: user.trim(), connected: true } })
@@ -303,18 +1279,18 @@ export class MailService {
     const secret = hub.connected ? this.deps.secrets.get(HUB_SECRET) : null
     if (!secret) return
     this.lastHeld = this.store.heldCount(this.deps.now())
-    await this.send(hub.url, hub.user, secret, kind, value)
+    await this.postToHub(hub.url, hub.user, secret, kind, value)
   }
 
   /** Counts and times only. Who wrote and what about stay on this laptop. */
-  private async send(url: string, user: string, secret: string, kind: string, value: number): Promise<boolean> {
+  private async postToHub(url: string, user: string, secret: string, kind: string, value: number): Promise<boolean> {
     const now = this.deps.now()
     const event = {
       app: 'xrnmail', kind, at: now, value,
       detail: { held: this.store.heldCount(now), nextBatch: this.nextBatch(now) }
     }
     try {
-      const response = await (this.deps.post ?? fetch)(`${url}/api/events`, {
+      const response = await this.post(`${url}/api/events`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
