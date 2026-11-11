@@ -47,18 +47,18 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 }
 
 const TITLES: Record<string, string> = {
-  today: 'Today', starred: 'Starred', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
-  drafts: 'Drafts', sent: 'Sent', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
+  today: 'Today', starred: 'Flagged', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
+  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
 }
+/** With several accounts, these gather every account's. */
+const GATHERED = ['drafts', 'sent', 'archive']
 
-function titleOf(view: View, many: boolean): string {
-  if (view.kind === 'inbox') {
-    if (view.account) return view.account
-    return many ? 'All Inboxes' : 'Inbox'
-  }
+export function titleOf(view: View, many: boolean): string {
+  if (view.kind === 'inbox') return many && !view.account ? 'All Inboxes' : 'Inbox'
   if (view.kind === 'assistant') return ASSISTANT.find(([section]) => section === view.section)?.[1] ?? 'Assistant'
   if (view.kind === 'label') return view.label.split('/').at(-1) ?? view.label
-  return TITLES[view.kind] ?? ''
+  const title = TITLES[view.kind] ?? ''
+  return many && GATHERED.includes(view.kind) && !('account' in view && view.account) ? `All ${title}` : title
 }
 
 function Help({ close }: { close(): void }): ReactNode {
@@ -260,7 +260,7 @@ export function App(): ReactNode {
     starting.current = null
   }, [composing?.id])
 
-  /** The search box sits over the list, which one-pane reading hides, so that comes back first. */
+  /** The search box sits in the band over the list, which one-pane reading hides, so that comes back first. */
   const focusSearch = useCallback((): void => {
     if (searchBox.current?.offsetParent === null) {
       setOpen(null)
@@ -436,7 +436,7 @@ export function App(): ReactNode {
 
   const dropOn = (target: View, refs: ThreadRef[]): void => {
     if (target.kind === 'inbox') void run(refs, { kind: 'inbox' }, 'Moved to Inbox')
-    else if (target.kind === 'all') void run(refs, { kind: 'archive' }, 'Archived')
+    else if (target.kind === 'all' || target.kind === 'archive') void run(refs, { kind: 'archive' }, 'Archived')
     else if (target.kind === 'trash') void run(refs, { kind: 'trash' }, 'Moved to Trash')
     else if (target.kind === 'spam') void run(refs, { kind: 'spam' }, 'Reported as spam')
     else if (target.kind === 'starred') void run(refs, { kind: 'star' })
@@ -600,16 +600,17 @@ export function App(): ReactNode {
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn} />
       <div className="main">
+        <header className="band">
+          <h1 className="view-title">{titleOf(active, many)}</h1>
+          <div className="search">
+            <SearchIcon size={16} aria-hidden="true" />
+            <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
+              onChange={(e) => setSearch(e.target.value)} />
+            {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
+          </div>
+        </header>
         <div className="panes">
           <section className="list" aria-label="Threads">
-            <div className="list-top">
-              <div className="search">
-                <SearchIcon size={16} aria-hidden="true" />
-                <input ref={searchBox} type="search" placeholder="Search mail" aria-label="Search" value={search} spellCheck={false}
-                  onChange={(e) => setSearch(e.target.value)} />
-                {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
-              </div>
-            </div>
             {anyPicked ? (
               <div className="bulk" role="toolbar" aria-label="Selected threads">
                 <button className="link" onClick={() => setPicked(new Set())}>{picked.size} selected</button>
@@ -633,19 +634,14 @@ export function App(): ReactNode {
                   {bulkSnooze && <TimeMenu title="Snooze until" right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
                 </div>
               </div>
-            ) : (
-              <div className="list-head">
-                <h1 className="list-title">{titleOf(active, many)}</h1>
-                {split && active.kind === 'inbox' && (
-                  <div className="tabs" role="group" aria-label="Focused and Other">
-                    <button className={active.focus !== 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus !== 'other'}
-                      onClick={() => go({ kind: 'inbox', ...inboxScope })}>Focused</button>
-                    <button className={active.focus === 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus === 'other'}
-                      onClick={() => go({ kind: 'inbox', ...inboxScope, focus: 'other' })}>
-                      Other {otherCount > 0 && <span className="tab-count">{otherCount > 99 ? '99+' : otherCount}</span>}
-                    </button>
-                  </div>
-                )}
+            ) : split && active.kind === 'inbox' && (
+              <div className="tabs" role="group" aria-label="Focused and Other">
+                <button className={active.focus !== 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus !== 'other'}
+                  onClick={() => go({ kind: 'inbox', ...inboxScope })}>Focused</button>
+                <button className={active.focus === 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus === 'other'}
+                  onClick={() => go({ kind: 'inbox', ...inboxScope, focus: 'other' })}>
+                  Other{otherCount > 0 && ` (${otherCount > 99 ? '99+' : otherCount})`}
+                </button>
               </div>
             )}
             {overview && <BatchStrip overview={overview} />}

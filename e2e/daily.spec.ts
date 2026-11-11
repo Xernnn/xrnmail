@@ -164,6 +164,42 @@ test('nothing refreshes once quitting has closed the store', async () => {
   rmSync(folder, { recursive: true, force: true })
 })
 
+test('the window: a title and search over list and reader, and the sidebar in its order', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Filed' }), { arrived: earlier(2) })
+  await signIn(run)
+  const title = page.locator('.band').getByRole('heading', { level: 1 })
+  await expect(title).toHaveText('Inbox')
+  const box = async (selector: string): Promise<{ x: number; y: number; width: number; height: number }> => {
+    const found = await page.locator(selector).boundingBox()
+    if (!found) throw new Error(`${selector} isn't on screen`)
+    return found
+  }
+  const [band, list, reader, search] = [await box('.band'), await box('section.list'), await box('.reader'), await box('.band .search')]
+  expect(Math.round(band.x)).toBe(Math.round(list.x))
+  expect(Math.round(band.x + band.width)).toBe(Math.round(reader.x + reader.width))
+  expect(list.y).toBeGreaterThanOrEqual(band.y + band.height - 1)
+  expect(search.x).toBeGreaterThan(reader.x) // at the right, over the reader
+  const side = page.locator('.sidebar')
+  const names = async (group: number): Promise<string[]> =>
+    (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
+  expect(await names(0)).toEqual(['Inbox'])
+  expect(await names(1)).toEqual([ME, 'All Mail'])
+  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
+  expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
+  await side.getByRole('button', { name: `Folders of ${ME}` }).click()
+  await expect(side.getByRole('button', { name: 'All Mail' })).toHaveCount(0)
+  await side.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(title).toHaveText('Archive')
+  await expect(page.getByText('Nothing here')).toBeVisible()
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  await page.getByText('Filed').click()
+  await page.keyboard.press('e')
+  await side.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(page.locator('.threads').getByText('Filed')).toBeVisible()
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -232,7 +268,7 @@ test('stars and labels reach Gmail', async () => {
   await expect.poll(() => gmail.mails[0]?.labels).toContain('Taxes')
   await expect(page.locator('.tag')).toHaveText('Taxes')
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: 'Starred', exact: true }).click()
+  await page.getByRole('button', { name: 'Flagged', exact: true }).click()
   await expect(page.locator('.threads').getByText('Keep this')).toBeVisible()
 })
 

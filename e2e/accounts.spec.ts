@@ -67,7 +67,7 @@ test('Spam and Trash can be read, and deleting from them is forever only when co
   await signIn(run)
   await page.getByRole('button', { name: /^Spam( \d+)?$/ }).click()
   await page.getByText('Actually fine').click()
-  await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0)
+  await expect(page.locator('.main').getByRole('button', { name: 'Archive' })).toHaveCount(0) // the sidebar has an Archive of its own
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
   await page.getByText('Gone for good').click()
   await page.getByRole('button', { name: 'Delete forever' }).click()
