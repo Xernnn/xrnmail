@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { canOpenDirectly, isPublicHttps, safeFileName } from '@main/safe-url'
 import { searchParts, Store } from '@main/store'
-import { forwardSubject, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
+import { forwardSubject, parseMailto, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
 import type { MessageDetail } from '@main/store'
 import { secondVersionProfile } from './old-profile'
 
@@ -241,6 +241,12 @@ describe('writing back', () => {
     const [who] = parseRecipients('"x\r\nBcc: evil@example.com" <a@example.com>')
     expect(who?.address).toBe('a@example.com')
     expect(who?.name).not.toMatch(/[\r\n]/)
+  })
+
+  // A percent sign that isn't an escape made decoding throw, so the link did nothing at all.
+  it('fills in a draft from a mail link, stray percent sign and all', () => {
+    expect(parseMailto('mailto:a%40b.example?subject=Hi&cc=c@d.example')).toMatchObject({ to: 'a@b.example', subject: 'Hi', cc: 'c@d.example' })
+    expect(parseMailto('mailto:50%off@shop.example?subject=Hi')).toMatchObject({ to: '50%off@shop.example', subject: 'Hi' })
   })
 
   it('quotes the words, not the sender-chosen layout', () => {

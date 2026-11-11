@@ -152,6 +152,16 @@ describe('warnings about a sender', () => {
     expect(await warned({ headers: ['Authentication-Results: mx; dmarc=fail', 'Authentication-Results: evil; dmarc=pass'] })).toEqual(['forged'])
   })
 
+  // The server's line repeats the address the mail was handed over with, which the sender picks, and
+  // an address may hold an equals sign. Only what opens a part of the line is one of its results.
+  it('reads the server\'s results, not an address the sender chose', async () => {
+    const gmail = (handedOverBy: string, rest: string): string =>
+      `Authentication-Results: mx.google.com; spf=pass (google.com: domain of ${handedOverBy} designates 203.0.113.9 as permitted sender) smtp.mailfrom="${handedOverBy}"; ${rest}`
+    expect(await warned({ headers: [gmail('dmarc=pass@evil.example', 'dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=bank.example')] })).toEqual(['forged'])
+    expect(await warned({ headers: ['Authentication-Results: mx; spf=fail (domain of dkim=pass@evil.example does not designate 203.0.113.9) smtp.mailfrom=dkim=pass@evil.example; dkim=fail header.i=@evil.example'] })).toEqual(['forged'])
+    expect(await warned({ headers: [gmail('SRS0=dmarc=fail@forwarder.example', 'dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=example.com')] })).toEqual([])
+  })
+
   it('catches a name showing another address', async () => {
     expect(await warned({ from: '"support@bigbank.example" <x@evil.example>' })).toEqual(['name-mismatch'])
     expect(await warned({ from: '"ada@example.com" <ADA@example.com>' })).toEqual([])

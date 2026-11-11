@@ -49,6 +49,15 @@ export function parseRecipients(text: string): Address[] {
   return found
 }
 
+/** A percent sign in an address needn't be an escape, and one that isn't mustn't cost the link. */
+const decoded = (text: string): string => {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return text
+  }
+}
+
 /** A mailto: link only ever fills in a draft for the person to read. Nothing sends itself, and a
  *  Cc or Bcc it asks for is shown in the composer like any other. */
 export function parseMailto(raw: string): Extract<DraftStart, { kind: 'new' }> {
@@ -57,7 +66,7 @@ export function parseMailto(raw: string): Extract<DraftStart, { kind: 'new' }> {
   const param = (name: string): string => url.searchParams.get(name) ?? ''
   return {
     kind: 'new',
-    to: [decodeURIComponent(url.pathname), param('to')].filter(Boolean).join(', '),
+    to: [decoded(url.pathname), param('to')].filter(Boolean).join(', '),
     cc: param('cc'),
     bcc: param('bcc'),
     subject: param('subject'),

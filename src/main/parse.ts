@@ -89,7 +89,18 @@ const baseOf = (domain: string): string => domain.split('.').slice(-2).join('.')
  */
 export function senderWarnings(mail: { from: Address; replyTo: Address[]; authentication: string; bulk: boolean }): SenderWarning[] {
   const found: SenderWarning[] = []
-  const said = (check: string): string => new RegExp(`\\b${check}=(\\w+)`, 'i').exec(mail.authentication)?.[1]?.toLowerCase() ?? ''
+  // Each result opens its own part of the line, after a semicolon. The rest of a part, its comments
+  // and quoted values most of all, repeats addresses the sender chose, and `dmarc=pass@evil.example`
+  // is a valid one: searched for anywhere, it would be read as the server's answer.
+  const results = mail.authentication.replace(/"[^"]*"|\([^()]*\)/g, ' ').split(';').map((part) => part.trim())
+  const said = (check: string): string => {
+    const result = new RegExp(`^${check}\\s*=\\s*(\\w+)`, 'i')
+    for (const part of results) {
+      const answer = result.exec(part)?.[1]
+      if (answer) return answer.toLowerCase()
+    }
+    return ''
+  }
   const both = said('spf') === 'fail' && said('dkim') === 'fail'
   if (said('dmarc') === 'fail' || both) found.push('forged')
   const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(mail.from.name.slice(0, 300))?.[0]?.toLowerCase()

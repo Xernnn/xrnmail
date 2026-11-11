@@ -241,7 +241,8 @@ export class ImapSource implements MailSource {
 
   async *flagsOf(uids: number[]): AsyncIterable<RemoteHeader> {
     if (uids.length === 0) return
-    const range = `${Math.min(...uids)}:${Math.max(...uids)}`
+    // One at a time: handing a large folder's UIDs to Math.min all at once overflows the stack.
+    const range = `${uids.reduce((a, b) => Math.min(a, b))}:${uids.reduce((a, b) => Math.max(a, b))}`
     for await (const m of this.client.fetch(range, { uid: true, flags: true }, { uid: true })) {
       yield {
         uid: m.uid,
