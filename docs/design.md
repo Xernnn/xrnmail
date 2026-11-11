@@ -280,3 +280,34 @@ the half a megabyte of text a message keeps. HTML is different: taking clean HTM
 back together is how sanitised markup gets turned hostile again, so nothing is removed. A class on the
 frame's root hides the known quote markers with CSS, and the `•••` toggles that class. A forward keeps
 everything, because the quote is what was sent.
+
+## The page
+
+The window is laid out as Edison Mail for Mac's is, rebuilt in this code from what can be seen of it:
+
+- `Sidebar.tsx`: Compose and refresh, the inbox, the accounts (each unfolds its own folders and
+  labels), the gathered folders in Edison's order, then the Assistant's lists. Right-clicking a place
+  offers to mark all of it read, which asks the store for the whole list, not the rows on screen.
+- `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
+  floats under a selection, and what every key and button does.
+- `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
+  actions and its swipes. A swipe is a short one or a long one each way: `swipeAction` decides from
+  how far the row went.
+- `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
+  the foot.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. Each account's name, signature and the rest
+  are held once for every page, so a page opened while a save is on its way can't write old values
+  back.
+
+What a row offers is all in settings, and `saveProfile` keeps it to what a row can show: none to four
+lines of preview, four quick actions from a fixed list, a swipe action for each of the four swipes.
+Rows saved as "compact" by an older version read as one line of preview.
+
+Keys live in `shared/keys.ts`, apart from the page so they can be tested without one. `keyName` gives a
+press a name ("e", "Shift+Backspace", "Ctrl+Shift+R"), and each set maps names to commands. The Edison
+set is Edison Mail's own keys with Command read as Ctrl, plus the keys xrnmail already had where they
+don't collide; the Gmail set is those older keys alone. Keys pressed inside a message's frame are passed
+on with their modifiers, so they reach the same table.
+
+"Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
+Sent label. All Mail is still everything.

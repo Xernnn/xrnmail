@@ -11,6 +11,11 @@ the people who matter coming straight through.
 It's a full mail client: write, reply, archive, delete, snooze. Your mail stays on your laptop and with
 your mail service, with no server of ours in between. Everything clever happens on your laptop.
 
+It looks and works like Edison Mail for Mac, in its own code: the same window (sidebar, a title and
+search across the top, the list, the reader with Reply and Forward at its foot), the same rows and
+quick actions, the same sections in Settings and the same keys. What xrnmail adds on top is listed
+under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
+
 ## What it does
 
 - **Every account at once:** one inbox across services, or each on its own, with a colour for each.
@@ -24,7 +29,7 @@ your mail service, with no server of ours in between. Everything clever happens 
 - **Writing:** reply, reply all, forward with attachments, a reply box under every thread, formatting,
   signatures, templates, drafts that survive a restart, and addresses suggested from your mail.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
-- **Sorting mail:** archive, delete, spam, star, labels or folders, read and unread, all kept in step
+- **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
 - **Trash and Spam:** read them, restore from them, or delete for good.
 - **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
@@ -39,13 +44,15 @@ your mail service, with no server of ours in between. Everything clever happens 
 - **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
 - **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
-  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:starred` and `in:inbox`.
+  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
 - **Safe with hostile mail:** no scripts, and no remote images until you ask. See
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
-- **Comfortable to live in:** actions on hover, swipe, drag to the sidebar, right-click menus, recipient
-  chips, side-by-side or one-at-a-time reading, and Settings you can search.
+- **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
+  each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
+  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read), recipient chips,
+  side-by-side or one-at-a-time reading, one to four lines of preview, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
@@ -66,19 +73,34 @@ keyring.
   ID into xrnmail. You then sign in on Microsoft's own page with a code.
 - **Anything else:** your password and the server's details. Only encrypted connections are accepted.
 
-Press `?` for the keys. They follow Gmail's: `j` and `k` move, `e` archives, `#` deletes, `r` replies,
-`c` writes, `z` undoes.
+Press `?` for the keys. The set is Edison Mail's, with Command read as Ctrl: `c` or `d` writes, `r` or
+Ctrl+R replies, Backspace takes a thread out of view (archives it), Shift+Backspace deletes, Ctrl+S
+flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
+archives, `#` deletes, `z` undoes), and Settings, Shortcuts has the Gmail set alone, where Delete
+deletes.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
+
+## Where it differs from Edison Mail
+
+Kept from xrnmail, where Edison has nothing: batches and straight-through senders, the delivery line
+over the list, Snoozed and Attachments in the sidebar, the quick reply box under a thread, search
+without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time layout.
+
+Not here, though Edison has them: Pinned and Recently Seen, the Subscription Summary, muting a
+sender's notifications, editing the sidebar's entries, a message or the composer in a window of its
+own, attachment cards in the list, changing single shortcuts, and the Apple Mail, Outlook and Inbox
+sets of keys. Settings and the sync status sit at the foot of the sidebar, because Linux hides the
+menu bar Edison keeps its Preferences in.
 
 ## What it doesn't do yet
 
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
-- No mail rules, translation, or summaries, no custom shortcut sets, and nothing is built for Windows
-  or macOS or for phones.
+- No mail rules, translation, or summaries, no shortcuts of your own choosing, and nothing is built for
+  Windows or macOS or for phones.
 - Senders show as coloured initials, never photos or company logos, because fetching one would tell
   someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
