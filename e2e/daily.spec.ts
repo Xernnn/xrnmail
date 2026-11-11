@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, truncateSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { launch, ME, signIn, type Running } from './app'
 
@@ -236,6 +237,29 @@ test('a file only enters a draft as bytes: the page cannot name a path', async (
   expect(sent).toBe('passwd')
   await expect.poll(() => smtp.sent.length, LONG).toBe(1)
   expect(smtp.sent[0]?.raw).toContain(Buffer.from('dropped').toString('base64'))
+})
+
+// The first went onto the draft and the composer only listed files after a success, so it would
+// have gone out without being seen.
+test('picking files: one too many is refused, and what did go on is listed', async () => {
+  run = await launch()
+  const { page, app } = run
+  await signIn(run)
+  const folder = join(run.savedTo, '..')
+  const small = join(folder, 'notes.txt')
+  const big = join(folder, 'disk.iso')
+  writeFileSync(small, 'notes')
+  writeFileSync(big, '')
+  truncateSync(big, 20 * 1024 * 1024)
+  await app.evaluate(({ dialog }, paths) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: paths })) as typeof dialog.showOpenDialog
+  }, [small, big])
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const box = composer(page)
+  await box.getByRole('button', { name: 'Attach files' }).click()
+  await expect(box.getByText('18 MB')).toBeVisible()
+  await expect(box.getByRole('button', { name: 'Remove notes.txt' })).toBeVisible()
+  await expect(box.locator('.file-name')).toHaveText(['notes.txt'])
 })
 
 test('unsubscribing with one click opens nothing', async () => {

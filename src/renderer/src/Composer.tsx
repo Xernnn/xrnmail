@@ -274,6 +274,9 @@ export function Composer(props: {
       setFiles((await window.mail.pickFiles(draft.id)).files)
     } catch (e) {
       setError(problem(e))
+      // Files picked before the one that was refused are on the draft, so they have to be listed.
+      const kept = (await window.mail.drafts().catch(() => [])).find((d) => d.id === draft.id)
+      if (kept) setFiles(kept.files)
     }
   }
 
