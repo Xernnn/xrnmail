@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { canOpenDirectly, isPublicHttps, safeFileName } from '@main/safe-url'
-import { searchParts, Store } from '@main/store'
+import { MIGRATIONS, searchParts, Store } from '@main/store'
 import { forwardSubject, parseMailto, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
 import type { MessageDetail } from '@main/store'
 import { secondVersionProfile } from './old-profile'
@@ -157,6 +157,54 @@ describe('an older file', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('from before pins gains Pinned, and keeps its mail, its snoozes and its settings', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    const old = new DatabaseSync(path)
+    // What the version before pins left: the entries that had shipped by then, which never change.
+    MIGRATIONS.slice(0, 5).forEach((sql) => old.exec(sql))
+    old.exec('PRAGMA user_version = 5')
+    old.exec("INSERT INTO messages(account, uid, thread, subject, arrived, release_at, in_inbox, flagged) VALUES('me@example.com', 8, 'u', 'Kept', 100, 100, 1, 1)")
+    old.exec("INSERT INTO messages(account, uid, thread, subject, arrived, release_at, in_inbox) VALUES('me@example.com', 9, 'v', 'Other', 90, 90, 1)")
+    old.exec("INSERT INTO snoozes(account, thread, at, until) VALUES('me@example.com', 'v', 100, 500)")
+    old.exec(`INSERT INTO meta(key, value) VALUES('settings', '{"theme":"dark"}')`)
+    old.close()
+    const ref = { account: 'me@example.com', thread: 'u' }
+    let store = new Store(path)
+    expect(store.list({ kind: 'inbox' }, 1000).map((r) => [r.subject, r.starred, r.snoozedUntil, r.pinned])).toEqual([['Other', false, 500, false], ['Kept', true, null, false]])
+    expect(store.meta('settings')).toBe('{"theme":"dark"}')
+    expect(store.list({ kind: 'pinned' }, 1000)).toEqual([])
+    store.pin(ref, 1000)
+    expect(store.list({ kind: 'pinned' }, 1000).map((r) => r.subject)).toEqual(['Kept'])
+    store.close()
+    store = new Store(path) // and opening it again changes nothing
+    expect(store.list({ kind: 'pinned' }, 1000).map((r) => r.subject)).toEqual(['Kept'])
+    expect(store.thread('me@example.com', 'u', 1000)[0]?.pinned).toBe(true)
+    expect(store.thread('me@example.com', 'v', 1000)[0]?.pinned).toBe(false)
+    store.unpin(ref)
+    expect(store.list({ kind: 'pinned' }, 1000)).toEqual([])
+    store.close()
+    const file = new DatabaseSync(path)
+    expect(file.prepare('PRAGMA user_version').get()).toEqual({ user_version: MIGRATIONS.length })
+    file.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('the first file of all can pin too', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    const old = new DatabaseSync(path)
+    old.exec(FIRST_SCHEMA)
+    old.close()
+    const store = new Store(path)
+    const [row] = store.list({ kind: 'inbox' }, 1000)
+    expect(row?.pinned).toBe(false)
+    store.pin({ account: row?.account ?? '', thread: row?.thread ?? '' }, 1000)
+    expect(store.list({ kind: 'pinned' }, 1000).map((r) => [r.subject, r.pinned])).toEqual([['Kept', true]])
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('knows which lists of files came from a message that was cut', () => {
     const dir = folder()
     const path = join(dir, 'mail.sqlite')
@@ -179,6 +227,8 @@ describe('search', () => {
     expect(searchParts('lich thi')).toEqual({ match: '"lich"* "thi"*', filters: [], params: [] })
     expect(searchParts('from:ada subject:tax')).toEqual({ match: 'sender : "ada"* subject : "tax"*', filters: [], params: [] })
     expect(searchParts('has:attachment is:unread').filters).toEqual(['has_attachment = 1', 'seen = 0'])
+    expect(searchParts('is:flagged').filters).toEqual(['flagged = 1']) // what the app calls a star now
+    expect(searchParts('is:starred').filters).toEqual(['flagged = 1'])
   })
 
   it('reads who it went to and when', () => {
@@ -248,7 +298,7 @@ describe('writing back', () => {
     to: [{ name: '', address: 'me@example.com' }, { name: 'Bo', address: 'bo@example.com' }],
     cc: [{ name: '', address: 'cy@example.com' }],
     attachments: [], truncated: false, labels: [], seen: true, flagged: false, unsubscribe: false,
-    focused: true, facts: null, warnings: [],
+    focused: true, facts: null, warnings: [], pinned: false,
     messageId: '<m@example.com>', references: '', replyTo: [], unsubscribeTo: null, ...over
   })
 

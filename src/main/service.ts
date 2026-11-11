@@ -1,7 +1,9 @@
 import type {
-  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView,
+  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView, QuickAction,
   NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
+import { QUICK_SLOTS } from '@shared/types'
+import { cleanSidebar } from '@shared/sidebar'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
@@ -46,6 +48,7 @@ const DEFAULT_SETTINGS: Settings = {
   identities: {},
   templates: [],
   blocked: [],
+  muted: [],
   undoSeconds: 10,
   theme: 'system',
   focused: true,
@@ -54,9 +57,19 @@ const DEFAULT_SETTINGS: Settings = {
   unsubscribed: [],
   microsoftClientId: '',
   layout: 'panes',
-  density: 'comfortable',
-  swipeLeft: 'trash',
-  swipeRight: 'archive',
+  previewLines: 2,
+  attachmentCards: true,
+  sidebar: cleanSidebar(null),
+  sidebarIcons: true,
+  clock24: true,
+  keys: 'edison',
+  quickOn: true,
+  quickActions: ['archive', 'flag', 'trash', 'read'],
+  swipes: true,
+  swipeLeft: 'archive',
+  swipeLeftLong: 'star',
+  swipeRight: 'read',
+  swipeRightLong: 'trash',
   background: true,
   startAtLogin: false,
   images: 'ask',
@@ -65,6 +78,11 @@ const DEFAULT_SETTINGS: Settings = {
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
 const swipe = (value: SwipeAction | undefined, fallback: SwipeAction): SwipeAction => (value && SWIPES.includes(value) ? value : fallback)
+
+const QUICK: readonly QuickAction[] = ['archive', 'flag', 'trash', 'read', 'snooze', 'spam', 'none']
+/** Always as many as a row has room for, with nothing where the page sent something else. */
+const cleanQuick = (actions: QuickAction[]): QuickAction[] =>
+  Array.from({ length: QUICK_SLOTS }, (_, i) => (QUICK.includes(actions[i] as QuickAction) ? actions[i] as QuickAction : 'none'))
 
 const ACCOUNT_COLORS = ['#5e7f1b', '#2f6fb2', '#b4532a', '#7a4fb5', '#0f8a7e', '#b03a6a']
 
@@ -559,7 +577,7 @@ export class MailService {
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           if (isVip(mail.from.address, settings.blocked)) blocked.push(id)
-          else if (this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          else if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
             fresh++
             preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
           }
@@ -608,11 +626,15 @@ export class MailService {
    *  would notice. */
   async tick(): Promise<void> {
     const now = this.deps.now()
-    const batch = this.store.landedBetween(this.lastTick, now)
+    const senders = this.store.landedFrom(this.lastTick, now)
+    const batch = senders.length
     const woken = this.store.wokenBetween(this.lastTick, now)
     this.lastTick = now
     if (batch + woken > 0) {
-      this.deps.landed?.(batch + woken)
+      // A muted sender's mail lands like any other, and only goes unannounced.
+      const muted = this.settings().muted
+      const loud = senders.filter((from) => !isVip(from, muted)).length + woken
+      if (loud > 0) this.deps.landed?.(loud)
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
@@ -742,6 +764,13 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
+  pin(targets: ThreadRef[], on: boolean): void {
+    const now = this.deps.now()
+    targets.forEach((ref) => (on ? this.store.pin(ref, now) : this.store.unpin(ref)))
+    this.deps.changed()
+  }
+
   overview(): Overview {
     const now = this.deps.now()
     return {
@@ -860,6 +889,14 @@ export class MailService {
   subscriptions(): Subscription[] {
     const left = new Set(this.settings().unsubscribed)
     return this.store.subscriptions(this.deps.now()).filter((s) => !left.has(s.address))
+  }
+
+  /** Senders left behind: first those with mail still here, biggest first, then the ones whose mail has gone. */
+  unsubscribed(): Subscription[] {
+    const left = this.settings().unsubscribed
+    const here = this.store.subscriptions(this.deps.now()).filter((s) => left.includes(s.address))
+    const gone = left.filter((address) => !here.some((s) => s.address === address)).sort()
+    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0 }))]
   }
 
   clearSender(account: string, address: string): number {
@@ -1156,10 +1193,13 @@ export class MailService {
   settings(): Settings {
     try {
       const saved = JSON.parse(this.store.meta('settings') ?? '{}') as Partial<Settings>
-      const merged = { ...DEFAULT_SETTINGS, ...saved }
+      // "Compact" rows, from before the list counted lines, were rows with one line of the message.
+      const lines = saved.previewLines ?? ((saved as { density?: string }).density === 'compact' ? 1 : DEFAULT_SETTINGS.previewLines)
+      const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
-      return { ...merged, identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
+      // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
+      return { ...merged, sidebar: cleanSidebar(merged.sidebar), identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -1189,13 +1229,24 @@ export class MailService {
       identities: patch.identities ?? settings.identities,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
+      muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       theme: patch.theme ?? settings.theme,
       focused: patch.focused ?? settings.focused,
       layout: patch.layout ?? settings.layout,
-      density: patch.density ?? settings.density,
+      previewLines: patch.previewLines === undefined ? settings.previewLines : clamp(Math.round(patch.previewLines) || 0, 0, 4),
+      attachmentCards: patch.attachmentCards ?? settings.attachmentCards,
+      sidebar: patch.sidebar ? cleanSidebar(patch.sidebar) : settings.sidebar,
+      sidebarIcons: patch.sidebarIcons ?? settings.sidebarIcons,
+      clock24: patch.clock24 ?? settings.clock24,
+      keys: patch.keys ?? settings.keys,
+      quickOn: patch.quickOn ?? settings.quickOn,
+      quickActions: Array.isArray(patch.quickActions) ? cleanQuick(patch.quickActions) : settings.quickActions,
+      swipes: patch.swipes ?? settings.swipes,
       swipeLeft: swipe(patch.swipeLeft, settings.swipeLeft),
+      swipeLeftLong: swipe(patch.swipeLeftLong, settings.swipeLeftLong),
       swipeRight: swipe(patch.swipeRight, settings.swipeRight),
+      swipeRightLong: swipe(patch.swipeRightLong, settings.swipeRightLong),
       background: patch.background ?? settings.background,
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,

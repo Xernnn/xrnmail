@@ -1,4 +1,6 @@
+import type { KeySet } from './keys'
 import type { AccountConfig, Server } from './providers'
+import type { SidebarChoice } from './sidebar'
 
 /** What crosses between the app's two halves. Both sides read this file. */
 
@@ -74,6 +76,11 @@ export interface Template {
 /** What a sideways swipe on a thread does. */
 export type SwipeAction = 'archive' | 'trash' | 'read' | 'star' | 'snooze' | 'none'
 
+/** A button a row of the list offers under the pointer, in the place of its date. */
+export type QuickAction = 'archive' | 'flag' | 'trash' | 'read' | 'snooze' | 'spam' | 'none'
+/** A row has room for this many. */
+export const QUICK_SLOTS = 4
+
 export interface Settings {
   batch: BatchSettings
   /** How far back to keep mail on this laptop. */
@@ -85,6 +92,8 @@ export interface Settings {
   templates: Template[]
   /** Addresses or @domains whose new mail goes straight to Trash. */
   blocked: string[]
+  /** Senders whose new mail is never announced. It arrives all the same. An entry is an address, or @domain. */
+  muted: string[]
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
   theme: 'system' | 'light' | 'dark'
@@ -100,9 +109,27 @@ export interface Settings {
   microsoftClientId: string
   /** `panes` reads beside the list, `list` is one thing at a time. */
   layout: 'panes' | 'list'
-  density: 'comfortable' | 'compact'
+  /** How many lines of a message a row of the list shows under its subject, none to four. */
+  previewLines: number
+  /** A thread's files as small cards under its row in the list. */
+  attachmentCards: boolean
+  /** Which of the sidebar's folders and Assistant lists show, and in what order. */
+  sidebar: SidebarChoice
+  /** Icons beside the sidebar's entries. */
+  sidebarIcons: boolean
+  /** Times as 17:30, not 5:30 PM. */
+  clock24: boolean
+  /** Which set of keys the keyboard answers to: Edison Mail's, or Gmail's as xrnmail had them. */
+  keys: KeySet
+  /** Whether rows offer buttons under the pointer, and which, in order. */
+  quickOn: boolean
+  quickActions: QuickAction[]
+  /** Whether a sideways swipe on a row does anything. A short one and a long one, each way. */
+  swipes: boolean
   swipeLeft: SwipeAction
+  swipeLeftLong: SwipeAction
   swipeRight: SwipeAction
+  swipeRightLong: SwipeAction
   /** Stay in the tray with the window closed, for notifications and for mail set to go out later. */
   background: boolean
   startAtLogin: boolean
@@ -132,6 +159,10 @@ export interface ThreadRow {
   /** Its first file, to show under the preview, and how many there are in all. */
   file: string | null
   files: number
+  /** The names of its first few files, for the cards under a row. */
+  cards: string[]
+  /** Kept under Pinned, on this laptop. */
+  pinned: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -189,6 +220,8 @@ export interface MessageView {
   warnings: SenderWarning[]
   /** Where replies go, when it's somewhere else. */
   replyTo: Address[]
+  /** Its thread is kept under Pinned. */
+  pinned: boolean
 }
 
 export interface LabelCount {
@@ -211,7 +244,7 @@ export interface Overview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'snoozed' | 'sent' | 'all' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -276,7 +309,8 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'density' | 'swipeLeft' | 'swipeRight' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 
 /** What the app's menu and the tray can ask the page to do. */
@@ -318,9 +352,13 @@ export interface MailApi {
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
+  /** Keeps threads under Pinned, or lets them go. It's kept on this laptop: mail servers have no such mark. */
+  pin(targets: ThreadRef[], on: boolean): Promise<void>
   block(address: string): Promise<void>
   unsubscribe(message: number): Promise<UnsubscribeResult>
   subscriptions(): Promise<Subscription[]>
+  /** Senders already unsubscribed from. Ones with no mail left here come with a count of 0 and no account. */
+  unsubscribed(): Promise<Subscription[]>
   /** Everything from a sender goes to Trash. Returns what undoes it. */
   clearSender(account: string, address: string): Promise<number>
   /** Keeps a sender on one side of the inbox, for what they've sent and will send. */
@@ -331,6 +369,14 @@ export interface MailApi {
   saveAttachment(message: number, index: number): Promise<boolean>
   openAttachment(message: number, index: number): Promise<void>
   drafts(): Promise<Draft[]>
+  /** Opens a thread in a window of its own, or brings forward the one it already has. */
+  openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
+  /** The same for a draft, in a composer of its own. */
+  openDraftWindow(id: number): Promise<void>
+  /** Brings forward the window a draft is being written in, when it has one, and says whether it did. */
+  showDraftWindow(id: number): Promise<boolean>
+  /** A window of its own is about to close. It closes itself again once it's ready, and that time it does. */
+  onLeaving(listener: () => void): () => void
   startDraft(start: DraftStart): Promise<Draft>
   saveDraft(id: number, edit: DraftEdit): Promise<void>
   discardDraft(id: number): Promise<void>

@@ -4,9 +4,12 @@ import { promises as dns } from 'node:dns'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
-  AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, Quote,
+  AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
   Rsvp, Server, SwipeAction, Template, ThreadRef
 } from '@shared/types'
+import { cleanSidebar } from '@shared/sidebar'
+import { soloKey, soloQuery, type Solo } from '@shared/solo'
+import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
@@ -58,7 +61,7 @@ function tellPage(): void {
   if (changeTimer || closed) return
   changeTimer = setTimeout(() => {
     changeTimer = null
-    window?.webContents.send('changed')
+    for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('changed')
     const unread = (mail?.accounts() ?? []).reduce((sum, account) => sum + account.unread, 0)
     tray?.show(unread)
     app.setBadgeCount(unread)
@@ -89,11 +92,16 @@ const domainRecords: DomainRecords = {
   }
 }
 
-function showWindow(): void {
-  if (window?.isMinimized()) window.restore()
-  window?.show()
-  window?.focus()
+function bringForward(shown: BrowserWindow | null): void {
+  if (shown?.isMinimized()) shown.restore()
+  shown?.show()
+  shown?.focus()
 }
+
+const showWindow = (): void => bringForward(window)
+
+/** A file dialog belongs to the window that asked, which is the one in front. */
+const dialogParent = (): BrowserWindow | null => BrowserWindow.getFocusedWindow() ?? window
 
 /** A draft for a mail address, opened in the composer for the person to read. */
 async function composeTo(url: string): Promise<void> {
@@ -118,7 +126,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'snoozed', 'sent', 'all', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -248,13 +256,21 @@ function profile(value: unknown): ProfilePatch {
     patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
+  if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
+  if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
   if (p['layout'] === 'panes' || p['layout'] === 'list') patch.layout = p['layout']
-  if (p['density'] === 'comfortable' || p['density'] === 'compact') patch.density = p['density']
-  if (p['swipeLeft'] !== undefined) patch.swipeLeft = text(p['swipeLeft'], 16) as SwipeAction
-  if (p['swipeRight'] !== undefined) patch.swipeRight = text(p['swipeRight'], 16) as SwipeAction
+  if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
+    if (p[key] !== undefined) patch[key] = p[key] === true
+  }
+  if (p['keys'] === 'edison' || p['keys'] === 'gmail') patch.keys = p['keys']
+  if (Array.isArray(p['quickActions'])) patch.quickActions = p['quickActions'].slice(0, QUICK_SLOTS).map((a) => text(a, 16) as QuickAction)
+  for (const key of ['swipeLeft', 'swipeLeftLong', 'swipeRight', 'swipeRightLong'] as const) {
+    if (p[key] !== undefined) patch[key] = text(p[key], 16) as SwipeAction
+  }
   if (p['background'] !== undefined) patch.background = p['background'] === true
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
@@ -307,6 +323,7 @@ function register(service: MailService): void {
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
+  handle('pin', (refs: unknown, on: unknown) => service.pin(targets(refs), on === true))
   handle('block', (address: unknown) => service.block(text(address, 320)))
   handle('unsubscribe', async (message: unknown) => {
     const { url, ...result } = await service.unsubscribe(number(message))
@@ -314,13 +331,14 @@ function register(service: MailService): void {
     return result
   })
   handle('subscriptions', () => service.subscriptions())
+  handle('unsubscribed', () => service.unsubscribed())
   handle('clearSender', (account: unknown, address: unknown) => service.clearSender(text(account, 320), text(address, 320)))
   handle('setFocus', (address: unknown, focused: unknown) => service.setFocus(text(address, 320), focused === true))
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))
   handle('contacts', (query: unknown) => service.contacts(text(query, 200)))
   handle('saveAttachment', async (message: unknown, index: unknown) => {
     const found = await service.attachment(number(message), number(index))
-    const parent = window
+    const parent = dialogParent()
     const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)) }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
@@ -337,12 +355,21 @@ function register(service: MailService): void {
     if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
   })
   handle('drafts', () => service.drafts())
+  handle('openThreadWindow', (account: unknown, thread: unknown, bins: unknown) =>
+    showSolo({ kind: 'thread', account: text(account, 320), thread: text(thread, 64), bins: bins === true }))
+  handle('openDraftWindow', (id: unknown) => showSolo({ kind: 'draft', id: number(id) }))
+  handle('showDraftWindow', (id: unknown) => {
+    const shown = solos.get(soloKey({ kind: 'draft', id: number(id) }))
+    if (!shown || shown.isDestroyed()) return false
+    bringForward(shown)
+    return true
+  })
   handle('startDraft', (start: unknown) => service.startDraft(draftStart(start)))
   handle('saveDraft', (id: unknown, edit: unknown) => service.saveDraft(number(id), draftEdit(edit)))
   handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }
-    const parent = window
+    const parent = dialogParent()
     const choice = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
     return service.addFilesFromDisk(number(id), choice.canceled ? [] : choice.filePaths)
   })
@@ -391,6 +418,70 @@ function savedPlace(store: Store): WindowPlace {
   }
 }
 
+/** Every window is the same page behind the same walls: sandboxed, apart from the bridge's own
+ *  world, and with nothing of Node in it. A window of its own differs only in what it's asked to show. */
+const pagePreferences = (): Electron.WebPreferences => ({
+  preload: join(__dirname, '../preload/index.js'),
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  webSecurity: true,
+  spellcheck: true
+})
+
+function loadPage(shown: BrowserWindow, query: Record<string, string> = {}): void {
+  const dev = devServerUrl()
+  if (!dev) return void shown.loadFile(join(__dirname, '../renderer/index.html'), { query })
+  const url = new URL(dev)
+  url.search = new URLSearchParams(query).toString()
+  void shown.loadURL(url.href)
+}
+
+/** Windows that hold one thread or one draft, by which. */
+const solos = new Map<string, BrowserWindow>()
+/** More than anyone reads at once, and a bound on what a page gone wrong could open. */
+const MOST_SOLOS = 12
+/** How long a window of its own gets to keep what's typed before it's closed regardless. */
+const LEAVING_MS = 2000
+const SOLO_SIZE = { thread: { width: 900, height: 780 }, draft: { width: 720, height: 680 } }
+
+/** A thread, or a draft in the composer, in a window of its own: the page the main window has,
+ *  told in its address what to show. Asking again for the same one brings its window forward. */
+function showSolo(solo: Solo): void {
+  const key = soloKey(solo)
+  const open = solos.get(key)
+  if (open && !open.isDestroyed()) return bringForward(open)
+  if (solos.size >= MOST_SOLOS) throw new Error('Close one of the open windows first.')
+  const shown = new BrowserWindow({
+    ...SOLO_SIZE[solo.kind],
+    minWidth: 480,
+    minHeight: 360,
+    show: false,
+    autoHideMenuBar: true,
+    title: 'xrnmail',
+    icon: join(__dirname, '../../resources/icon.png'),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1a1c' : '#ffffff',
+    webPreferences: pagePreferences()
+  })
+  solos.set(key, shown)
+  lockDownContents(shown.webContents)
+  addContextMenu(shown.webContents)
+  shown.on('ready-to-show', () => shown.show())
+  // What's typed in a composer lives in its page until it's saved, so the page is told first. It
+  // saves and closes the window again, and that second time goes through. One that never answers
+  // still closes. Quitting doesn't wait, as it doesn't for the main window's composer.
+  let told = false
+  shown.on('close', (event) => {
+    if (told || quitting) return
+    told = true
+    event.preventDefault()
+    shown.webContents.send('leaving')
+    setTimeout(() => { if (!shown.isDestroyed()) shown.destroy() }, LEAVING_MS)
+  })
+  shown.on('closed', () => { if (solos.get(key) === shown) solos.delete(key) })
+  loadPage(shown, soloQuery(solo))
+}
+
 function createWindow(store: Store, hidden: boolean): void {
   const place = savedPlace(store)
   const shown = new BrowserWindow({
@@ -405,14 +496,7 @@ function createWindow(store: Store, hidden: boolean): void {
     title: 'xrnmail',
     icon: join(__dirname, '../../resources/icon.png'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1a1c' : '#ffffff',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      spellcheck: true
-    }
+    webPreferences: pagePreferences()
   })
   window = shown
   if (place.maximized) shown.maximize()
@@ -432,16 +516,18 @@ function createWindow(store: Store, hidden: boolean): void {
     event.preventDefault()
     shown.hide()
   })
-  shown.on('closed', () => (window = null))
+  shown.on('closed', () => {
+    window = null
+    // Without the main window there'd be no way back to the rest, so the others go with it.
+    for (const solo of solos.values()) if (!solo.isDestroyed()) solo.close()
+  })
   let lastSync = Date.now()
   shown.on('focus', () => {
     if (Date.now() - lastSync < FOCUS_SYNC_MS) return
     lastSync = Date.now()
     if (mail) background(mail.syncAll())
   })
-  const dev = devServerUrl()
-  if (dev) void shown.loadURL(dev)
-  else void shown.loadFile(join(__dirname, '../renderer/index.html'))
+  loadPage(shown)
 }
 
 app.on('second-instance', (_event, argv) => {

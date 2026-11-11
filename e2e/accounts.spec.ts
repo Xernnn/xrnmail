@@ -67,7 +67,7 @@ test('Spam and Trash can be read, and deleting from them is forever only when co
   await signIn(run)
   await page.getByRole('button', { name: /^Spam( \d+)?$/ }).click()
   await page.getByText('Actually fine').click()
-  await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0)
+  await expect(page.locator('.main').getByRole('button', { name: 'Archive' })).toHaveCount(0) // the sidebar has an Archive of its own
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
   await page.getByText('Gone for good').click()
   await page.getByRole('button', { name: 'Delete forever' }).click()
@@ -119,6 +119,13 @@ test('subscriptions list who mails in bulk, and a sender can be cleared with Und
   await signIn(run)
   await page.getByRole('button', { name: 'Subscriptions' }).click()
   await expect(page.getByText('2 messages')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Unsubscribe from hi@shop.example' })).toBeVisible()
+  await page.getByRole('button', { name: 'Unsubscribed', exact: true }).click() // the other side: who was left already
+  await expect(page.getByText('Nobody yet')).toBeVisible()
+  await expect(page.locator('.band h1')).toHaveText('Subscriptions')
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Subscriptions' })).toHaveAttribute('aria-current', 'page')
+  await page.getByRole('button', { name: 'Subscribed', exact: true }).click()
+  await expect(page.getByText('2 messages')).toBeVisible()
   await page.getByRole('button', { name: 'Delete all from hi@shop.example' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete all' }).click()
   await expect(page.getByText('Moved 2 messages to Trash')).toBeVisible()
@@ -158,7 +165,8 @@ test('the look can be set, and sticks', async () => {
   const { page } = run
   await signIn(run)
   await page.getByRole('button', { name: 'Settings' }).click()
-  await page.getByLabel('Look').selectOption('dark')
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByLabel('Theme').selectOption('dark')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await page.reload()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')

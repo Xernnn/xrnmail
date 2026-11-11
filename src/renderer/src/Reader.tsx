@@ -1,16 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  Archive, ArrowLeft, Ban, CalendarRange, ChevronDown, Clock, Download, ExternalLink, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo,
-  Filter, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Package, Plane, Presentation, Printer, Receipt, Reply, ReplyAll,
-  Send, Star, Tag, Trash2, TriangleAlert, Undo2, Zap, type LucideIcon
+  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
+  ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
-import { Avatar, Empty } from './Common'
-import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels, type FileKind } from './format'
+import { Avatar, Empty, KIND_ICONS } from './Common'
+import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
-import icon from './icon.svg'
 
 const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
 
@@ -41,7 +40,7 @@ function Cautions({ message }: { message: MessageView }): ReactNode {
 }
 
 const ANSWERS: [Rsvp, string][] = [['ACCEPTED', 'Accept'], ['TENTATIVE', 'Maybe'], ['DECLINED', 'Decline']]
-const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Package, travel: Plane, money: Receipt, event: CalendarRange }
+const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Truck, travel: Plane, money: DollarSign, event: Ticket }
 const FACT_NAMES: Record<Facts['type'], string> = { package: 'Package', travel: 'Travel', money: 'Bill or receipt', event: 'Event' }
 
 /** What the Assistant made of a message. Every word here came from a stranger, so it's only text. */
@@ -63,11 +62,6 @@ function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: num
       ))}
     </div>
   )
-}
-
-const KIND_ICONS: Record<FileKind, LucideIcon> = {
-  image: FileImage, pdf: FileText, doc: FileText, sheet: FileSpreadsheet, slides: Presentation, archive: FileArchive,
-  calendar: CalendarRange, audio: FileAudio, video: FileVideo, file: FileIcon
 }
 
 function Attachments(props: { message: MessageView; say(text: string): void }): ReactNode {
@@ -112,7 +106,7 @@ function Recipients(props: { message: MessageView; own: string[] }): ReactNode {
   return (
     <>
       <button className="who-to" aria-expanded={open} onClick={() => setOpen(!open)}>
-        to {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
+        <span className="muted">To:</span> {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
         <ChevronDown size={13} aria-hidden="true" />
       </button>
       {open && (
@@ -136,6 +130,8 @@ function Message(props: {
   open: boolean
   /** The one that offers Unsubscribe, when a thread has several that could. */
   leaving: boolean
+  /** The one that offers to block its sender, where there's nothing to unsubscribe from. */
+  blocking: boolean
   /** It's in Trash or Spam. */
   bins: boolean
   own: string[]
@@ -148,9 +144,11 @@ function Message(props: {
   rsvp(message: number, answer: Rsvp): void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
+  block(address: string): void
   trust(address: string): void
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
+  const [menu, setMenu] = useState(false)
   const address = m.from.address.toLowerCase()
   const trusted = settings?.images === 'always' || (settings?.imagesFrom ?? []).includes(address)
   // A From line can be forged, so being trusted only counts on mail that passed for its sender.
@@ -159,7 +157,7 @@ function Message(props: {
     return (
       <article className="message">
         <button className="message-head closed" onClick={toggle} aria-expanded={false}>
-          <Avatar name={m.from.name} address={m.from.address} size={32} />
+          <Avatar name={m.from.name} address={m.from.address} size={36} />
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
@@ -173,7 +171,7 @@ function Message(props: {
   return (
     <article className="message open">
       <div className="message-head" onClick={(e) => { if (!(e.target as Element).closest('button, .popover')) toggle() }}>
-        <Avatar name={m.from.name} address={m.from.address} />
+        <Avatar name={m.from.name} address={m.from.address} size={44} />
         <div className="who">
           <div className="who-name">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
@@ -188,10 +186,24 @@ function Message(props: {
           <div className="anchor"><Recipients message={m} own={own} /></div>
         </div>
         <span className="muted when">{longTime(m.date)}</span>
-        {leaving && (
-          <button className="pill strong" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>
-        )}
         {!bins && <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />}
+        {leaving && <button className="pill soft" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>}
+        {props.blocking && !leaving && <button className="pill soft" onClick={() => props.block(m.from.address)}>Block</button>}
+        {!bins && (
+          <div className="anchor">
+            <IconButton icon={MoreVertical} label="Message actions" click={() => setMenu(!menu)} />
+            {menu && (
+              <Popover right close={() => setMenu(false)}>
+                <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('replyAll', m.id) }}>
+                  <ReplyAll size={15} aria-hidden="true" /> Reply all
+                </button>
+                <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('forward', m.id) }}>
+                  <Forward size={15} aria-hidden="true" /> Forward
+                </button>
+              </Popover>
+            )}
+          </div>
+        )}
       </div>
       <div className="message-body">
         <Cautions message={m} />
@@ -296,6 +308,25 @@ function QuickReply(props: {
   )
 }
 
+/** A closed envelope among a few sparks, for when nothing is open. Drawn here, in the page's own colours. */
+function Nothing(): ReactNode {
+  return (
+    <svg className="nothing" width="250" height="210" viewBox="0 0 250 210" fill="none" aria-hidden="true">
+      <rect className="nothing-paper" x="77" y="72" width="96" height="68" rx="6" />
+      <path className="nothing-fold" d="M79 76l46 36 46-36" />
+      <g className="nothing-spark">
+        <circle cx="42" cy="34" r="9" />
+        <circle cx="206" cy="24" r="5" />
+        <path d="M118 30v14M111 37h14" />
+        <path d="M30 118v12M24 124h12" />
+        <path d="M212 164v16M204 172h16" />
+        <path d="M218 62l3.2 6.6 7.2 1-5.2 5.1 1.2 7.2-6.4-3.4-6.4 3.4 1.2-7.2-5.2-5.1 7.2-1z" />
+        <path d="M58 168l2.8 5.7 6.3.9-4.6 4.4 1.1 6.3-5.6-3-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z" />
+      </g>
+    </svg>
+  )
+}
+
 export function Reader(props: {
   messages: MessageView[]
   account: AccountView | undefined
@@ -313,6 +344,8 @@ export function Reader(props: {
   many: boolean
   setPanel(panel: Panel): void
   back(): void
+  /** Opens the thread in a window of its own. Not given in one. */
+  popOut?: () => void
   act(action: MailAction, label?: string): void
   snooze(at: number): void
   reply(kind: ReplyKind, message: number): void
@@ -324,6 +357,8 @@ export function Reader(props: {
   trust(address: string): void
   straight(address: string, on: boolean): void
   forever(): void
+  pin(on: boolean): void
+  mute(address: string, on: boolean): void
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -343,7 +378,7 @@ export function Reader(props: {
   if (!last) {
     return (
       <main className="reader reader-empty">
-        <img src={icon} alt="" width={52} height={52} />
+        <Nothing />
         <Empty icon={Mail} title={props.unread > 0 ? `${props.unread} unread` : 'Pick something to read'}
           note={props.held > 0 ? `${props.held} more waiting for the next delivery` : 'Press ? for the keys'} />
       </main>
@@ -359,6 +394,7 @@ export function Reader(props: {
 
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
   const starred = messages.some((m) => m.flagged)
+  const pinned = messages.some((m) => m.pinned)
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
   const person = messages.find((m) => m.from.address && m.from.address !== last.account)
   const sender = person?.from.address
@@ -367,7 +403,10 @@ export function Reader(props: {
   const hidden = folded ? messages.slice(1, -2).filter((m) => !open.has(m.id)) : []
   const shown = messages.filter((m) => !hidden.includes(m))
   const leaving = [...messages].reverse().find((m) => m.unsubscribe)
+  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
+  const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
+  const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
   // Only the address itself can be taken off here; a whole @domain stays a decision for Settings.
   const listedExactly = sender !== undefined && (vip ?? []).some((v) => v.trim().toLowerCase() === sender.toLowerCase())
 
@@ -394,27 +433,22 @@ export function Reader(props: {
           </>
         ) : (
           <>
-            <IconButton icon={Reply} label="Reply" hint="r" click={() => props.reply('reply', last.id)} />
-            <IconButton icon={ReplyAll} label="Reply all" hint="a" click={() => props.reply('replyAll', last.id)} />
-            <IconButton icon={Forward} label="Forward" hint="f" click={() => props.reply('forward', last.id)} />
-            <span className="tool-gap" />
             {inInbox
-              ? <IconButton icon={Archive} label="Archive" hint="e" click={() => act({ kind: 'archive' }, 'Archived')} />
+              ? <IconButton icon={Check} label="Archive" hint="e" click={() => act({ kind: 'archive' }, 'Archived')} />
               : <IconButton icon={Inbox} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />}
             <IconButton icon={Trash2} label="Delete" hint="#" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-            <span className="tool-gap" />
-            <IconButton icon={Star} label={starred ? 'Remove star' : 'Star'} hint="s" on={starred}
+            <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint="s" on={starred}
               click={() => act({ kind: starred ? 'unstar' : 'star' })} />
             <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />
-            <div className="anchor">
-              <IconButton icon={Clock} label="Snooze" hint="b" click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
-              {panel === 'snooze' && <TimeMenu title="Snooze until" right pick={props.snooze} close={() => setPanel(null)} />}
-            </div>
             <div className="anchor">
               <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint="l" click={() => setPanel(panel === 'labels' ? null : 'labels')} />
               {panel === 'labels' && (gmail
                 ? <LabelMenu labels={labels} active={active} right set={(label, add) => act({ kind: 'label', label, add })} close={() => setPanel(null)} />
                 : <FolderMenu folders={account?.folders ?? []} right close={() => setPanel(null)} pick={(to) => { setPanel(null); act({ kind: 'move', to }, `Moved to ${to}`) }} />)}
+            </div>
+            <div className="anchor">
+              <IconButton icon={Clock} label="Snooze" hint="b" click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
+              {panel === 'snooze' && <TimeMenu title="Snooze until" right pick={props.snooze} close={() => setPanel(null)} />}
             </div>
           </>
         )}
@@ -422,16 +456,26 @@ export function Reader(props: {
           <IconButton icon={MoreVertical} label="More" click={() => setPanel(panel === 'more' ? null : 'more')} />
           {panel === 'more' && (
             <Popover right close={() => setPanel(null)}>
+              {!bins && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
               {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
               {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
+              {sender && !bins && !own.includes(sender.toLowerCase()) && (muted
+                ? moreItem(Bell, 'Unmute notifications', () => props.mute(sender, false))
+                : moreItem(BellOff, 'Mute notifications', () => props.mute(sender, true)))}
               {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
             </Popover>
           )}
         </div>
+        {props.popOut && (
+          <>
+            <span className="toolbar-rule" aria-hidden="true" />
+            <IconButton icon={SquareArrowOutUpRight} label="Open in a window" click={props.popOut} />
+          </>
+        )}
       </div>
       <div className="messages">
         <div className="thread-head">
@@ -447,9 +491,10 @@ export function Reader(props: {
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>
             )}
-            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own} settings={settings} straight={isStraight(m.from.address)}
+            <Message message={m} open={open.has(m.id)} leaving={m === leaving} blocking={!bins && !leaving && m === blockable} bins={bins} own={own}
+              settings={settings} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
-              unsubscribe={props.unsubscribe} trust={props.trust} />
+              unsubscribe={props.unsubscribe} block={props.block} trust={props.trust} />
           </div>
         ))}
         {!bins && (
@@ -459,6 +504,15 @@ export function Reader(props: {
             keep={(text) => void props.replyWith(last, text, 'keep')} />
         )}
       </div>
+      {!bins && (
+        <div className="reply-bar">
+          <button type="button" title="Reply (r)" onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
+          {several && (
+            <button type="button" title="Reply all (a)" onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={17} aria-hidden="true" /> Reply All</button>
+          )}
+          <button type="button" title="Forward (f)" onClick={() => props.reply('forward', last.id)}><Forward size={17} aria-hidden="true" /> Forward</button>
+        </div>
+      )}
       {peek && <div className="peek">{peek}</div>}
     </main>
   )

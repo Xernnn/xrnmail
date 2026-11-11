@@ -11,6 +11,11 @@ the people who matter coming straight through.
 It's a full mail client: write, reply, archive, delete, snooze. Your mail stays on your laptop and with
 your mail service, with no server of ours in between. Everything clever happens on your laptop.
 
+It looks and works like Edison Mail for Mac, in its own code: the same window (sidebar, a title and
+search across the top, the list, the reader with Reply and Forward at its foot), the same rows and
+quick actions, the same sections in Settings and the same keys. What xrnmail adds on top is listed
+under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
+
 ## What it does
 
 - **Every account at once:** one inbox across services, or each on its own, with a colour for each.
@@ -24,9 +29,12 @@ your mail service, with no server of ours in between. Everything clever happens 
 - **Writing:** reply, reply all, forward with attachments, a reply box under every thread, formatting,
   signatures, templates, drafts that survive a restart, and addresses suggested from your mail.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
-- **Sorting mail:** archive, delete, spam, star, labels or folders, read and unread, all kept in step
+- **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
 - **Trash and Spam:** read them, restore from them, or delete for good.
+- **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
+  there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
+  for what they mean there.
 - **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
   side a sender belongs on and it stays there.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
@@ -36,16 +44,25 @@ your mail service, with no server of ours in between. Everything clever happens 
   going somewhere else. It warns; it never vouches.
 - **Snooze:** a thread comes back when you say, or when someone replies.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
+- **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
+  Settings, Notifications.
 - **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
 - **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
+  A row in the list shows its thread's files as small cards, unless Appearance says not to.
+- **Windows of their own:** the last button over a thread opens it in its own window, and the
+  composer's does the same for what you're writing. A thread's window follows it into Trash and back,
+  and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
-  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:starred` and `in:inbox`.
+  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
 - **Safe with hostile mail:** no scripts, and no remote images until you ask. See
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
-- **Comfortable to live in:** actions on hover, swipe, drag to the sidebar, right-click menus, recipient
-  chips, side-by-side or one-at-a-time reading, and Settings you can search.
+- **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
+  each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
+  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
+  choose which of its entries show and in what order), recipient chips, side-by-side or
+  one-at-a-time reading, one to four lines of preview, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
@@ -66,19 +83,54 @@ keyring.
   ID into xrnmail. You then sign in on Microsoft's own page with a code.
 - **Anything else:** your password and the server's details. Only encrypted connections are accepted.
 
-Press `?` for the keys. They follow Gmail's: `j` and `k` move, `e` archives, `#` deletes, `r` replies,
-`c` writes, `z` undoes.
+Press `?` for the keys. The set is Edison Mail's, with Command read as Ctrl: `c` or `d` writes, `r` or
+Ctrl+R replies, Backspace takes a thread out of view (archives it), Shift+Backspace deletes, Ctrl+S
+flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
+archives, `#` deletes, `z` undoes), and Settings, Shortcuts has the Gmail set alone, where Delete
+deletes.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
+
+## Where it differs from Edison Mail
+
+Kept from xrnmail, where Edison has nothing: batches and straight-through senders, the delivery line
+over the list, Snoozed and Attachments in the sidebar, the quick reply box under a thread, search
+without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time layout.
+
+Not here, though Edison has them:
+
+- **Recently Seen.** Nothing to hand says what it lists: it's a name in Edison's sidebar in every
+  picture, and its help pages never describe it.
+- **The Subscription Summary.** Its help pages say what it does (chosen senders are held and delivered
+  together, daily or weekly at a time you pick) and show its schedule in Settings, but not the three
+  things it would add here: the Summary side of Subscriptions, the Summary list in the sidebar, and
+  what a delivered Summary looks like. Batches already hold mail for set times of day, for everyone
+  but the senders let straight through.
+- Changing single shortcuts, and the Apple Mail, Outlook and Inbox sets of keys.
+- Choosing and ordering the accounts' own labels in Edit Menu, and making a label or folder from it.
+  Edit Menu here covers the gathered folders and the Assistant's lists.
+
+Done differently:
+
+- Settings and the sync status sit at the foot of the sidebar, because Linux hides the menu bar
+  Edison keeps its Preferences in. Appearance has an Edit Menu button beside the right-click one.
+- A pinned thread stays where it is in its list and is gathered under Pinned. Whether Edison also
+  lifts pinned mail to the top of a list isn't shown anywhere, so it isn't done.
+- The composer starts as a panel in the window and moves to a window of its own when asked; Edison's
+  is always a window.
+- A thread's own window stays open when the thread is archived or deleted, showing it where it went
+  with Undo still there, and closes when it's marked unread or gone for good.
+- Muted senders are a list of addresses or @domains typed in or added from a message, as blocked
+  senders are; Edison picks them from contacts.
 
 ## What it doesn't do yet
 
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
-- No mail rules, translation, or summaries, no custom shortcut sets, and nothing is built for Windows
-  or macOS or for phones.
+- No mail rules, translation, or summaries, no shortcuts of your own choosing, and nothing is built for
+  Windows or macOS or for phones.
 - Senders show as coloured initials, never photos or company logos, because fetching one would tell
   someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It

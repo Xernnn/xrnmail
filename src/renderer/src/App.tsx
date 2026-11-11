@@ -1,18 +1,21 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Archive, Check, CheckSquare, Clock, Inbox, Mail, MailOpen, OctagonAlert, Search as SearchIcon, SearchX, Star, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
 } from '@shared/types'
 import { cleanQuote, Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
-import { dayGroup, longTime, problem, textToHtml } from './format'
-import { BatchStrip, DraftRow, Row, Subscriptions } from './List'
+import { longTime, problem, setClock24, textToHtml } from './format'
+import { BatchStrip, DraftRow, NO_SWIPES, Row, Subscriptions, type Swipes } from './List'
 import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
-import { SettingsDialog, SHORTCUTS, type Tab } from './Settings'
+import { SettingsDialog, type Tab } from './Settings'
+import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
+import { cleanSidebar } from '@shared/sidebar'
+import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
 import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
 
@@ -20,7 +23,8 @@ const TAKES_AWAY = ['archive', 'trash', 'spam', 'forever', 'move']
 
 interface Toast {
   text: string
-  undo?: () => void
+  /** What it gives back is waited for by a window of its own, which mustn't close on an Undo still on its way. */
+  undo?: () => unknown
   /** How long it stays, when Undo lasts longer than usual. */
   ms?: number
 }
@@ -28,9 +32,17 @@ interface Toast {
 const TOAST_MS = 5000
 const PAGE = 200
 
+/** Until the settings are read: everything, as it starts out. */
+const NO_CHOICE = cleanSidebar(null)
+
+/** Set in a window of its own, which shows one thread or one draft and none of the rest. */
+const SOLO = soloFrom(window.location.search)
+
 const keyOf = (ref: ThreadRef): string => `${ref.account}/${ref.thread}`
 
-const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 384 }
+const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+/** More than Trash is ever likely to hold on this laptop. */
+const WHOLE_LIST = 20_000
 
 const savedWidth = (): number => {
   try {
@@ -47,21 +59,21 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 }
 
 const TITLES: Record<string, string> = {
-  today: 'Today', starred: 'Starred', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
-  drafts: 'Drafts', sent: 'Sent', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
+  today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
+  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
 }
+/** With several accounts, these gather every account's. */
+const GATHERED = ['drafts', 'sent', 'archive']
 
-function titleOf(view: View, many: boolean): string {
-  if (view.kind === 'inbox') {
-    if (view.account) return view.account
-    return many ? 'All Inboxes' : 'Inbox'
-  }
+export function titleOf(view: View, many: boolean): string {
+  if (view.kind === 'inbox') return many && !view.account ? 'All Inboxes' : 'Inbox'
   if (view.kind === 'assistant') return ASSISTANT.find(([section]) => section === view.section)?.[1] ?? 'Assistant'
   if (view.kind === 'label') return view.label.split('/').at(-1) ?? view.label
-  return TITLES[view.kind] ?? ''
+  const title = TITLES[view.kind] ?? ''
+  return many && GATHERED.includes(view.kind) && !('account' in view && view.account) ? `All ${title}` : title
 }
 
-function Help({ close }: { close(): void }): ReactNode {
+function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => dialog.current?.showModal(), [])
   return (
@@ -71,7 +83,7 @@ function Help({ close }: { close(): void }): ReactNode {
         <button className="quiet" onClick={close}>Done</button>
       </header>
       <dl className="keys">
-        {SHORTCUTS.map(([key, what]) => (
+        {KEY_LISTS[set].map(([key, what]) => (
           <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>
         ))}
       </dl>
@@ -86,7 +98,19 @@ export function App(): ReactNode {
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ThreadRow[] | null>(null)
   const [limit, setLimit] = useState(PAGE)
-  const [open, setOpen] = useState<ThreadRef | null>(null)
+  const [open, setOpen] = useState<ThreadRef | null>(SOLO?.kind === 'thread' ? { account: SOLO.account, thread: SOLO.thread } : null)
+  /** In a window of its own: whether its thread is in Trash or Spam just now, and whether it's anywhere at all. */
+  const [soloBins, setSoloBins] = useState(SOLO?.kind === 'thread' && SOLO.bins)
+  const [missing, setMissing] = useState(false)
+  /** In a composer of its own, once its draft has been looked for. */
+  const [soloReady, setSoloReady] = useState(false)
+  /** An Undo pressed in a window of its own and not yet done. What's read of the thread meanwhile is
+   *  already old, and [undoEpoch] moves on when it's done so a read begun before then is too. */
+  const [undoing, setUndoing] = useState(false)
+  const undoingNow = useRef(false)
+  /** What an open composer does before its window closes. */
+  const leaving = useRef<(() => Promise<void>) | null>(null)
+  const undoEpoch = useRef(0)
   const [messages, setMessages] = useState<MessageView[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -99,6 +123,9 @@ export function App(): ReactNode {
   const [toast, setToast] = useState<Toast | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; row: ThreadRow } | null>(null)
+  const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery | null } | null>(null)
+  /** The sidebar's entries are being chosen and put in order. */
+  const [editingMenu, setEditingMenu] = useState(false)
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
@@ -130,10 +157,13 @@ export function App(): ReactNode {
     document.documentElement.dataset['theme'] = profile?.theme ?? 'system'
   }, [profile?.theme])
 
+  setClock24(profile?.clock24 ?? true) // before anything below writes a time
+
   const unread = (accounts ?? []).reduce((sum, a) => sum + a.unread, 0)
+  const soloTitle = SOLO?.kind === 'thread' ? messages[0]?.subject || 'xrnmail' : SOLO ? composing?.subject || 'New message' : null
   useEffect(() => {
-    document.title = unread > 0 ? `(${unread}) xrnmail` : 'xrnmail'
-  }, [unread])
+    document.title = soloTitle ?? (unread > 0 ? `(${unread}) xrnmail` : 'xrnmail')
+  }, [unread, soloTitle])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -141,16 +171,32 @@ export function App(): ReactNode {
     return () => clearTimeout(timer)
   }, [toast])
 
+  /** Undo, from the toast. A window of its own stays until it's done and what it holds has been read again. */
+  const undoNow = (undo: (() => unknown) | undefined): void => {
+    setToast(null)
+    if (!undo) return
+    if (!SOLO) return void undo()
+    undoingNow.current = true
+    setUndoing(true)
+    setMissing(false)
+    void Promise.resolve().then(undo).catch(() => undefined).then(() => {
+      undoingNow.current = false
+      undoEpoch.current += 1
+      setUndoing(false)
+      bump()
+    })
+  }
+
   const searching = search.trim() !== ''
   const split = profile?.focused ?? false
   const active: View = searching
     ? { kind: 'search', text: search.trim() }
     : split && view.kind === 'inbox' ? { ...view, focus: view.focus ?? 'focused' } : view
-  const bins = active.kind === 'trash' || active.kind === 'spam'
+  const bins = SOLO ? soloBins : active.kind === 'trash' || active.kind === 'spam'
   const list = rows ?? []
 
   useEffect(() => {
-    if (active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
+    if (SOLO || active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
     const asked = ++listAsked.current
     const timer = setTimeout(() => {
       void window.mail.list(active as ListQuery, limit).then((found) => {
@@ -162,13 +208,49 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (!open) return setMessages([])
-    void window.mail.thread(open.account, open.thread, bins).then((found) => {
+    void (async () => {
+      const epoch = undoEpoch.current
+      let found = await window.mail.thread(open.account, open.thread, bins)
+      if (SOLO && found.length === 0) {
+        // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
+        // what sent it there is never out of reach.
+        const moved = await window.mail.thread(open.account, open.thread, !bins)
+        if (moved.length > 0) {
+          found = moved
+          setSoloBins(!bins)
+        }
+      }
+      if (SOLO && found.length === 0 && (undoingNow.current || epoch !== undoEpoch.current)) return // the read after the Undo says
       setMessages(found)
       setReads((n) => n + 1) // opening it read it, and the row should say so
-      if (found.length === 0) setOpen(null) // gone from the server while on screen
-    })
+      if (SOLO) setMissing(found.length === 0)
+      else if (found.length === 0) setOpen(null) // gone from the server while on screen
+    })()
     return undefined
   }, [open?.account, open?.thread, version])
+
+  // A window of its own that's being closed is told first, and closes itself once what's typed is safe.
+  useEffect(() => window.mail.onLeaving(() => {
+    void Promise.resolve().then(() => leaving.current?.()).catch(() => undefined).then(() => window.close())
+  }), [])
+
+  // A composer of its own starts from the draft it was opened for.
+  useEffect(() => {
+    if (SOLO?.kind !== 'draft') return
+    const id = SOLO.id
+    void window.mail.drafts().then((all) => {
+      setComposing(all.find((draft) => draft.id === id) ?? null)
+      setSoloReady(true)
+    })
+  }, [])
+
+  // A window of its own closes once what it held is gone: after any Undo has had its time, and never
+  // around a reply being written.
+  useEffect(() => {
+    if (!SOLO || toast?.undo || undoing || accounts === null) return
+    const done = SOLO.kind === 'thread' ? missing && !composing : soloReady && !composing
+    if (done || accounts.length === 0) window.close()
+  }, [missing, soloReady, composing, toast, undoing, accounts])
 
   const move = useCallback(
     (step: number) => {
@@ -201,12 +283,14 @@ export function App(): ReactNode {
       if (refs.length === 0) return
       const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins) || (action.kind === 'unread' && open !== null)
       try {
-        if (leaves) leave(refs)
+        if (leaves && !SOLO) leave(refs)
         const token = await window.mail.act(refs, action)
+        // Reading it again would only mark it read again, so a window of its own goes with it.
+        if (SOLO && action.kind === 'unread') return window.close()
         setPicked(new Set())
         if (label) {
           const text = refs.length > 1 ? `${label}: ${refs.length} threads` : label
-          setToast({ text, undo: () => void window.mail.undo(token) })
+          setToast({ text, undo: () => window.mail.undo(token) })
         }
       } catch (e) {
         say(problem(e))
@@ -230,10 +314,10 @@ export function App(): ReactNode {
       setPanel(null)
       setBulkSnooze(false)
       try {
-        leave(refs)
+        if (!SOLO) leave(refs)
         await window.mail.snooze(refs, at)
         setPicked(new Set())
-        setToast({ text: `Snoozed until ${longTime(at)}`, undo: () => void window.mail.unsnooze(refs) })
+        setToast({ text: `Snoozed until ${longTime(at)}`, undo: () => window.mail.unsnooze(refs) })
       } catch (e) {
         say(problem(e))
       }
@@ -260,7 +344,7 @@ export function App(): ReactNode {
     starting.current = null
   }, [composing?.id])
 
-  /** The search box sits over the list, which one-pane reading hides, so that comes back first. */
+  /** The search box sits in the band over the list, which one-pane reading hides, so that comes back first. */
   const focusSearch = useCallback((): void => {
     if (searchBox.current?.offsetParent === null) {
       setOpen(null)
@@ -279,6 +363,8 @@ export function App(): ReactNode {
 
   const reopen = async (draft: Draft): Promise<void> => {
     try {
+      // Being written in a window of its own: that window comes forward, and there's still one editor.
+      if (draft.state !== 'queued' && await window.mail.showDraftWindow(draft.id)) return
       if (draft.state === 'queued') await window.mail.unsend(draft.id)
       setComposing({ ...draft, state: 'draft', sendAt: null })
     } catch (e) {
@@ -297,9 +383,9 @@ export function App(): ReactNode {
         say(problem(e))
       }
     }
-    if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo: () => void undo() })
+    if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo })
     const left = when - Date.now()
-    setToast(left > 0 ? { text: 'Sending', undo: () => void undo(), ms: left } : { text: 'Sent' })
+    setToast(left > 0 ? { text: 'Sending', undo, ms: left } : { text: 'Sent' })
   }
 
   const sent = (id: number, when: number, scheduled: boolean): void => {
@@ -362,6 +448,16 @@ export function App(): ReactNode {
     }
   }
 
+  /** Pinned threads stay where they are; Pinned in the sidebar gathers them. */
+  const pin = async (refs: ThreadRef[], on: boolean): Promise<void> => {
+    try {
+      await window.mail.pin(refs, on)
+      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => window.mail.pin(refs, !on) })
+    } catch (error) {
+      say(problem(error))
+    }
+  }
+
   const block = async (address: string): Promise<void> => {
     if (!await ask({ title: `Block ${address}?`, note: 'New mail from them goes straight to Trash.', action: 'Block', danger: true })) return
     await window.mail.block(address)
@@ -373,6 +469,30 @@ export function App(): ReactNode {
     try {
       const token = await window.mail.clearSender(item.account, item.address)
       setToast({ text: `Moved ${item.count === 1 ? '1 message' : `${item.count} messages`} to Trash`, undo: () => void window.mail.undo(token) })
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  /** Every unread thread of a place in the sidebar, whether or not it's the one on screen. */
+  const markAllRead = async (target: ListQuery): Promise<void> => {
+    try {
+      const unread = (await window.mail.list(target, WHOLE_LIST)).filter((r) => r.unread > 0).map((r) => ({ account: r.account, thread: r.thread }))
+      if (unread.length === 0) say('Nothing unread there')
+      else await run(unread, { kind: 'read' }, 'Marked as read')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  /** Everything in Trash, not only the rows read so far. */
+  const emptyTrash = async (): Promise<void> => {
+    if (active.kind !== 'trash') return
+    try {
+      const all = (await window.mail.list(active, WHOLE_LIST)).map((r) => ({ account: r.account, thread: r.thread }))
+      if (all.length === 0) return
+      const note = `${all.length === 1 ? '1 thread is' : `${all.length} threads are`} deleted for good. This can't be got back once Undo has gone.`
+      if (await ask({ title: 'Empty Trash?', note, action: 'Empty Trash', danger: true })) void run(all, { kind: 'forever' }, 'Trash emptied')
     } catch (e) {
       say(problem(e))
     }
@@ -390,6 +510,18 @@ export function App(): ReactNode {
   const keepSender = async (address: string, focused: boolean): Promise<void> => {
     await window.mail.setFocus(address, focused)
     say(`${address} stays in ${focused ? 'Focused' : 'Other'}`)
+  }
+
+  /** A muted sender's mail still arrives; it just isn't announced. */
+  const mute = async (address: string, on: boolean): Promise<void> => {
+    const who = address.toLowerCase()
+    try {
+      const muted = (await window.mail.settings()).muted
+      await window.mail.saveProfile({ muted: on ? [...muted, who] : muted.filter((m) => m !== who) })
+      say(on ? `Mail from ${address} won't be announced` : `Mail from ${address} is announced again`)
+    } catch (e) {
+      say(problem(e))
+    }
   }
 
   const trustImages = async (address: string): Promise<void> => {
@@ -436,10 +568,11 @@ export function App(): ReactNode {
 
   const dropOn = (target: View, refs: ThreadRef[]): void => {
     if (target.kind === 'inbox') void run(refs, { kind: 'inbox' }, 'Moved to Inbox')
-    else if (target.kind === 'all') void run(refs, { kind: 'archive' }, 'Archived')
+    else if (target.kind === 'all' || target.kind === 'archive') void run(refs, { kind: 'archive' }, 'Archived')
     else if (target.kind === 'trash') void run(refs, { kind: 'trash' }, 'Moved to Trash')
     else if (target.kind === 'spam') void run(refs, { kind: 'spam' }, 'Reported as spam')
     else if (target.kind === 'starred') void run(refs, { kind: 'star' })
+    else if (target.kind === 'pinned') void pin(refs, true)
     else if (target.kind === 'label') {
       const mine = refs.filter((ref) => ref.account === target.account)
       const labels = accounts?.find((a) => a.email === target.account)?.labels
@@ -461,9 +594,12 @@ export function App(): ReactNode {
       row.unread > 0
         ? { label: 'Mark as read', icon: MailOpen, run: () => void run(refs, { kind: 'read' }) }
         : { label: 'Mark as unread', icon: Mail, run: () => void run(refs, { kind: 'unread' }) },
-      { label: row.starred ? 'Remove star' : 'Star', icon: Star, run: () => void run(refs, { kind: row.starred ? 'unstar' : 'star' }) },
+      { label: row.starred ? 'Remove flag' : 'Flag', icon: Flag, run: () => void run(refs, { kind: row.starred ? 'unstar' : 'star' }) },
+      row.pinned
+        ? { label: 'Unpin', icon: PinOff, run: () => void pin(refs, false) }
+        : { label: 'Pin', icon: Pin, run: () => void pin(refs, true) },
       'gap',
-      { label: 'Archive', icon: Archive, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
+      { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
       { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
       { label: 'Report spam', icon: OctagonAlert, run: () => void run(refs, { kind: 'spam' }, 'Reported as spam') },
       { label: 'Delete', icon: Trash2, danger: true, run: () => void run(refs, { kind: 'trash' }, 'Moved to Trash') },
@@ -485,51 +621,48 @@ export function App(): ReactNode {
         }
         return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
-        event.preventDefault()
-        setPicked(new Set(list.map(keyOf)))
-        return
-      }
-      if (event.ctrlKey || event.metaKey || event.altKey) return
       const last = messages.at(-1)
-      const handlers: Record<string, () => void> = {
-        '/': focusSearch,
-        j: () => move(1),
-        k: () => move(-1),
-        ArrowDown: () => move(1),
-        ArrowUp: () => move(-1),
-        Escape: () => {
+      const trash = (): void => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash'))
+      const commands: Record<KeyCommand, () => void> = {
+        search: focusSearch,
+        next: () => move(1),
+        previous: () => move(-1),
+        close: () => {
           if (starting.current) starting.current.off = true
           else if (picked.size > 0) setPicked(new Set())
-          else setOpen(null)
+          else if (!SOLO) setOpen(null)
         },
-        c: () => void compose({ kind: 'new' }),
-        r: () => { if (last) reply('reply', last.id) },
-        a: () => { if (last) reply('replyAll', last.id) },
-        f: () => { if (last) reply('forward', last.id) },
-        e: () => { if (!bins) void run(targets(), { kind: 'archive' }, 'Archived') },
-        '#': () => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash')),
-        Delete: () => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash')),
-        '!': () => void (active.kind === 'spam' ? run(targets(), { kind: 'inbox' }, 'Moved to Inbox') : run(targets(), { kind: 'spam' }, 'Reported as spam')),
-        s: () => {
-          const starred = messages.some((m) => m.flagged)
-          void run(targets(), { kind: starred ? 'unstar' : 'star' })
+        compose: () => void compose({ kind: 'new' }),
+        reply: () => { if (last) reply('reply', last.id) },
+        replyAll: () => { if (last) reply('replyAll', last.id) },
+        forward: () => { if (last) reply('forward', last.id) },
+        archive: () => { if (!bins) void run(targets(), { kind: 'archive' }, 'Archived') },
+        trash,
+        // Out of the list in front of you: archived, where that's something a thread there can be.
+        removeFromView: () => { if (!bins && active.kind !== 'archive' && active.kind !== 'sent') void run(targets(), { kind: 'archive' }, 'Archived') },
+        spam: () => void (active.kind === 'spam' ? run(targets(), { kind: 'inbox' }, 'Moved to Inbox') : run(targets(), { kind: 'spam' }, 'Reported as spam')),
+        flag: () => {
+          const flagged = picked.size > 0 ? list.filter((r) => picked.has(keyOf(r))).every((r) => r.starred) : messages.some((m) => m.flagged)
+          void run(targets(), { kind: flagged ? 'unstar' : 'star' })
         },
-        U: () => void run(targets(), { kind: 'unread' }),
-        b: () => {
+        read: () => void run(targets(), { kind: 'read' }),
+        unread: () => void run(targets(), { kind: 'unread' }),
+        snooze: () => {
           if (picked.size > 0) setBulkSnooze(true)
           else if (open) setPanel('snooze')
         },
-        l: () => { if (open) setPanel('labels') },
-        x: () => {
+        labels: () => { if (open) setPanel('labels') },
+        select: () => {
           const index = list.findIndex((r) => r.account === open?.account && r.thread === open?.thread)
           const row = list[index]
           if (row) togglePick(row, index, false)
         },
-        z: () => toast?.undo?.(),
-        '?': () => setHelp(true)
+        selectAll: () => setPicked(new Set(list.map(keyOf))),
+        undo: () => toast?.undo?.(),
+        help: () => setHelp(true)
       }
-      const handler = handlers[event.key]
+      const command = KEYS[profile?.keys ?? 'edison'][keyName(event)]
+      const handler = command && commands[command]
       if (!handler) return
       event.preventDefault()
       handler()
@@ -562,7 +695,7 @@ export function App(): ReactNode {
   }
 
   if (accounts === null) return null
-  if (accounts.length === 0) return <Welcome />
+  if (accounts.length === 0) return SOLO ? null : <Welcome />
 
   const go = (target: View): void => {
     setView(target)
@@ -585,67 +718,104 @@ export function App(): ReactNode {
   const done = progress.reduce((sum, p) => sum + p.done, 0)
   const total = progress.reduce((sum, p) => sum + p.total, 0)
   const single = profile?.layout === 'list'
-  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', profile?.density === 'compact' ? 'compact' : ''].join(' ')
+  const lines = profile?.previewLines ?? 2
+  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
+  const swipes: Swipes = profile?.swipes
+    ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
+    : NO_SWIPES
+  const quick = profile?.quickOn ? profile.quickActions : []
   const emptyList = showDrafts ? shownDrafts.length === 0 : !showSubscriptions && rows !== null && rows.length === 0
-  // Headings by day, where the list runs newest first.
-  const byDay = !showDrafts && !showSubscriptions && active.kind !== 'assistant' && active.kind !== 'snoozed'
-  const now = Date.now()
-  let lastDay = ''
   const otherCount = overview?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
   const batching = (profile?.batch.times.length ?? 0) > 0
 
+  const popOut = (): void => {
+    if (!open) return
+    // It's read there from now on. Left open here as well, this window would mark it read again
+    // each time it changed, whatever was done to it there.
+    void window.mail.openThreadWindow(open.account, open.thread, bins).then(() => setOpen(null), (e: unknown) => say(problem(e)))
+  }
+  const reader = (
+    <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
+      settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
+      labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
+      act={(action, label) => void run(open ? [open] : [], action, label)}
+      snooze={(at) => void snooze(open ? [open] : [], at)}
+      reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
+      rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
+      trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
+      forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)} />
+  )
+  /** What's drawn over the page, in any window. */
+  const over = (
+    <>
+      {composing && (
+        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
+          solo={SOLO?.kind === 'draft'} leaving={leaving}
+          moveOut={(id) => {
+            setComposing(null)
+            void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))
+          }}
+          close={(saved) => {
+            setComposing(null)
+            if (saved && SOLO?.kind !== 'draft') say('Saved to Drafts') // a composer of its own just closes
+          }} />
+      )}
+      {toast && (
+        <div className="toast" role="status">
+          <span>{toast.text}</span>
+          {toast.undo && <button className="link" onClick={() => undoNow(toast.undo)}>Undo</button>}
+        </div>
+      )}
+      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
+      {settings && (
+        <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)}
+          editMenu={SOLO ? undefined : () => { setSettings(null); setEditingMenu(true) }} />
+      )}
+      {question && <Confirm question={question} />}
+    </>
+  )
+
+  if (SOLO) return <div className={`app solo solo-${SOLO.kind}`}>{SOLO.kind === 'thread' && reader}{over}</div>
+
   return (
-    <div className={appClass} style={{ '--list': `${listWidth}px` } as CSSProperties}>
+    <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
-        compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn} />
+        compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
+        menu={(target, x, y) => setSideMenu({ x, y, target })}
+        choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
+        edited={(choice) => {
+          setEditingMenu(false)
+          if (!choice) return
+          setProfile((now) => (now ? { ...now, sidebar: choice } : now)) // shown at once; the save follows
+          void window.mail.saveProfile({ sidebar: choice }).catch((e: unknown) => say(problem(e))).then(bump)
+        }} />
       <div className="main">
+        <header className="band">
+          <h1 className="view-title">{titleOf(active, many)}</h1>
+          <div className="search">
+            <SearchIcon size={16} aria-hidden="true" />
+            <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
+              onChange={(e) => setSearch(e.target.value)} />
+            {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
+          </div>
+        </header>
         <div className="panes">
           <section className="list" aria-label="Threads">
-            <div className="list-top">
-              <div className="search">
-                <SearchIcon size={16} aria-hidden="true" />
-                <input ref={searchBox} type="search" placeholder="Search mail" aria-label="Search" value={search} spellCheck={false}
-                  onChange={(e) => setSearch(e.target.value)} />
-                {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
+            {split && active.kind === 'inbox' && (
+              <div className="tabs" role="group" aria-label="Focused and Other">
+                <button className={active.focus !== 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus !== 'other'}
+                  onClick={() => go({ kind: 'inbox', ...inboxScope })}>Focused</button>
+                <button className={active.focus === 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus === 'other'}
+                  onClick={() => go({ kind: 'inbox', ...inboxScope, focus: 'other' })}>
+                  Other{otherCount > 0 && ` (${otherCount > 99 ? '99+' : otherCount})`}
+                </button>
               </div>
-            </div>
-            {anyPicked ? (
-              <div className="bulk" role="toolbar" aria-label="Selected threads">
-                <button className="link" onClick={() => setPicked(new Set())}>{picked.size} selected</button>
-                <button className="link" onClick={() => setPicked(new Set(list.map(keyOf)))}>All</button>
-                <span className="grow" />
-                {bins ? (
-                  <>
-                    <IconButton icon={Undo2} label="Restore selected" click={() => void run(refs, { kind: 'inbox' }, 'Moved to Inbox')} />
-                    <IconButton icon={Trash2} label="Delete selected forever" click={() => forever(refs)} />
-                  </>
-                ) : (
-                  <>
-                    <IconButton icon={Archive} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
-                    <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
-                  </>
-                )}
-                <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
-                <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
-                <div className="anchor">
-                  <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
-                  {bulkSnooze && <TimeMenu title="Snooze until" right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
-                </div>
-              </div>
-            ) : (
-              <div className="list-head">
-                <h1 className="list-title">{titleOf(active, many)}</h1>
-                {split && active.kind === 'inbox' && (
-                  <div className="tabs" role="group" aria-label="Focused and Other">
-                    <button className={active.focus !== 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus !== 'other'}
-                      onClick={() => go({ kind: 'inbox', ...inboxScope })}>Focused</button>
-                    <button className={active.focus === 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus === 'other'}
-                      onClick={() => go({ kind: 'inbox', ...inboxScope, focus: 'other' })}>
-                      Other {otherCount > 0 && <span className="tab-count">{otherCount > 99 ? '99+' : otherCount}</span>}
-                    </button>
-                  </div>
-                )}
+            )}
+            {active.kind === 'subscriptions' && (
+              <div className="tabs" role="group" aria-label="Subscribed and Unsubscribed">
+                <button className={active.left ? 'tab' : 'tab on'} aria-pressed={!active.left} onClick={() => go({ kind: 'subscriptions' })}>Subscribed</button>
+                <button className={active.left ? 'tab on' : 'tab'} aria-pressed={active.left === true} onClick={() => go({ kind: 'subscriptions', left: true })}>Unsubscribed</button>
               </div>
             )}
             {overview && <BatchStrip overview={overview} />}
@@ -655,7 +825,14 @@ export function App(): ReactNode {
                 <span className="bar"><i style={{ width: `${Math.round((done / total) * 100)}%` }} /></span>
               </div>
             )}
-            <div className="threads" onScroll={(e) => {
+            {active.kind === 'trash' && list.length > 0 && (
+              <div className="strip">
+                <span className="muted">{list.length >= limit ? `${list.length}+` : list.length} {list.length === 1 ? 'thread' : 'threads'} in Trash</span>
+                <span aria-hidden="true" className="muted">·</span>
+                <button className="link" onClick={() => void emptyTrash()}>Empty Trash now</button>
+              </div>
+            )}
+            <div className={anyPicked ? 'threads picking' : 'threads'} onScroll={(e) => {
               const box = e.currentTarget
               if (list.length >= limit && box.scrollTop + box.clientHeight > box.scrollHeight - 300) setLimit(limit + PAGE)
             }}>
@@ -664,29 +841,21 @@ export function App(): ReactNode {
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
-                <Subscriptions version={version} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
+                <Subscriptions version={version} left={active.left === true} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
               )}
-              {!showDrafts && !showSubscriptions && list.map((row, index) => {
-                const day = byDay ? dayGroup(row.date, now) : ''
-                const heading = day !== lastDay ? day : ''
-                lastDay = day
-                return (
-                  <Fragment key={keyOf(row)}>
-                    {heading && <h2 className="list-section">{heading}</h2>}
-                    <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
-                      account={accounts.find((a) => a.email === row.account)}
-                      on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                      swipeLeft={profile?.swipeLeft ?? 'none'} swipeRight={profile?.swipeRight ?? 'none'}
-                      open={() => setOpen({ account: row.account, thread: row.thread })}
-                      pick={(event) => togglePick(row, index, event.shiftKey)}
-                      act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
-                      snooze={() => snoozeRow(row)}
-                      swiped={(action) => swiped(row, action)}
-                      menu={(x, y) => setMenu({ x, y, row })}
-                      drag={(event) => dragged(event, row)} />
-                  </Fragment>
-                )
-              })}
+              {!showDrafts && !showSubscriptions && list.map((row, index) => (
+                <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
+                  account={accounts.find((a) => a.email === row.account)}
+                  on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
+                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true}
+                  open={() => setOpen({ account: row.account, thread: row.thread })}
+                  pick={(event) => togglePick(row, index, event.shiftKey)}
+                  act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
+                  snooze={() => snoozeRow(row)}
+                  swiped={(action) => swiped(row, action)}
+                  menu={(x, y) => setMenu({ x, y, row })}
+                  drag={(event) => dragged(event, row)} />
+              ))}
               {(rows === null || (firstRead && list.length === 0)) && !showDrafts && !showSubscriptions && <Skeleton />}
               {emptyList && !firstRead && (
                 searching ? <Empty icon={SearchX} title="Nothing found" note="Search covers the mail kept on this laptop." />
@@ -694,36 +863,52 @@ export function App(): ReactNode {
                   : <Empty icon={Inbox} title="Nothing here" />
               )}
             </div>
+            {anyPicked && (
+              <div className="bulk" role="toolbar" aria-label="Selected threads">
+                <div className="bulk-top">
+                  <strong className="grow">{picked.size} selected</strong>
+                  <button className="bulk-pill" onClick={() => setPicked(new Set(list.map(keyOf)))}>Select All ({list.length})</button>
+                  <button className="bulk-pill" onClick={() => setPicked(new Set())}>Cancel</button>
+                </div>
+                <div className="bulk-tools">
+                  {bins ? (
+                    <>
+                      <IconButton icon={Undo2} label="Restore selected" click={() => void run(refs, { kind: 'inbox' }, 'Moved to Inbox')} />
+                      <IconButton icon={Trash2} label="Delete selected forever" click={() => forever(refs)} />
+                    </>
+                  ) : (
+                    <>
+                      <IconButton icon={Check} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
+                      <IconButton icon={OctagonAlert} label="Report selected as spam" click={() => void run(refs, { kind: 'spam' }, 'Reported as spam')} />
+                      <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
+                      <IconButton icon={Flag} label="Flag selected" click={() => void run(refs, { kind: 'star' })} />
+                    </>
+                  )}
+                  <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
+                  <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
+                  {!bins && (
+                    <div className="anchor">
+                      <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
+                      {bulkSnooze && <TimeMenu title="Snooze until" up right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
           <div className="resize" aria-hidden="true" onPointerDown={resize} />
-          <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} own={own}
-            settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
-            labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
-            act={(action, label) => void run(open ? [open] : [], action, label)}
-            snooze={(at) => void snooze(open ? [open] : [], at)}
-            reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
-            rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
-            trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
-            forever={() => forever(open ? [open] : [])} />
+          {reader}
         </div>
       </div>
-      {composing && (
-        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          close={(saved) => {
-            setComposing(null)
-            if (saved) say('Saved to Drafts')
-          }} />
-      )}
-      {toast && (
-        <div className="toast" role="status">
-          <span>{toast.text}</span>
-          {toast.undo && <button className="link" onClick={() => { toast.undo?.(); setToast(null) }}>Undo</button>}
-        </div>
-      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
-      {help && <Help close={() => setHelp(false)} />}
-      {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
-      {question && <Confirm question={question} />}
+      {sideMenu && (
+        <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
+          items={[
+            ...(sideMenu.target ? [{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target as ListQuery) }] : []),
+            { label: 'Edit Menu', icon: SlidersHorizontal, run: () => setEditingMenu(true) }
+          ]} />
+      )}
+      {over}
     </div>
   )
 }

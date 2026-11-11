@@ -1,26 +1,40 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, CalendarRange, Clock, Mail, MailMinus, MailOpen, Package, Paperclip, Plane, Receipt, Star, Trash2, Undo2, type LucideIcon } from 'lucide-react'
-import type { AccountView, Draft, Facts, MailAction, Overview, Subscription, SwipeAction, ThreadRow } from '@shared/types'
-import { Avatar, Empty } from './Common'
-import { clock, factLine, longTime, peopleLine, problem, shortTime } from './format'
+import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
+import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
+import { Avatar, Empty, KIND_ICONS } from './Common'
+import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
 
-const SWIPE_FAR = 150
-/** How far a swipe has to go before letting go means it. */
+const SWIPE_FAR = 240
+/** How far a swipe has to go before letting go means it, and how far for the second thing it can do. */
 const SWIPE_COMMIT = 86
+const SWIPE_LONG = 180
 const SWIPE_SETTLE_MS = 130
+
+/** What a swipe does each way: a short one, and a long one. */
+export interface Swipes { left: SwipeAction; leftLong: SwipeAction; right: SwipeAction; rightLong: SwipeAction }
+export const NO_SWIPES: Swipes = { left: 'none', leftLong: 'none', right: 'none', rightLong: 'none' }
+
+/** A long swipe with nothing of its own does what the short one does. */
+export function swipeAction(moved: number, swipe: Swipes): SwipeAction {
+  const long = Math.abs(moved) >= SWIPE_LONG
+  if (Math.abs(moved) < SWIPE_COMMIT) return 'none'
+  if (moved > 0) return long && swipe.rightLong !== 'none' ? swipe.rightLong : swipe.right
+  return long && swipe.leftLong !== 'none' ? swipe.leftLong : swipe.left
+}
 
 const SWIPE_LOOK: Record<Exclude<SwipeAction, 'none'>, { icon: LucideIcon; tone: string }> = {
   archive: { icon: Archive, tone: 'swipe-archive' },
   trash: { icon: Trash2, tone: 'swipe-trash' },
   read: { icon: MailOpen, tone: 'swipe-read' },
-  star: { icon: Star, tone: 'swipe-star' },
+  star: { icon: Flag, tone: 'swipe-star' },
   snooze: { icon: Clock, tone: 'swipe-snooze' }
 }
 
-const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Package, travel: Plane, money: Receipt, event: CalendarRange }
+const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Truck, travel: Plane, money: DollarSign, event: Ticket }
+
 
 /** The headline of an Assistant entry, and what's most worth seeing next to it. */
 function factHead(facts: Facts): { title: string; side: string } {
@@ -43,8 +57,11 @@ export function Row(props: {
   assistant: boolean
   on: boolean
   picked: boolean
-  swipeLeft: SwipeAction
-  swipeRight: SwipeAction
+  swipe: Swipes
+  /** Whether the thread's files show as cards under the row. */
+  cards: boolean
+  /** The buttons that show under the pointer, in order. */
+  quick: QuickAction[]
   open(): void
   pick(event: MouseEvent): void
   act(action: MailAction, label?: string): void
@@ -73,11 +90,13 @@ export function Row(props: {
       const went = moved.current
       moved.current = 0
       setShift(0)
-      if (Math.abs(went) >= SWIPE_COMMIT) swiped(went > 0 ? props.swipeRight : props.swipeLeft)
+      const action = swipeAction(went, props.swipe)
+      if (action !== 'none') swiped(action)
     }, SWIPE_SETTLE_MS)
   }
 
-  const action = shift > 0 ? props.swipeRight : props.swipeLeft
+  // Under the row: what letting go now would do, or before that what a short swipe will.
+  const action = Math.abs(shift) >= SWIPE_COMMIT ? swipeAction(shift, props.swipe) : shift > 0 ? props.swipe.right : props.swipe.left
   const look = shift !== 0 && action !== 'none' ? SWIPE_LOOK[action] : null
   const LookIcon = look?.icon
   const facts = assistant ? row.facts : null
@@ -89,6 +108,19 @@ export function Row(props: {
   const stateClass = `${on ? 'on' : ''} ${unread ? 'unread' : ''} ${picked ? 'picked' : ''}`
   const files = row.file ? `Has attachment: ${plainName(row.file)}${row.files > 1 ? ` and ${row.files - 1} more` : ''}` : 'Has attachment'
 
+  const quick = (kind: QuickAction): ReactNode => {
+    switch (kind) {
+      case 'archive': return <IconButton key={kind} icon={Check} label="Archive" click={() => act({ kind: 'archive' }, 'Archived')} />
+      case 'flag': return <IconButton key={kind} icon={Flag} label={row.starred ? 'Remove flag' : 'Flag'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
+      case 'trash': return <IconButton key={kind} icon={Trash2} label="Delete" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
+      case 'read': return <IconButton key={kind} icon={unread ? MailOpen : Mail} label={unread ? 'Mark read' : 'Mark unread'} click={() => act({ kind: unread ? 'read' : 'unread' })} />
+      case 'snooze': return <IconButton key={kind} icon={Clock} label="Snooze" click={props.snooze} />
+      case 'spam': return <IconButton key={kind} icon={OctagonAlert} label="Report spam" click={() => act({ kind: 'spam' }, 'Reported as spam')} />
+      case 'none': return null
+    }
+  }
+  const shown = bins ? [] : [...new Set(props.quick)].filter((kind) => kind !== 'none')
+
   return (
     <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
       onContextMenu={(e) => { e.preventDefault(); props.menu(e.clientX, e.clientY) }}>
@@ -99,40 +131,43 @@ export function Row(props: {
       )}
       <div className="thread-card" style={style}>
         {many && account && <span className="account-mark" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
-        {unread && <span className="unread-dot" aria-hidden="true" />}
         <span className="face">
           {facts && FactIcon
-            ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={18} /></span>
-            : <Avatar name={row.fromName} address={row.fromAddress} />}
+            ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={20} /></span>
+            : <Avatar name={row.fromName} address={row.fromAddress} size={44} />}
           <input type="checkbox" className="pick" aria-label={`Select ${row.subject}`} checked={picked} onClick={pick} readOnly />
         </span>
         <button className="thread-open" onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? pick(e) : open())}>
           <span className="thread-top">
+            {unread && <span className="unread-dot" aria-hidden="true" />}
             {unread && <span className="sr-only">Unread, </span>}
             <span className="sender">{head ? head.title : names}</span>
-            {!head && row.count > 1 && <span className="count">{row.count}</span>}
+            {!head && row.count > 1 && <span className="count">({row.count})</span>}
             <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>
           </span>
           <span className="thread-mid">
             <span className="subject">{row.subject || 'No subject'}</span>
-            {row.starred && <Star className="mark star" size={13} aria-label="Starred" />}
+            {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
+            {row.pinned && <Pin className="mark pin" size={13} aria-label="Pinned" />}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>
-        </button>
-        <span className="row-actions">
-          {bins ? (
-            <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />
-          ) : (
-            <>
-              <IconButton icon={Archive} label="Archive" click={() => act({ kind: 'archive' }, 'Archived')} />
-              <IconButton icon={Trash2} label="Delete" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-              <IconButton icon={unread ? MailOpen : Mail} label={unread ? 'Mark read' : 'Mark unread'} click={() => act({ kind: unread ? 'read' : 'unread' })} />
-              <IconButton icon={Star} label={row.starred ? 'Remove star' : 'Star'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
-              <IconButton icon={Clock} label="Snooze" click={props.snooze} />
-            </>
+          {props.cards && row.cards.length > 0 && (
+            <span className="cards" aria-hidden="true">
+              {row.cards.map((name, i) => {
+                const kind = fileKind(name)
+                const Icon = KIND_ICONS[kind]
+                return <span className="card" key={i}><Icon className={`file-${kind}`} size={14} /><span className="card-name">{plainName(name)}</span></span>
+              })}
+              {row.files > row.cards.length && <span className="card more">+{row.files - row.cards.length}</span>}
+            </span>
           )}
-        </span>
+        </button>
+        {(bins || shown.length > 0) && (
+          <span className="row-actions">
+            {bins ? <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} /> : shown.map(quick)}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -146,7 +181,7 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   return (
     <div className={draft.error ? 'thread problem' : 'thread'}>
       <div className="thread-card">
-        <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} /></span>
+        <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} size={44} /></span>
         <button className="thread-open" onClick={open}>
           <span className="thread-top">
             <span className="sender">{people.map(chipLabel).join(', ') || 'No recipients'}</span>
@@ -163,27 +198,37 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   )
 }
 
-/** Everyone mailing you in bulk, biggest first, with the way out next to each. */
-export function Subscriptions(props: { version: number; unsubscribe(message: number): void; clear(item: Subscription): void }): ReactNode {
+/** Everyone mailing you in bulk, biggest first, with the way out next to each; or, on the other side,
+ *  the ones already left, with what's still here from them. */
+export function Subscriptions(props: { version: number; left: boolean; unsubscribe(message: number): void; clear(item: Subscription): void }): ReactNode {
+  const { left } = props
   const [items, setItems] = useState<Subscription[] | null>(null)
   useEffect(() => {
-    void window.mail.subscriptions().then(setItems)
-  }, [props.version])
+    let current = true
+    void (left ? window.mail.unsubscribed() : window.mail.subscriptions()).then((found) => { if (current) setItems(found) })
+    return () => { current = false }
+  }, [props.version, left])
   if (items === null) return null
-  if (items.length === 0) return <Empty icon={MailMinus} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+  if (items.length === 0) {
+    return left
+      ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
+      : <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+  }
+  const count = (item: Subscription): string =>
+    item.count === 0 ? 'Nothing from them is left here' : `${item.count === 1 ? '1 message' : `${item.count} messages`} · ${shortTime(item.latest)}`
   return (
     <>
       {items.map((item) => (
         <div className="subscription" key={`${item.account}/${item.address}`}>
-          <Avatar name={item.name} address={item.address} />
+          <Avatar name={item.name} address={item.address} size={44} />
           <div className="grow">
             <strong>{item.name || item.address}</strong>
             <div className="muted note">{item.address}</div>
-            <div className="muted note">{item.count === 1 ? '1 message' : `${item.count} messages`} · {shortTime(item.latest)}</div>
+            <div className="muted note">{count(item)}</div>
           </div>
           <div className="subscription-actions">
-            <button className="pill" onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>
-            <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>
+            {!left && <button className="pill soft" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
+            {item.count > 0 && <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>}
           </div>
         </div>
       ))}

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
-import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
+import {
+  Bold, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Strikethrough, Trash2,
+  SquareArrowOutUpRight, Underline, Upload, X
+} from 'lucide-react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
@@ -117,6 +120,12 @@ export function Composer(props: {
   sent(id: number, when: number, scheduled: boolean): void
   /** How it was asked for: Esc may have been pressed before it could open. */
   starting?: { off: boolean } | null
+  /** It has a window to itself, and fills it. */
+  solo?: boolean
+  /** Carries the draft on in a window of its own, once what's typed is kept. */
+  moveOut(id: number): void
+  /** Filled in while it's open with what to do before its window closes. */
+  leaving: { current: (() => Promise<void>) | null }
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -133,7 +142,6 @@ export function Composer(props: {
   const [linking, setLinking] = useState<string | null>(null)
   const [templates, setTemplates] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [wide, setWide] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [saved, setSaved] = useState(false)
   // Sanitised on the way in, because this copy is what gets sent. It's never put in this page: only
@@ -188,10 +196,24 @@ export function Composer(props: {
     if (timer.current) void save()
   }, [save])
 
+  const isEmpty = (edit: DraftEdit): boolean =>
+    !edit.to && !edit.cc && !edit.bcc && !edit.subject && !edit.text.trim() && files.length === 0 && !quote
+
+  // A window of its own can be closed around its composer. The app is asked first, and through this
+  // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
+  useEffect(() => {
+    const keep = async (): Promise<void> => {
+      if (gone.current) return
+      if (!isEmpty(latest.current())) return save()
+      gone.current = true
+      await window.mail.discardDraft(draft.id)
+    }
+    props.leaving.current = keep
+    return () => { if (props.leaving.current === keep) props.leaving.current = null }
+  })
+
   const closeUp = async (): Promise<void> => {
-    const edit = collect()
-    const empty = !edit.to && !edit.cc && !edit.bcc && !edit.subject && !edit.text.trim() && files.length === 0 && !quote
-    if (empty) {
+    if (isEmpty(collect())) {
       gone.current = true
       await window.mail.discardDraft(draft.id)
       return props.close(false)
@@ -205,6 +227,17 @@ export function Composer(props: {
   useLayoutEffect(() => {
     if (props.starting?.off) void closeUp()
   }, [])
+
+  /** On to a window of its own. This one lets go without a word: nothing was closed or saved away. */
+  const moveOut = async (): Promise<void> => {
+    try {
+      await save()
+      gone.current = true
+      props.moveOut(draft.id)
+    } catch (e) {
+      setError(problem(e))
+    }
+  }
 
   const discard = async (): Promise<void> => {
     gone.current = true
@@ -318,7 +351,7 @@ export function Composer(props: {
   const templateList = props.settings?.templates ?? []
 
   return (
-    <section className={wide ? 'composer wide' : 'composer'} aria-label="Compose" onDrop={drop}
+    <section className={props.solo ? 'composer solo' : 'composer'} aria-label="Compose" onDrop={drop}
       onDragOver={(e) => {
         e.preventDefault()
         if (e.dataTransfer.types.includes('Files')) setDragging(true)
@@ -330,27 +363,25 @@ export function Composer(props: {
       }}>
       <header>
         <h2>{subject || (quote?.kind === 'reply' ? 'Reply' : 'New message')}</h2>
-        <IconButton icon={wide ? Minimize2 : Maximize2} label={wide ? 'Smaller' : 'Full size'} click={() => setWide(!wide)} />
+        {!props.solo && <IconButton icon={SquareArrowOutUpRight} label="Open in a window" click={() => void moveOut()} />}
         <IconButton icon={X} label="Close" click={() => void closeUp()} />
       </header>
-      {senders.length > 1 && (
-        <label className="field">
-          <span>From</span>
-          <select aria-label="From" value={JSON.stringify([account, from || account])} onChange={(e) => {
-            const [nextAccount = account, nextFrom = ''] = JSON.parse(e.target.value) as string[]
-            setAccount(nextAccount)
-            setFrom(nextFrom === nextAccount ? '' : nextFrom)
-          }}>
-            {senders.map(([owner, address]) => <option key={address} value={JSON.stringify([owner, address])}>{address}</option>)}
-          </select>
-        </label>
-      )}
       <div className="field-row">
         <Recipients label="To" focus={!draft.to} value={to} change={setTo} />
         {!showCopies && <button type="button" className="link" onClick={() => setShowCopies(true)}>Cc Bcc</button>}
       </div>
       {showCopies && <Recipients label="Cc" value={cc} change={setCc} />}
       {showCopies && <Recipients label="Bcc" value={bcc} change={setBcc} />}
+      <label className="field">
+        <span>From</span>
+        <select aria-label="From" value={JSON.stringify([account, from || account])} disabled={senders.length < 2} onChange={(e) => {
+          const [nextAccount = account, nextFrom = ''] = JSON.parse(e.target.value) as string[]
+          setAccount(nextAccount)
+          setFrom(nextFrom === nextAccount ? '' : nextFrom)
+        }}>
+          {senders.map(([owner, address]) => <option key={address} value={JSON.stringify([owner, address])}>{address}</option>)}
+        </select>
+      </label>
       <label className="field">
         <span>Subject</span>
         <input aria-label="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
@@ -394,20 +425,25 @@ export function Composer(props: {
           <button type="button" className="quiet" onClick={finishLink}>Link</button>
         </div>
       )}
+      <div className="format" role="toolbar" aria-label="Formatting" onMouseDown={(e) => e.preventDefault()}>
+        <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
+        <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
+        <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
+        <IconButton icon={Strikethrough} label="Strikethrough" click={() => format('strikeThrough')} />
+        <IconButton icon={RemoveFormatting} label="Clear formatting" click={() => format('removeFormat')} />
+        <span className="tool-gap" />
+        <IconButton icon={Link} label="Add link" click={startLink} />
+        <IconButton icon={QuoteIcon} label="Quote" click={() => format('formatBlock', 'blockquote')} />
+        <IconButton icon={ListOrdered} label="Numbered list" click={() => format('insertOrderedList')} />
+        <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
+      </div>
       <footer>
-        <button type="button" className="primary" disabled={busy} onClick={() => void send()}>Send</button>
+        <button type="button" className="send" disabled={busy} onClick={() => void send()}><SendHorizontal size={18} aria-hidden="true" /> Send</button>
         <div className="anchor">
           <IconButton icon={Clock} label="Send later" click={() => setLater(!later)} />
           {later && <TimeMenu title="Send" up pick={(at) => void send(at)} close={() => setLater(false)} />}
         </div>
         <span className="tool-gap" />
-        <div className="format" onMouseDown={(e) => e.preventDefault()}>
-          <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
-          <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
-          <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
-          <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
-          <IconButton icon={Link} label="Add link" click={startLink} />
-        </div>
         <IconButton icon={Paperclip} label="Attach files" click={() => void pick()} />
         {templateList.length > 0 && (
           <div className="anchor">

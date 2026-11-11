@@ -80,6 +80,12 @@ six seconds for Undo before setting off; everything else goes straight away.
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+- A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
+  means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
+  a pinned thread keeps its place in every other list.
+- A muted sender's mail is left out by both things that announce mail: a sync that finds mail
+  already due neither counts nor names it, and a delivery counts only what the others sent. It
+  lands, and refreshes the list, like any other.
 
 ## Sending
 
@@ -210,8 +216,10 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
    It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
 5. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
-6. No navigation, new windows, downloads, permissions or webviews, and the bridge answers only the
-   app's own page.
+6. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
+   A page can't open a window. Only the main process does, for a thread or a draft, and that window
+   is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
+   bridge's world, nothing of Node) behind the same walls, told in its address what to show.
 
 Packaged builds also drop Electron's Node and debugging entry points (`electron-builder.yml`).
 
@@ -280,3 +288,47 @@ the half a megabyte of text a message keeps. HTML is different: taking clean HTM
 back together is how sanitised markup gets turned hostile again, so nothing is removed. A class on the
 frame's root hides the known quote markers with CSS, and the `•••` toggles that class. A forward keeps
 everything, because the quote is what was sent.
+
+## The page
+
+The window is laid out as Edison Mail for Mac's is, rebuilt in this code from what can be seen of it:
+
+- `Sidebar.tsx`: Compose and refresh, the inbox, the accounts (each unfolds its own folders and
+  labels), the gathered folders in Edison's order, then the Assistant's lists. Right-clicking a place
+  offers to mark all of it read, which asks the store for the whole list, not the rows on screen.
+  Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
+  moved, by their arrows or by dragging, each within its own list. The choice is a setting
+  (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
+  up after the one it follows, shown, in a choice saved before it existed.
+- `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
+  floats under a selection, and what every key and button does.
+- `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
+  actions and its swipes. A swipe is a short one or a long one each way: `swipeAction` decides from
+  how far the row went.
+- `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
+  the foot.
+- A thread or a draft can have a window of its own (`showSolo` in the main process, `shared/solo.ts`
+  for what its address says). It's `App` again, drawing only the reader or only the composer. The
+  main window lets the thread go when it's opened there: two readers would each mark it read
+  whenever it changed. A thread's window follows its thread into Trash or Spam and back, so the Undo
+  for what moved it stays in reach, and it closes once the thread is nowhere and nothing is left to
+  undo. Marking it unread closes it. A window that's being closed is told first (`leaving`), so its
+  composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
+  itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
+  it from Drafts while it has a window brings that window forward.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. Each account's name, signature and the rest
+  are held once for every page, so a page opened while a save is on its way can't write old values
+  back.
+
+What a row offers is all in settings, and `saveProfile` keeps it to what a row can show: none to four
+lines of preview, four quick actions from a fixed list, a swipe action for each of the four swipes.
+Rows saved as "compact" by an older version read as one line of preview.
+
+Keys live in `shared/keys.ts`, apart from the page so they can be tested without one. `keyName` gives a
+press a name ("e", "Shift+Backspace", "Ctrl+Shift+R"), and each set maps names to commands. The Edison
+set is Edison Mail's own keys with Command read as Ctrl, plus the keys xrnmail already had where they
+don't collide; the Gmail set is those older keys alone. Keys pressed inside a message's frame are passed
+on with their modifiers, so they reach the same table.
+
+"Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
+Sent label. All Mail is still everything.

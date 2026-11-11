@@ -809,6 +809,15 @@ describe('subscriptions', () => {
     expect(service.subscriptions().map((s) => [s.address, s.count])).toEqual([['hi@shop.example', 2], ['me@blog.example', 1]])
   })
 
+  it('lists apart who was unsubscribed from, with what is still here from them', () => {
+    const leave = (address: string): void => (service as unknown as { leftBehind(address: string): void }).leftBehind(address)
+    expect(service.unsubscribed()).toEqual([])
+    leave('HI@shop.example')
+    leave('gone@news.example') // nothing from them is kept any more
+    expect(service.subscriptions().map((s) => s.address)).toEqual(['me@blog.example'])
+    expect(service.unsubscribed().map((s) => [s.address, s.count, s.account])).toEqual([['hi@shop.example', 2, G], ['gone@news.example', 0, '']])
+  })
+
   it('clears a sender with one Undo, and nobody else', async () => {
     const token = service.clearSender(G, 'hi@shop.example')
     expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Once', 'Person'])

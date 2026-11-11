@@ -2,8 +2,15 @@ import type { Address, Facts } from '@shared/types'
 
 const DAY_MS = 86_400_000
 
+let hour12 = false
+
+/** Every time the app writes follows the one setting. */
+export const setClock24 = (on: boolean): void => {
+  hour12 = !on
+}
+
 export const clock = (at: number): string =>
-  new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  new Date(at).toLocaleTimeString([], { hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12 })
 
 /** The list's time: a clock today, a short date any other day. */
 export function shortTime(at: number, now = Date.now()): string {
@@ -51,7 +58,7 @@ export const textToHtml = (text: string): string =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>')
 
 export const longTime = (at: number): string =>
-  new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+  new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12 })
 
 export const mailbox = (email: string): string => email.split('@')[0] ?? email
 

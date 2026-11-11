@@ -896,6 +896,63 @@ describe('straight-through mail tells you', () => {
     expect(landed).toHaveBeenCalledTimes(1)
   })
 
+  it('says nothing about a muted sender, whose mail arrives all the same', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    service.saveProfile({ muted: [' Ada@Example.com ', '@shop.example', 'not an address'] })
+    expect(service.settings().muted).toEqual(['ada@example.com', '@shop.example'])
+    clock = at(10, 30)
+    await service.tick()
+    gmail.add(rawMail({ subject: 'Quiet', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 31)) })
+    gmail.add(rawMail({ subject: 'Sale', from: 'Deals <deals@shop.example>' }), { arrived: new Date(at(10, 31)) })
+    clock = at(10, 33)
+    await service.tick()
+    await service.syncAll()
+    clock += 3000
+    await service.tick()
+    expect(landed).not.toHaveBeenCalled()
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.unread]).sort()).toEqual([['Quiet', 1], ['Sale', 1]])
+    gmail.add(rawMail({ subject: 'Loud', from: 'Bob <bob@example.com>' }), { arrived: new Date(at(10, 34)) })
+    gmail.add(rawMail({ subject: 'Quiet again', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 34)) })
+    clock = at(10, 36)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Bob', subject: 'Loud' }) // one of the two, and it's named
+    expect(landed).toHaveBeenCalledTimes(1)
+    landed.mockClear()
+    service.saveProfile({ muted: [] })
+    gmail.add(rawMail({ subject: 'Heard', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 37)) })
+    clock = at(10, 39)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Heard' })
+  })
+
+  it('a delivery counts out what muted senders sent, and one of only theirs lands unannounced', async () => {
+    service.saveProfile({ muted: ['ada@example.com'] })
+    gmail.add(rawMail({ subject: 'Quiet', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 30)) })
+    gmail.add(rawMail({ subject: 'News', from: 'Bob <bob@example.com>' }), { arrived: new Date(at(10, 30)) })
+    clock = at(10, 31)
+    await service.syncAll()
+    expect(service.overview().held).toBe(2)
+    clock = at(13, 0, 6) + 20_000
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1)
+    expect(landed).toHaveBeenCalledTimes(1)
+    expect(service.list({ kind: 'inbox' }).map((row) => row.subject).sort()).toEqual(['News', 'Quiet'])
+    landed.mockClear()
+    changed.mockClear()
+    gmail.add(rawMail({ subject: 'Quiet again', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(13, 30)) })
+    clock = at(13, 31)
+    await service.syncAll()
+    expect(service.overview().held).toBe(1)
+    changed.mockClear()
+    clock = service.overview().nextBatch! + 26_000
+    await service.tick()
+    expect(landed).not.toHaveBeenCalled()
+    expect(changed).toHaveBeenCalled() // the list still has to show it
+    expect(service.list({ kind: 'inbox' }).map((row) => row.subject)).toContain('Quiet again')
+  })
+
   it('stays quiet about a message found just as its batch lands, then tells once', async () => {
     clock = at(12, 59) + 59_500
     await service.tick()
@@ -934,6 +991,88 @@ describe('the sidebar', () => {
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual([])
     clock = at(13, 1)
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual(['Held'])
+  })
+
+  it('Archive lists what was put away, and neither the inbox nor what you sent', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep in the inbox', 9, 0)
+    await arrive('Put away', 9, 5)
+    gmail.add(rawMail({ subject: 'Mine', from: `Me <${ME}>` }), { arrived: new Date(at(9, 10)), labels: ['\\Sent'] })
+    clock = at(9, 11)
+    await service.syncAll()
+    await service.act([ref('Put away')], { kind: 'archive' })
+    expect(service.list({ kind: 'archive' }).map((row) => row.subject)).toEqual(['Put away'])
+    expect(service.list({ kind: 'archive', account: 'someone@else.example' })).toEqual([])
+    expect(service.list({ kind: 'all' }).map((row) => row.subject).sort()).toEqual(['Keep in the inbox', 'Mine', 'Put away'])
+  })
+
+  it('Pinned gathers pinned threads from wherever they are, and tells the server nothing', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep', 9, 0)
+    await arrive('Other', 9, 5)
+    const before = JSON.stringify(gmail.mails.map((m) => [m.flags, m.labels]))
+    service.pin([ref('Keep')], true)
+    service.pin([ref('Keep')], true) // twice is once
+    await service.syncAll()
+    expect(JSON.stringify(gmail.mails.map((m) => [m.flags, m.labels]))).toBe(before)
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep'])
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.pinned])).toEqual([['Other', false], ['Keep', true]]) // it stays in its place
+    expect(service.thread(ME, ref('Keep').thread).map((m) => m.pinned)).toEqual([true])
+    expect(service.thread(ME, ref('Other').thread).map((m) => m.pinned)).toEqual([false])
+    expect(service.list({ kind: 'pinned', account: 'someone@else.example' })).toEqual([])
+    const kept = ref('Keep')
+    await service.act([kept], { kind: 'archive' })
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep']) // archived, still pinned
+    await service.act([kept], { kind: 'trash' })
+    expect(service.list({ kind: 'pinned' })).toEqual([]) // what's in Trash is in Trash
+    await service.act([kept], { kind: 'inbox' })
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep'])
+    service.pin([kept], false)
+    expect(service.list({ kind: 'pinned' })).toEqual([])
+    expect(service.list({ kind: 'inbox' }).every((row) => !row.pinned)).toBe(true)
+  })
+
+  it('removing an account forgets its pins', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep', 9, 0)
+    const kept = ref('Keep')
+    service.pin([kept], true)
+    service.removeAccount(ME)
+    await signedIn()
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.pinned])).toEqual([['Keep', false]])
+    expect(service.list({ kind: 'pinned' })).toEqual([])
+  })
+
+  it('keeps which entries the sidebar shows and their order, made whole whatever was saved', () => {
+    expect(service.settings().sidebar.hidden).toEqual([])
+    expect(service.settings().sidebar.order.slice(0, 4)).toEqual(['today', 'unread', 'starred', 'pinned'])
+    service.saveProfile({ sidebar: { order: ['sent', 'today', 'nonsense', 'sent'] as never, hidden: ['spam', 'spam', 'x'] as never } })
+    const saved = service.settings().sidebar
+    expect(saved.order.slice(0, 3)).toEqual(['sent', 'today', 'unread'])
+    expect(saved.hidden).toEqual(['spam'])
+    expect(new Set(saved.order).size).toBe(16)
+    service.saveProfile({ theme: 'dark' }) // another setting leaves it be
+    expect(service.settings().sidebar).toEqual(saved)
+    // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.
+    const old = { ...service.settings(), sidebar: { order: saved.order.filter((entry) => entry !== 'pinned'), hidden: ['spam'] } }
+    store.setMeta('settings', JSON.stringify(old))
+    const read = service.settings().sidebar
+    expect(read.order[read.order.indexOf('starred') + 1]).toBe('pinned')
+    expect(read.hidden).toEqual(['spam'])
+  })
+
+  it('a row names its first three files, for the cards under it', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    const file = (name: string): { name: string; type: string; body: string } => ({ name, type: 'application/pdf', body: 'x' })
+    gmail.add(rawMail({ subject: 'Four files', attachment: file('a.pdf'), attachments: [file('b.pdf'), file('c.pdf'), file('d.pdf')] }), { arrived: new Date(at(9, 0)) })
+    gmail.add(rawMail({ subject: 'No files' }), { arrived: new Date(at(9, 1)) })
+    clock = at(9, 5)
+    await service.syncAll()
+    const rows = service.list({ kind: 'inbox' })
+    expect(rows.map((row) => [row.subject, row.cards, row.files])).toEqual([['No files', [], 0], ['Four files', ['a.pdf', 'b.pdf', 'c.pdf'], 4]])
+    expect(service.settings().attachmentCards).toBe(true)
+    service.saveProfile({ attachmentCards: false })
+    expect(service.settings().attachmentCards).toBe(false)
   })
 
   it('Today starts at midnight', async () => {
@@ -976,6 +1115,29 @@ describe('settings', () => {
     const before = service.settings()
     service.saveProfile({ swipeLeft: 'explode' as never, swipeRight: 'explode' as never })
     expect(service.settings()).toMatchObject({ swipeLeft: before.swipeLeft, swipeRight: before.swipeRight })
+  })
+
+  it('keeps the list\'s choices within what a row can show', () => {
+    expect(service.settings()).toMatchObject({
+      previewLines: 2, quickOn: true, quickActions: ['archive', 'flag', 'trash', 'read'],
+      swipes: true, swipeLeft: 'archive', swipeLeftLong: 'star', swipeRight: 'read', swipeRightLong: 'trash'
+    })
+    service.saveProfile({ previewLines: 9, quickActions: ['snooze', 'explode' as never, 'spam', 'none', 'archive', 'trash'], swipeLeftLong: 'explode' as never })
+    expect(service.settings()).toMatchObject({ previewLines: 4, quickActions: ['snooze', 'none', 'spam', 'none'], swipeLeftLong: 'star' })
+    service.saveProfile({ previewLines: -3, quickActions: ['flag'], swipeRightLong: 'snooze', quickOn: false, swipes: false })
+    expect(service.settings()).toMatchObject({
+      previewLines: 0, quickActions: ['flag', 'none', 'none', 'none'], swipeRightLong: 'snooze', quickOn: false, swipes: false
+    })
+  })
+
+  it('reads "compact" rows saved by an older version as one line of the message', () => {
+    const saved = (settings: object): void => (service as unknown as { store: { setMeta(key: string, value: string): void } }).store.setMeta('settings', JSON.stringify(settings))
+    saved({ density: 'compact' })
+    expect(service.settings().previewLines).toBe(1)
+    saved({ density: 'comfortable' })
+    expect(service.settings().previewLines).toBe(2)
+    saved({ density: 'compact', previewLines: 3 })
+    expect(service.settings().previewLines).toBe(3)
   })
 
   it('keeps trusted senders tidy and in one case', () => {
