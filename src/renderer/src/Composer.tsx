@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
-import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
+import {
+  Bold, Clock, Italic, Link, List, ListOrdered, Maximize2, Minimize2, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Strikethrough, Trash2,
+  Underline, Upload, X
+} from 'lucide-react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
@@ -333,24 +336,22 @@ export function Composer(props: {
         <IconButton icon={wide ? Minimize2 : Maximize2} label={wide ? 'Smaller' : 'Full size'} click={() => setWide(!wide)} />
         <IconButton icon={X} label="Close" click={() => void closeUp()} />
       </header>
-      {senders.length > 1 && (
-        <label className="field">
-          <span>From</span>
-          <select aria-label="From" value={JSON.stringify([account, from || account])} onChange={(e) => {
-            const [nextAccount = account, nextFrom = ''] = JSON.parse(e.target.value) as string[]
-            setAccount(nextAccount)
-            setFrom(nextFrom === nextAccount ? '' : nextFrom)
-          }}>
-            {senders.map(([owner, address]) => <option key={address} value={JSON.stringify([owner, address])}>{address}</option>)}
-          </select>
-        </label>
-      )}
       <div className="field-row">
         <Recipients label="To" focus={!draft.to} value={to} change={setTo} />
         {!showCopies && <button type="button" className="link" onClick={() => setShowCopies(true)}>Cc Bcc</button>}
       </div>
       {showCopies && <Recipients label="Cc" value={cc} change={setCc} />}
       {showCopies && <Recipients label="Bcc" value={bcc} change={setBcc} />}
+      <label className="field">
+        <span>From</span>
+        <select aria-label="From" value={JSON.stringify([account, from || account])} disabled={senders.length < 2} onChange={(e) => {
+          const [nextAccount = account, nextFrom = ''] = JSON.parse(e.target.value) as string[]
+          setAccount(nextAccount)
+          setFrom(nextFrom === nextAccount ? '' : nextFrom)
+        }}>
+          {senders.map(([owner, address]) => <option key={address} value={JSON.stringify([owner, address])}>{address}</option>)}
+        </select>
+      </label>
       <label className="field">
         <span>Subject</span>
         <input aria-label="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
@@ -394,20 +395,25 @@ export function Composer(props: {
           <button type="button" className="quiet" onClick={finishLink}>Link</button>
         </div>
       )}
+      <div className="format" role="toolbar" aria-label="Formatting" onMouseDown={(e) => e.preventDefault()}>
+        <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
+        <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
+        <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
+        <IconButton icon={Strikethrough} label="Strikethrough" click={() => format('strikeThrough')} />
+        <IconButton icon={RemoveFormatting} label="Clear formatting" click={() => format('removeFormat')} />
+        <span className="tool-gap" />
+        <IconButton icon={Link} label="Add link" click={startLink} />
+        <IconButton icon={QuoteIcon} label="Quote" click={() => format('formatBlock', 'blockquote')} />
+        <IconButton icon={ListOrdered} label="Numbered list" click={() => format('insertOrderedList')} />
+        <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
+      </div>
       <footer>
-        <button type="button" className="primary" disabled={busy} onClick={() => void send()}>Send</button>
+        <button type="button" className="send" disabled={busy} onClick={() => void send()}><SendHorizontal size={18} aria-hidden="true" /> Send</button>
         <div className="anchor">
           <IconButton icon={Clock} label="Send later" click={() => setLater(!later)} />
           {later && <TimeMenu title="Send" up pick={(at) => void send(at)} close={() => setLater(false)} />}
         </div>
         <span className="tool-gap" />
-        <div className="format" onMouseDown={(e) => e.preventDefault()}>
-          <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
-          <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
-          <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
-          <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
-          <IconButton icon={Link} label="Add link" click={startLink} />
-        </div>
         <IconButton icon={Paperclip} label="Attach files" click={() => void pick()} />
         {templateList.length > 0 && (
           <div className="anchor">
