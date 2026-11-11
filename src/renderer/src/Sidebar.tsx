@@ -45,6 +45,8 @@ export function Sidebar(props: {
   compose(): void
   settings(): void
   drop(target: View, refs: ThreadRef[]): void
+  /** Right-clicked: a list of mail, and where the pointer was. */
+  menu(target: ListQuery, x: number, y: number): void
 }): ReactNode {
   const { accounts, overview, view, go, drafts } = props
   const many = accounts.length > 1
@@ -85,7 +87,12 @@ export function Sidebar(props: {
     const count = options.count ?? 0
     return (
       <button className={`nav-item ${options.extra ?? ''} ${isOn(target) ? 'on' : ''}`} aria-current={isOn(target) ? 'page' : undefined}
-        onClick={() => go(target)} {...dropping(target)}>
+        onClick={() => go(target)} {...dropping(target)}
+        onContextMenu={(e) => {
+          if (target.kind === 'drafts' || target.kind === 'subscriptions') return
+          e.preventDefault()
+          props.menu(target, e.clientX, e.clientY)
+        }}>
         {options.lead}
         {Icon && <Icon className="nav-icon" size={16} aria-hidden="true" />}
         <span className="grow">{label}</span>

@@ -102,6 +102,7 @@ export function App(): ReactNode {
   const [toast, setToast] = useState<Toast | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; row: ThreadRow } | null>(null)
+  const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery } | null>(null)
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
@@ -383,6 +384,17 @@ export function App(): ReactNode {
     }
   }
 
+  /** Every unread thread of a place in the sidebar, whether or not it's the one on screen. */
+  const markAllRead = async (target: ListQuery): Promise<void> => {
+    try {
+      const unread = (await window.mail.list(target, WHOLE_LIST)).filter((r) => r.unread > 0).map((r) => ({ account: r.account, thread: r.thread }))
+      if (unread.length === 0) say('Nothing unread there')
+      else await run(unread, { kind: 'read' }, 'Marked as read')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
   /** Everything in Trash, not only the rows read so far. */
   const emptyTrash = async (): Promise<void> => {
     if (active.kind !== 'trash') return
@@ -614,7 +626,8 @@ export function App(): ReactNode {
   return (
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
-        compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn} />
+        compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
+        menu={(target, x, y) => setSideMenu({ x, y, target })} />
       <div className="main">
         <header className="band">
           <h1 className="view-title">{titleOf(active, many)}</h1>
@@ -741,6 +754,10 @@ export function App(): ReactNode {
         </div>
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
+      {sideMenu && (
+        <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
+          items={[{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target) }]} />
+      )}
       {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
       {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
       {question && <Confirm question={question} />}

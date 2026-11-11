@@ -379,6 +379,22 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['One', 'Two', 'Three'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  await expect(page.locator('.threads .unread-dot')).toHaveCount(3)
+  await page.locator('.sidebar').getByRole('button', { name: 'Unread', exact: true }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Mark all as read' }).click()
+  await expect(page.getByText('Marked as read: 3 threads')).toBeVisible()
+  await expect(page.locator('.threads .unread-dot')).toHaveCount(0)
+  await expect.poll(() => gmail.mails.filter((m) => m.flags.includes('\\Seen')).length, LONG).toBe(3)
+  await page.locator('.sidebar').getByRole('button', { name: /^Inbox/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Mark all as read' }).click()
+  await expect(page.getByText('Nothing unread there')).toBeVisible()
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run
