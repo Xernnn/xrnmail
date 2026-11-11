@@ -91,6 +91,8 @@ export interface Settings {
   templates: Template[]
   /** Addresses or @domains whose new mail goes straight to Trash. */
   blocked: string[]
+  /** Senders whose new mail is never announced. It arrives all the same. An entry is an address, or @domain. */
+  muted: string[]
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
   theme: 'system' | 'light' | 'dark'
@@ -304,7 +306,7 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebarIcons' | 'clock24' | 'keys' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 

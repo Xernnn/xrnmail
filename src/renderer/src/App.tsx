@@ -432,6 +432,18 @@ export function App(): ReactNode {
     say(`${address} stays in ${focused ? 'Focused' : 'Other'}`)
   }
 
+  /** A muted sender's mail still arrives; it just isn't announced. */
+  const mute = async (address: string, on: boolean): Promise<void> => {
+    const who = address.toLowerCase()
+    try {
+      const muted = (await window.mail.settings()).muted
+      await window.mail.saveProfile({ muted: on ? [...muted, who] : muted.filter((m) => m !== who) })
+      say(on ? `Mail from ${address} won't be announced` : `Mail from ${address} is announced again`)
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
   const trustImages = async (address: string): Promise<void> => {
     await window.mail.saveProfile({ imagesFrom: [...(profile?.imagesFrom ?? []), address] })
     say(`Images from ${address} will load by themselves`)
@@ -757,7 +769,7 @@ export function App(): ReactNode {
             reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
             rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
             trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
-            forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} />
+            forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)} />
         </div>
       </div>
       {composing && (

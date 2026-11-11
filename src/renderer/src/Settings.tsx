@@ -26,7 +26,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout undo send pictures images tray background start login',
-  notifications: 'new mail tell account',
+  notifications: 'new mail tell account mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days',
   appearance: 'theme look dark light icons sidebar preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
@@ -172,16 +172,40 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
   )
 }
 
-function Notifications(props: { accounts: AccountView[]; ids: Identities }): ReactNode {
-  const { ids } = props
+function Notifications(props: { accounts: AccountView[]; ids: Identities; muted: string[]; save: Save }): ReactNode {
+  const { ids, muted } = props
+  const [adding, setAdding] = useState('')
+  const add = (): void => {
+    const who = adding.trim()
+    if (!who) return
+    props.save({ muted: [...muted, who] })
+    setAdding('')
+  }
   return (
-    <section>
-      <h3>New mail</h3>
-      {props.accounts.map((a) => (
-        <Check key={a.id} label={`Tell me about new mail in ${a.email}`} on={ids.who(a.email).notify} set={(notify) => ids.set(a.email, { notify })} />
-      ))}
-      <p className="muted note">Mail held for a delivery is announced when it lands, not before.</p>
-    </section>
+    <>
+      <section>
+        <h3>New mail</h3>
+        {props.accounts.map((a) => (
+          <Check key={a.id} label={`Tell me about new mail in ${a.email}`} on={ids.who(a.email).notify} set={(notify) => ids.set(a.email, { notify })} />
+        ))}
+        <p className="muted note">Mail held for a delivery is announced when it lands, not before.</p>
+      </section>
+      <section>
+        <h3>Muted senders</h3>
+        <p className="muted note">Their mail arrives as usual, and nothing announces it.</p>
+        {muted.length === 0 && <p className="muted note">Nobody is muted.</p>}
+        {muted.map((who) => (
+          <div className="line" key={who}>
+            <span className="grow">{who}</span>
+            <button className="quiet" aria-label={`Unmute ${who}`} onClick={() => props.save({ muted: muted.filter((m) => m !== who) })}>Unmute</button>
+          </div>
+        ))}
+        <form className="line" onSubmit={(e) => { e.preventDefault(); add() }}>
+          <input className="grow" aria-label="Sender to mute" placeholder="someone@example.com or @example.com" value={adding} onChange={(e) => setAdding(e.target.value)} />
+          <button type="submit" className="quiet" disabled={!adding.trim()}>Mute</button>
+        </form>
+      </section>
+    </>
   )
 }
 
@@ -419,7 +443,7 @@ function Pages(props: {
   return (
     <div className="settings-page">
       {page === 'general' && <General settings={settings} save={save} />}
-      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} />}
+      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} muted={settings.muted} save={save} />}
       {page === 'accounts' && <Accounts accounts={accounts} settings={settings} ids={ids} ask={props.ask} saveKeep={props.saveKeep} />}
       {page === 'appearance' && <Appearance settings={settings} save={save} />}
       {page === 'actions' && <Actions settings={settings} save={save} />}

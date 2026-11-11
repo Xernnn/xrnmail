@@ -1003,6 +1003,14 @@ export class Store {
   }
 
   /** How many held messages landed in (after, upto]: what a batch brought. */
+  /** Who sent each message a delivery brought in (after, upto], one entry a message. */
+  landedFrom(after: number, upto: number): string[] {
+    return this.all(
+      'SELECT from_address FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
+      after, upto
+    ).map((r) => String(r['from_address']))
+  }
+
   landedBetween(after: number, upto: number): number {
     return Number(
       this.one(

@@ -486,6 +486,36 @@ test('attachments: saved exactly, opened only when safe', async () => {
 })
 
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('muting a sender from the reader, and the muted senders in Settings', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Chatter', from: 'Ada Lovelace <ada@example.com>' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Chatter').click()
+  await page.getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Mute notifications', exact: true }).click()
+  await expect(page.getByText('Mail from ada@example.com won\'t be announced')).toBeVisible()
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('button', { name: 'Unmute notifications' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByPlaceholder('Search settings').fill('mute')
+  await expect(settings.getByRole('navigation').getByRole('button')).toHaveText(['Notifications'])
+  await settings.getByRole('button', { name: 'Notifications' }).click()
+  await expect(settings.getByRole('button', { name: 'Unmute ada@example.com' })).toBeVisible()
+  await settings.getByLabel('Sender to mute').fill('@Shop.example')
+  await settings.getByRole('button', { name: 'Mute', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Unmute @shop.example' })).toBeVisible()
+  await settings.getByRole('button', { name: 'Unmute ada@example.com' }).click()
+  await expect(settings.getByRole('button', { name: 'Unmute ada@example.com' })).toHaveCount(0)
+  await settings.getByRole('button', { name: 'Unmute @shop.example' }).click()
+  await expect(settings.getByText('Nobody is muted.')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('button', { name: 'Mute notifications', exact: true })).toBeVisible()
+})
+
 test('pinning a thread from the reader, a row\'s menu and by dragging, and Pinned in the sidebar', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -896,6 +896,63 @@ describe('straight-through mail tells you', () => {
     expect(landed).toHaveBeenCalledTimes(1)
   })
 
+  it('says nothing about a muted sender, whose mail arrives all the same', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    service.saveProfile({ muted: [' Ada@Example.com ', '@shop.example', 'not an address'] })
+    expect(service.settings().muted).toEqual(['ada@example.com', '@shop.example'])
+    clock = at(10, 30)
+    await service.tick()
+    gmail.add(rawMail({ subject: 'Quiet', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 31)) })
+    gmail.add(rawMail({ subject: 'Sale', from: 'Deals <deals@shop.example>' }), { arrived: new Date(at(10, 31)) })
+    clock = at(10, 33)
+    await service.tick()
+    await service.syncAll()
+    clock += 3000
+    await service.tick()
+    expect(landed).not.toHaveBeenCalled()
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.unread]).sort()).toEqual([['Quiet', 1], ['Sale', 1]])
+    gmail.add(rawMail({ subject: 'Loud', from: 'Bob <bob@example.com>' }), { arrived: new Date(at(10, 34)) })
+    gmail.add(rawMail({ subject: 'Quiet again', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 34)) })
+    clock = at(10, 36)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Bob', subject: 'Loud' }) // one of the two, and it's named
+    expect(landed).toHaveBeenCalledTimes(1)
+    landed.mockClear()
+    service.saveProfile({ muted: [] })
+    gmail.add(rawMail({ subject: 'Heard', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 37)) })
+    clock = at(10, 39)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Heard' })
+  })
+
+  it('a delivery counts out what muted senders sent, and one of only theirs lands unannounced', async () => {
+    service.saveProfile({ muted: ['ada@example.com'] })
+    gmail.add(rawMail({ subject: 'Quiet', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 30)) })
+    gmail.add(rawMail({ subject: 'News', from: 'Bob <bob@example.com>' }), { arrived: new Date(at(10, 30)) })
+    clock = at(10, 31)
+    await service.syncAll()
+    expect(service.overview().held).toBe(2)
+    clock = at(13, 0, 6) + 20_000
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1)
+    expect(landed).toHaveBeenCalledTimes(1)
+    expect(service.list({ kind: 'inbox' }).map((row) => row.subject).sort()).toEqual(['News', 'Quiet'])
+    landed.mockClear()
+    changed.mockClear()
+    gmail.add(rawMail({ subject: 'Quiet again', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(13, 30)) })
+    clock = at(13, 31)
+    await service.syncAll()
+    expect(service.overview().held).toBe(1)
+    changed.mockClear()
+    clock = service.overview().nextBatch! + 26_000
+    await service.tick()
+    expect(landed).not.toHaveBeenCalled()
+    expect(changed).toHaveBeenCalled() // the list still has to show it
+    expect(service.list({ kind: 'inbox' }).map((row) => row.subject)).toContain('Quiet again')
+  })
+
   it('stays quiet about a message found just as its batch lands, then tells once', async () => {
     clock = at(12, 59) + 59_500
     await service.tick()

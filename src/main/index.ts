@@ -249,6 +249,7 @@ function profile(value: unknown): ProfilePatch {
     patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
+  if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true

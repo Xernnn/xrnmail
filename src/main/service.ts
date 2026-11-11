@@ -47,6 +47,7 @@ const DEFAULT_SETTINGS: Settings = {
   identities: {},
   templates: [],
   blocked: [],
+  muted: [],
   undoSeconds: 10,
   theme: 'system',
   focused: true,
@@ -574,7 +575,7 @@ export class MailService {
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           if (isVip(mail.from.address, settings.blocked)) blocked.push(id)
-          else if (this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          else if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
             fresh++
             preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
           }
@@ -623,11 +624,15 @@ export class MailService {
    *  would notice. */
   async tick(): Promise<void> {
     const now = this.deps.now()
-    const batch = this.store.landedBetween(this.lastTick, now)
+    const senders = this.store.landedFrom(this.lastTick, now)
+    const batch = senders.length
     const woken = this.store.wokenBetween(this.lastTick, now)
     this.lastTick = now
     if (batch + woken > 0) {
-      this.deps.landed?.(batch + woken)
+      // A muted sender's mail lands like any other, and only goes unannounced.
+      const muted = this.settings().muted
+      const loud = senders.filter((from) => !isVip(from, muted)).length + woken
+      if (loud > 0) this.deps.landed?.(loud)
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
@@ -1221,6 +1226,7 @@ export class MailService {
       identities: patch.identities ?? settings.identities,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
+      muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       theme: patch.theme ?? settings.theme,
       focused: patch.focused ?? settings.focused,

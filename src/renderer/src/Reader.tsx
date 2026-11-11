@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowLeft, Ban, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
+  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply,
   ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
@@ -356,6 +356,7 @@ export function Reader(props: {
   straight(address: string, on: boolean): void
   forever(): void
   pin(on: boolean): void
+  mute(address: string, on: boolean): void
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -403,6 +404,7 @@ export function Reader(props: {
   const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
+  const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
   // Only the address itself can be taken off here; a whole @domain stays a decision for Settings.
   const listedExactly = sender !== undefined && (vip ?? []).some((v) => v.trim().toLowerCase() === sender.toLowerCase())
 
@@ -457,6 +459,9 @@ export function Reader(props: {
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
               {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
+              {sender && !bins && !own.includes(sender.toLowerCase()) && (muted
+                ? moreItem(Bell, 'Unmute notifications', () => props.mute(sender, false))
+                : moreItem(BellOff, 'Mute notifications', () => props.mute(sender, true)))}
               {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
