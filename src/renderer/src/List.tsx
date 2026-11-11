@@ -185,27 +185,37 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   )
 }
 
-/** Everyone mailing you in bulk, biggest first, with the way out next to each. */
-export function Subscriptions(props: { version: number; unsubscribe(message: number): void; clear(item: Subscription): void }): ReactNode {
+/** Everyone mailing you in bulk, biggest first, with the way out next to each; or, on the other side,
+ *  the ones already left, with what's still here from them. */
+export function Subscriptions(props: { version: number; left: boolean; unsubscribe(message: number): void; clear(item: Subscription): void }): ReactNode {
+  const { left } = props
   const [items, setItems] = useState<Subscription[] | null>(null)
   useEffect(() => {
-    void window.mail.subscriptions().then(setItems)
-  }, [props.version])
+    let current = true
+    void (left ? window.mail.unsubscribed() : window.mail.subscriptions()).then((found) => { if (current) setItems(found) })
+    return () => { current = false }
+  }, [props.version, left])
   if (items === null) return null
-  if (items.length === 0) return <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+  if (items.length === 0) {
+    return left
+      ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
+      : <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+  }
+  const count = (item: Subscription): string =>
+    item.count === 0 ? 'Nothing from them is left here' : `${item.count === 1 ? '1 message' : `${item.count} messages`} · ${shortTime(item.latest)}`
   return (
     <>
       {items.map((item) => (
         <div className="subscription" key={`${item.account}/${item.address}`}>
-          <Avatar name={item.name} address={item.address} />
+          <Avatar name={item.name} address={item.address} size={44} />
           <div className="grow">
             <strong>{item.name || item.address}</strong>
             <div className="muted note">{item.address}</div>
-            <div className="muted note">{item.count === 1 ? '1 message' : `${item.count} messages`} · {shortTime(item.latest)}</div>
+            <div className="muted note">{count(item)}</div>
           </div>
           <div className="subscription-actions">
-            <button className="pill" onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>
-            <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>
+            {!left && <button className="pill soft" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
+            {item.count > 0 && <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>}
           </div>
         </div>
       ))}

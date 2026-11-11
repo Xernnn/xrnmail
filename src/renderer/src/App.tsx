@@ -650,6 +650,12 @@ export function App(): ReactNode {
                 </button>
               </div>
             )}
+            {active.kind === 'subscriptions' && (
+              <div className="tabs" role="group" aria-label="Subscribed and Unsubscribed">
+                <button className={active.left ? 'tab' : 'tab on'} aria-pressed={!active.left} onClick={() => go({ kind: 'subscriptions' })}>Subscribed</button>
+                <button className={active.left ? 'tab on' : 'tab'} aria-pressed={active.left === true} onClick={() => go({ kind: 'subscriptions', left: true })}>Unsubscribed</button>
+              </div>
+            )}
             {overview && <BatchStrip overview={overview} />}
             {total > 0 && (
               <div className="sync-progress" role="status">
@@ -673,7 +679,7 @@ export function App(): ReactNode {
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
-                <Subscriptions version={version} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
+                <Subscriptions version={version} left={active.left === true} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
               )}
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
                 <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}

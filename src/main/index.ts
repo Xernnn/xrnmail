@@ -321,6 +321,7 @@ function register(service: MailService): void {
     return result
   })
   handle('subscriptions', () => service.subscriptions())
+  handle('unsubscribed', () => service.unsubscribed())
   handle('clearSender', (account: unknown, address: unknown) => service.clearSender(text(account, 320), text(address, 320)))
   handle('setFocus', (address: unknown, focused: unknown) => service.setFocus(text(address, 320), focused === true))
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))

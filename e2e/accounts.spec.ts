@@ -119,6 +119,13 @@ test('subscriptions list who mails in bulk, and a sender can be cleared with Und
   await signIn(run)
   await page.getByRole('button', { name: 'Subscriptions' }).click()
   await expect(page.getByText('2 messages')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Unsubscribe from hi@shop.example' })).toBeVisible()
+  await page.getByRole('button', { name: 'Unsubscribed', exact: true }).click() // the other side: who was left already
+  await expect(page.getByText('Nobody yet')).toBeVisible()
+  await expect(page.locator('.band h1')).toHaveText('Subscriptions')
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Subscriptions' })).toHaveAttribute('aria-current', 'page')
+  await page.getByRole('button', { name: 'Subscribed', exact: true }).click()
+  await expect(page.getByText('2 messages')).toBeVisible()
   await page.getByRole('button', { name: 'Delete all from hi@shop.example' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete all' }).click()
   await expect(page.getByText('Moved 2 messages to Trash')).toBeVisible()

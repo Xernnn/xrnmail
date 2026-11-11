@@ -342,6 +342,8 @@ export interface MailApi {
   block(address: string): Promise<void>
   unsubscribe(message: number): Promise<UnsubscribeResult>
   subscriptions(): Promise<Subscription[]>
+  /** Senders already unsubscribed from. Ones with no mail left here come with a count of 0 and no account. */
+  unsubscribed(): Promise<Subscription[]>
   /** Everything from a sender goes to Trash. Returns what undoes it. */
   clearSender(account: string, address: string): Promise<number>
   /** Keeps a sender on one side of the inbox, for what they've sent and will send. */

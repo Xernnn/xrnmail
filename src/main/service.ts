@@ -876,6 +876,14 @@ export class MailService {
     return this.store.subscriptions(this.deps.now()).filter((s) => !left.has(s.address))
   }
 
+  /** Senders left behind: first those with mail still here, biggest first, then the ones whose mail has gone. */
+  unsubscribed(): Subscription[] {
+    const left = this.settings().unsubscribed
+    const here = this.store.subscriptions(this.deps.now()).filter((s) => left.includes(s.address))
+    const gone = left.filter((address) => !here.some((s) => s.address === address)).sort()
+    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0 }))]
+  }
+
   clearSender(account: string, address: string): number {
     return this.act(this.store.threadsFrom(account, address, this.deps.now()), { kind: 'trash' })
   }

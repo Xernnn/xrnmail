@@ -6,7 +6,7 @@ import {
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
 import { ago, mailbox } from './format'
 
-export type View = ListQuery | { kind: 'drafts'; account?: string } | { kind: 'subscriptions' }
+export type View = ListQuery | { kind: 'drafts'; account?: string } | { kind: 'subscriptions'; left?: boolean }
 
 export const sameView = (a: View, b: View): boolean => JSON.stringify(a) === JSON.stringify(b)
 
@@ -78,9 +78,11 @@ export function Sidebar(props: {
     }
   } : {}
 
-  /** An inbox stays lit on either side of Focused and Other. */
-  const isOn = (target: View): boolean =>
-    target.kind === 'inbox' && view.kind === 'inbox' ? view.account === target.account : sameView(view, target)
+  /** An inbox stays lit on either side of Focused and Other, and Subscriptions on either of its sides. */
+  const isOn = (target: View): boolean => {
+    if (target.kind === 'inbox' && view.kind === 'inbox') return view.account === target.account
+    return target.kind === 'subscriptions' ? view.kind === 'subscriptions' : sameView(view, target)
+  }
 
   const item = (label: string, target: View, options: { icon?: LucideIcon; count?: number; extra?: string; lead?: ReactNode } = {}): ReactNode => {
     const Icon = options.icon
