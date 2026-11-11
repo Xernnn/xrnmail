@@ -143,13 +143,19 @@ export function addContextMenu(contents: WebContents): void {
   })
 }
 
+const MARKUP: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
+
+/** A Linux notification server may read the body as markup (mako and Quickshell's do, links and all),
+ *  and a subject is a stranger's words. The title is always plain text. */
+const asText = (text: string): string => (process.platform === 'linux' ? text.replace(/[&<>]/g, (c) => MARKUP[c] ?? c) : text)
+
 /** One notification, naming who and what when it's a single message. Clicking opens the app. */
 export function notify(count: number, preview: { from: string; subject: string } | undefined, open: () => void): void {
   if (!Notification.isSupported()) return
   const words = count === 1 ? '1 new message' : `${count} new messages`
   const note = new Notification({
     title: preview?.from || 'xrnmail',
-    body: preview ? preview.subject || 'No subject' : words,
+    body: asText(preview ? preview.subject || 'No subject' : words),
     icon: iconPath()
   })
   note.on('click', open)
