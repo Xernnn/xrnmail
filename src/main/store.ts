@@ -578,6 +578,9 @@ export class Store {
         return this.threadRows(by(`EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')`), params, now, limit)
       case 'all':
         return this.threadRows(by('1'), params, now, limit)
+      case 'archive':
+        // What was put away: out of the inbox, and not something you sent yourself.
+        return this.threadRows(by(`in_inbox = 0 AND NOT EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')`), params, now, limit)
       case 'trash':
         return this.threadRows(by('1'), params, now, limit, { bin: 1 })
       case 'spam':

@@ -118,7 +118,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'snoozed', 'sent', 'all', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
+const SCOPED = ['starred', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {

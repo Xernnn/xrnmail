@@ -936,6 +936,19 @@ describe('the sidebar', () => {
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual(['Held'])
   })
 
+  it('Archive lists what was put away, and neither the inbox nor what you sent', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep in the inbox', 9, 0)
+    await arrive('Put away', 9, 5)
+    gmail.add(rawMail({ subject: 'Mine', from: `Me <${ME}>` }), { arrived: new Date(at(9, 10)), labels: ['\\Sent'] })
+    clock = at(9, 11)
+    await service.syncAll()
+    await service.act([ref('Put away')], { kind: 'archive' })
+    expect(service.list({ kind: 'archive' }).map((row) => row.subject)).toEqual(['Put away'])
+    expect(service.list({ kind: 'archive', account: 'someone@else.example' })).toEqual([])
+    expect(service.list({ kind: 'all' }).map((row) => row.subject).sort()).toEqual(['Keep in the inbox', 'Mine', 'Put away'])
+  })
+
   it('Today starts at midnight', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     gmail.add(rawMail({ subject: 'Yesterday' }), { arrived: new Date(at(23, 0, 5)) })

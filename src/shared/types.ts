@@ -211,7 +211,7 @@ export interface Overview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'snoozed' | 'sent' | 'all' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
+  | { kind: 'starred' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
