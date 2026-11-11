@@ -65,7 +65,7 @@ test('Spam and Trash can be read, and deleting from them is forever only when co
   gmail.add(rawMail({ subject: 'Actually fine' }), { box: '[Gmail]/Spam', arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Gone for good' }), { box: '[Gmail]/Trash', arrived: earlier(3) })
   await signIn(run)
-  await page.getByRole('button', { name: 'Spam', exact: true }).click()
+  await page.getByRole('button', { name: /^Spam( \d+)?$/ }).click()
   await page.getByText('Actually fine').click()
   await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Trash', exact: true }).click()
