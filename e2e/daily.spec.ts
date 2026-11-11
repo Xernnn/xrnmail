@@ -262,6 +262,35 @@ test('picking files: one too many is refused, and what did go on is listed', asy
   await expect(box.locator('.file-name')).toHaveText(['notes.txt'])
 })
 
+// A selection dragged out of a web page or a message carries its HTML, and the editor took it as it
+// was, though it holds only what is typed here and a paste comes in as text.
+test('what is dropped into the message comes in as plain text', async () => {
+  run = await launch()
+  const { page, app } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const editor = composer(page).getByLabel('Message')
+  const place = await editor.boundingBox()
+  const cdp = await app.context().newCDPSession(page)
+  const data = {
+    items: [{ mimeType: 'text/html', data: '<b>Bold</b> <a href="https://tracker.example/">words</a>' }, { mimeType: 'text/plain', data: 'Bold words' }],
+    dragOperationsMask: 1
+  }
+  const drag = async (dragged: typeof data | { items: never[]; files: string[]; dragOperationsMask: number }): Promise<void> => {
+    for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+      await cdp.send('Input.dispatchDragEvent', { type, x: (place?.x ?? 0) + 20, y: (place?.y ?? 0) + 8, data: dragged })
+    }
+  }
+  await drag(data)
+  await expect(editor).toHaveText('Bold words')
+  expect(await editor.innerHTML()).not.toMatch(/<b|<a/)
+  const file = join(run.savedTo, '..', 'plan.txt')
+  writeFileSync(file, 'plan')
+  await drag({ items: [], files: [file], dragOperationsMask: 1 }) // files dropped there are still attached
+  await expect(composer(page).locator('.file-name')).toHaveText(['plan.txt'])
+  await expect(editor).toHaveText('Bold words')
+})
+
 test('unsubscribing with one click opens nothing', async () => {
   run = await launch()
   const { page, gmail } = run

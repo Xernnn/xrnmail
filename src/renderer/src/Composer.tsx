@@ -142,6 +142,7 @@ export function Composer(props: {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gone = useRef(false)
   const selection = useRef<Range | null>(null)
+  const ownDrag = useRef(false)
 
   const collect = useCallback((): DraftEdit => ({
     account, from, to, cc, bcc, subject, quote,
@@ -297,6 +298,20 @@ export function Composer(props: {
     document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
   }
 
+  /** As text too, where it's dropped, so a selection dragged out of a web page or a message can't
+   *  bring its markup. Words dragged within the message stay put: the composer takes every drag for
+   *  its files, which leaves Chromium's own drop, and with it moving them, off. */
+  const dropText = (event: DragEvent): void => {
+    if (event.dataTransfer.files.length > 0) return // the composer attaches them
+    event.preventDefault()
+    const text = event.dataTransfer.getData('text/plain')
+    const at = document.caretPositionFromPoint(event.clientX, event.clientY)
+    if (ownDrag.current || !text || !at || !editor.current?.contains(at.offsetNode)) return
+    editor.current.focus()
+    window.getSelection()?.setPosition(at.offsetNode, at.offset)
+    document.execCommand('insertText', false, text)
+  }
+
   const signature = props.settings?.identities[account]?.signature.trim()
   const senders = props.accounts.flatMap((a) => [a.email, ...(props.settings?.identities[a.email]?.aliases ?? [])].map((address) => [a.email, address] as const))
   const templateList = props.settings?.templates ?? []
@@ -341,7 +356,8 @@ export function Composer(props: {
       </label>
       <div className="compose-scroll">
         <div ref={editor} className="editor" role="textbox" aria-multiline="true" aria-label="Message" contentEditable
-          suppressContentEditableWarning onInput={soon} onPaste={paste} />
+          suppressContentEditableWarning onInput={soon} onPaste={paste} onDrop={dropText}
+          onDragStart={() => (ownDrag.current = true)} onDragEnd={() => (ownDrag.current = false)} />
         {signature && <p className="signature muted">-- <br />{signature}</p>}
         {quote && (
           <div className="quote">
