@@ -174,6 +174,20 @@ describe('later syncs', () => {
   })
 })
 
+describe('a very large folder', () => {
+  // The lowest and highest UID were found by handing every one to Math.min and Math.max at once,
+  // which overflows the stack past about 125,000 of them and ended every pass on that account.
+  it('has its flags read however many messages it holds', async () => {
+    const big = new ImapSource(config)
+    let asked = ''
+    const nothing = async function* (): AsyncGenerator<never> {}
+    Object.assign(big, { client: { fetch: (range: string) => { asked = range; return nothing() } } })
+    const uids = Array.from({ length: 200_000 }, (_, i) => i + 5)
+    for await (const header of big.flagsOf(uids)) expect(header).toBeUndefined()
+    expect(asked).toBe('5:200004')
+  })
+})
+
 describe('batches', () => {
   it('holds new mail and shows it only at its moment', async () => {
     await sync() // the account exists from here; what comes next is new
