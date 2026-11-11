@@ -39,6 +39,9 @@ const api: MailApi = {
   saveAttachment: (message, index) => call('saveAttachment', message, index),
   openAttachment: (message, index) => call('openAttachment', message, index),
   drafts: () => call('drafts'),
+  openThreadWindow: (account, thread, bins) => call('openThreadWindow', account, thread, bins),
+  openDraftWindow: (id) => call('openDraftWindow', id),
+  showDraftWindow: (id) => call('showDraftWindow', id),
   startDraft: (start) => call('startDraft', start),
   saveDraft: (id, edit) => call('saveDraft', id, edit),
   discardDraft: (id) => call('discardDraft', id),
@@ -60,6 +63,11 @@ const api: MailApi = {
     const relay = (_event: IpcRendererEvent): void => listener()
     ipcRenderer.on('changed', relay)
     return () => ipcRenderer.removeListener('changed', relay)
+  },
+  onLeaving: (listener) => {
+    const relay = (_event: IpcRendererEvent): void => listener()
+    ipcRenderer.on('leaving', relay)
+    return () => ipcRenderer.removeListener('leaving', relay)
   },
   onCompose: (listener) => {
     const relay = (_event: IpcRendererEvent, draft: Draft): void => listener(draft)

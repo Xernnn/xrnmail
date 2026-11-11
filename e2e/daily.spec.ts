@@ -347,7 +347,7 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await page.locator('.threads').getByText('Plain').click()
   const tools = page.getByRole('toolbar', { name: 'Thread' })
   const labels = await tools.getByRole('button').evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
-  expect(labels).toEqual(['Archive', 'Delete', 'Flag', 'Mark unread', 'Labels', 'Snooze', 'More'])
+  expect(labels).toEqual(['Archive', 'Delete', 'Flag', 'Mark unread', 'Labels', 'Snooze', 'More', 'Open in a window'])
   const message = page.locator('.message.open')
   await expect(message).toHaveCSS('border-top-width', '0px') // no card around a message
   await expect(message.getByText('To: me')).toBeVisible()
@@ -486,6 +486,156 @@ test('attachments: saved exactly, opened only when safe', async () => {
 })
 
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('a thread in a window of its own: it follows the thread, and the main window keeps up', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Lease', text: 'Signed copy inside.' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Lunch', text: 'Noon?' }), { arrived: earlier(4) })
+  await signIn(run)
+  const threads = page.locator('.threads')
+  const out = page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Open in a window' })
+  await threads.getByText('Lease').click()
+  const [solo] = await Promise.all([app.waitForEvent('window'), out.click()])
+  await expect(solo.getByRole('heading', { name: 'Lease' })).toBeVisible()
+  await expect(solo.getByText('Signed copy inside.')).toBeVisible()
+  await expect(solo).toHaveTitle('Lease')
+  await expect(solo.locator('.sidebar, .list, .band')).toHaveCount(0) // the thread and nothing else
+  await expect(solo.getByRole('button', { name: 'Open in a window' })).toHaveCount(0)
+  await expect(solo.getByRole('button', { name: 'Back' })).toBeHidden()
+  await expect(page.getByRole('toolbar', { name: 'Thread' })).toHaveCount(0) // it's read there now, not here as well
+  await threads.getByText('Lease').click()
+  await out.click() // asked for again, the window it has comes forward
+  await expect(page.getByRole('toolbar', { name: 'Thread' })).toHaveCount(0)
+  expect(app.windows()).toHaveLength(2)
+
+  const bar = solo.getByRole('toolbar', { name: 'Thread' })
+  await bar.getByRole('button', { name: 'Archive' }).click()
+  await expect(solo.getByText('Archived')).toBeVisible()
+  await expect(threads.getByText('Lease')).toHaveCount(0) // the main window hears of it
+  await expect(solo.getByRole('heading', { name: 'Lease' })).toBeVisible() // and this one still shows it
+  await expect(bar.getByRole('button', { name: 'Move to Inbox' })).toBeVisible()
+  await solo.getByRole('button', { name: 'Undo' }).click()
+  await expect(threads.getByText('Lease')).toBeVisible()
+  await expect(bar.getByRole('button', { name: 'Archive' })).toBeVisible()
+
+  await bar.getByRole('button', { name: 'Delete', exact: true }).click() // into Trash, and the window goes with it
+  await expect(bar.getByRole('button', { name: 'Delete forever' })).toBeVisible()
+  await expect(solo.getByRole('heading', { name: 'Lease' })).toBeVisible()
+  await expect(threads.getByText('Lease')).toHaveCount(0)
+  await solo.getByRole('button', { name: 'Undo' }).click()
+  await expect(bar.getByRole('button', { name: 'Archive' })).toBeVisible()
+  await expect(threads.getByText('Lease')).toBeVisible()
+
+  const row = threads.locator('.thread', { hasText: 'Lease' })
+  await expect(row.locator('.unread-dot')).toHaveCount(0)
+  const closed = solo.waitForEvent('close')
+  await bar.getByRole('button', { name: 'Mark unread' }).click() // nothing left to read here, so it closes
+  await closed
+  await expect(row.locator('.unread-dot')).toHaveCount(1)
+  expect(app.windows()).toHaveLength(1)
+})
+
+test('a thread deleted for good closes its window, once Undo has had its time', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Old invoice', text: 'Paid long ago.' }), { arrived: earlier(5), box: '[Gmail]/Trash' })
+  await signIn(run)
+  await page.locator('.sidebar').getByRole('button', { name: 'Trash', exact: true }).click()
+  await page.locator('.threads').getByText('Old invoice').click()
+  const [solo] = await Promise.all([app.waitForEvent('window'), page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Open in a window' }).click()])
+  const bar = solo.getByRole('toolbar', { name: 'Thread' })
+  await expect(solo.getByText('Paid long ago.')).toBeVisible()
+  await bar.getByRole('button', { name: 'Delete forever' }).click()
+  await solo.getByRole('button', { name: 'Delete forever' }).last().click() // the question's own button
+  await expect(solo.getByText('Paid long ago.')).toHaveCount(0)
+  await solo.getByRole('button', { name: 'Undo' }).click() // gone from everywhere, and still not too late
+  await expect(solo.getByText('Paid long ago.')).toBeVisible()
+  expect(app.windows()).toHaveLength(2)
+  await bar.getByRole('button', { name: 'Delete forever' }).click()
+  const closed = solo.waitForEvent('close')
+  await solo.getByRole('button', { name: 'Delete forever' }).last().click()
+  await expect(solo.getByRole('button', { name: 'Undo' })).toBeVisible() // it waits while it can still be undone
+  expect(app.windows()).toHaveLength(2)
+  await closed
+  expect(app.windows()).toHaveLength(1)
+})
+
+test('the composer in a window of its own: the draft goes over, what is typed is kept, and it sends', async () => {
+  run = await launch()
+  const { page, smtp, app } = run
+  await signIn(run)
+  await undoOff(page)
+  await page.keyboard.press('c')
+  const here = composer(page)
+  await here.getByLabel('To').fill('ada@example.com')
+  await here.getByLabel('Subject').fill('Plans')
+  await here.getByLabel('Message').click()
+  await page.keyboard.type('First words.')
+  const [solo] = await Promise.all([app.waitForEvent('window'), here.getByRole('button', { name: 'Open in a window' }).click()])
+  await expect(here).toHaveCount(0)
+  await expect(page.getByText('Saved to Drafts')).toHaveCount(0) // it wasn't put away: it moved
+  const there = composer(solo)
+  await expect(there.getByLabel('Subject')).toHaveValue('Plans')
+  await expect(there.getByLabel('Message')).toHaveText('First words.')
+  await expect(there.getByRole('button', { name: 'Open in a window' })).toHaveCount(0)
+  await expect(solo.locator('.sidebar, .list, .band, .reader')).toHaveCount(0)
+  const [wide, tall] = await solo.evaluate(() => [window.innerWidth, window.innerHeight])
+  const box = await there.boundingBox()
+  expect([box?.x, box?.y, box?.width, box?.height]).toEqual([0, 0, wide, tall]) // it fills its window
+
+  // Opened from Drafts while it's being written there, the same window comes forward: one editor.
+  await page.locator('.sidebar').getByRole('button', { name: /^Drafts/ }).click()
+  await page.locator('.threads').getByText('Plans').click()
+  await expect(here).toHaveCount(0)
+  expect(app.windows()).toHaveLength(2)
+
+  // The window closed around it keeps what was typed a moment before.
+  await there.getByLabel('Message').click()
+  await solo.keyboard.type(' Second words.')
+  const closed = solo.waitForEvent('close')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((shown) => shown.webContents.getURL().includes('solo=draft'))?.close())
+  await closed
+  await expect(page.locator('.threads').getByText('First words. Second words.')).toBeVisible()
+
+  // And from Drafts it opens here again, goes out again, and sends from there.
+  await page.locator('.threads').getByText('Plans').click()
+  await expect(here.getByLabel('Message')).toHaveText('First words. Second words.')
+  const [again] = await Promise.all([app.waitForEvent('window'), here.getByRole('button', { name: 'Open in a window' }).click()])
+  const sent = again.waitForEvent('close')
+  await composer(again).getByRole('button', { name: 'Send', exact: true }).click()
+  await sent // with nothing left to undo, it closes
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('First words. Second words.')
+  expect(app.windows()).toHaveLength(1)
+})
+
+test('a composer of its own closed with nothing in it leaves no draft, and Undo of a send brings it back there', async () => {
+  run = await launch()
+  const { page, smtp, app } = run
+  await signIn(run)
+  await page.keyboard.press('c')
+  const [empty] = await Promise.all([app.waitForEvent('window'), composer(page).getByRole('button', { name: 'Open in a window' }).click()])
+  await expect(composer(empty).getByLabel('Subject')).toBeVisible()
+  const closed = empty.waitForEvent('close')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((shown) => shown.webContents.getURL().includes('solo=draft'))?.close())
+  await closed
+  await expect.poll(() => page.evaluate(async () => (await window.mail.drafts()).length)).toBe(0)
+
+  await page.keyboard.press('c')
+  const [solo] = await Promise.all([app.waitForEvent('window'), composer(page).getByRole('button', { name: 'Open in a window' }).click()])
+  const there = composer(solo)
+  await there.getByLabel('To').fill('ada@example.com')
+  await there.getByLabel('Subject').fill('Too soon')
+  await there.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(there).toHaveCount(0)
+  await solo.getByRole('button', { name: 'Undo' }).click() // the window waited for this
+  await expect(there.getByLabel('Subject')).toHaveValue('Too soon')
+  expect(smtp.sent).toHaveLength(0)
+  await solo.keyboard.press('Escape') // closed with words in it: kept in Drafts, and the window goes
+  await expect.poll(() => app.windows().length).toBe(1)
+  await expect.poll(() => page.evaluate(async () => (await window.mail.drafts()).map((d) => [d.subject, d.state]))).toEqual([['Too soon', 'draft']])
+})
+
 test('muting a sender from the reader, and the muted senders in Settings', async () => {
   run = await launch()
   const { page, gmail } = run

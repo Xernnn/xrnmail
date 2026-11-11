@@ -366,6 +366,14 @@ export interface MailApi {
   saveAttachment(message: number, index: number): Promise<boolean>
   openAttachment(message: number, index: number): Promise<void>
   drafts(): Promise<Draft[]>
+  /** Opens a thread in a window of its own, or brings forward the one it already has. */
+  openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
+  /** The same for a draft, in a composer of its own. */
+  openDraftWindow(id: number): Promise<void>
+  /** Brings forward the window a draft is being written in, when it has one, and says whether it did. */
+  showDraftWindow(id: number): Promise<boolean>
+  /** A window of its own is about to close. It closes itself again once it's ready, and that time it does. */
+  onLeaving(listener: () => void): () => void
   startDraft(start: DraftStart): Promise<Draft>
   saveDraft(id: number, edit: DraftEdit): Promise<void>
   discardDraft(id: number): Promise<void>

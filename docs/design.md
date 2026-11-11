@@ -210,8 +210,10 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
    It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
 5. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
-6. No navigation, new windows, downloads, permissions or webviews, and the bridge answers only the
-   app's own page.
+6. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
+   A page can't open a window. Only the main process does, for a thread or a draft, and that window
+   is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
+   bridge's world, nothing of Node) behind the same walls, told in its address what to show.
 
 Packaged builds also drop Electron's Node and debugging entry points (`electron-builder.yml`).
 
@@ -295,6 +297,15 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   how far the row went.
 - `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
   the foot.
+- A thread or a draft can have a window of its own (`showSolo` in the main process, `shared/solo.ts`
+  for what its address says). It's `App` again, drawing only the reader or only the composer. The
+  main window lets the thread go when it's opened there: two readers would each mark it read
+  whenever it changed. A thread's window follows its thread into Trash or Spam and back, so the Undo
+  for what moved it stays in reach, and it closes once the thread is nowhere and nothing is left to
+  undo. Marking it unread closes it. A window that's being closed is told first (`leaving`), so its
+  composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
+  itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
+  it from Drafts while it has a window brings that window forward.
 - `Settings.tsx`: Edison's sections, then xrnmail's own. Each account's name, signature and the rest
   are held once for every page, so a page opened while a save is on its way can't write old values
   back.

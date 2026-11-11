@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
@@ -344,6 +344,8 @@ export function Reader(props: {
   many: boolean
   setPanel(panel: Panel): void
   back(): void
+  /** Opens the thread in a window of its own. Not given in one. */
+  popOut?: () => void
   act(action: MailAction, label?: string): void
   snooze(at: number): void
   reply(kind: ReplyKind, message: number): void
@@ -468,6 +470,12 @@ export function Reader(props: {
             </Popover>
           )}
         </div>
+        {props.popOut && (
+          <>
+            <span className="toolbar-rule" aria-hidden="true" />
+            <IconButton icon={SquareArrowOutUpRight} label="Open in a window" click={props.popOut} />
+          </>
+        )}
       </div>
       <div className="messages">
         <div className="thread-head">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import {
-  Bold, Clock, Italic, Link, List, ListOrdered, Maximize2, Minimize2, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Strikethrough, Trash2,
-  Underline, Upload, X
+  Bold, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Strikethrough, Trash2,
+  SquareArrowOutUpRight, Underline, Upload, X
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
@@ -120,6 +120,12 @@ export function Composer(props: {
   sent(id: number, when: number, scheduled: boolean): void
   /** How it was asked for: Esc may have been pressed before it could open. */
   starting?: { off: boolean } | null
+  /** It has a window to itself, and fills it. */
+  solo?: boolean
+  /** Carries the draft on in a window of its own, once what's typed is kept. */
+  moveOut(id: number): void
+  /** Filled in while it's open with what to do before its window closes. */
+  leaving: { current: (() => Promise<void>) | null }
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -136,7 +142,6 @@ export function Composer(props: {
   const [linking, setLinking] = useState<string | null>(null)
   const [templates, setTemplates] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [wide, setWide] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [saved, setSaved] = useState(false)
   // Sanitised on the way in, because this copy is what gets sent. It's never put in this page: only
@@ -191,10 +196,24 @@ export function Composer(props: {
     if (timer.current) void save()
   }, [save])
 
+  const isEmpty = (edit: DraftEdit): boolean =>
+    !edit.to && !edit.cc && !edit.bcc && !edit.subject && !edit.text.trim() && files.length === 0 && !quote
+
+  // A window of its own can be closed around its composer. The app is asked first, and through this
+  // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
+  useEffect(() => {
+    const keep = async (): Promise<void> => {
+      if (gone.current) return
+      if (!isEmpty(latest.current())) return save()
+      gone.current = true
+      await window.mail.discardDraft(draft.id)
+    }
+    props.leaving.current = keep
+    return () => { if (props.leaving.current === keep) props.leaving.current = null }
+  })
+
   const closeUp = async (): Promise<void> => {
-    const edit = collect()
-    const empty = !edit.to && !edit.cc && !edit.bcc && !edit.subject && !edit.text.trim() && files.length === 0 && !quote
-    if (empty) {
+    if (isEmpty(collect())) {
       gone.current = true
       await window.mail.discardDraft(draft.id)
       return props.close(false)
@@ -208,6 +227,17 @@ export function Composer(props: {
   useLayoutEffect(() => {
     if (props.starting?.off) void closeUp()
   }, [])
+
+  /** On to a window of its own. This one lets go without a word: nothing was closed or saved away. */
+  const moveOut = async (): Promise<void> => {
+    try {
+      await save()
+      gone.current = true
+      props.moveOut(draft.id)
+    } catch (e) {
+      setError(problem(e))
+    }
+  }
 
   const discard = async (): Promise<void> => {
     gone.current = true
@@ -321,7 +351,7 @@ export function Composer(props: {
   const templateList = props.settings?.templates ?? []
 
   return (
-    <section className={wide ? 'composer wide' : 'composer'} aria-label="Compose" onDrop={drop}
+    <section className={props.solo ? 'composer solo' : 'composer'} aria-label="Compose" onDrop={drop}
       onDragOver={(e) => {
         e.preventDefault()
         if (e.dataTransfer.types.includes('Files')) setDragging(true)
@@ -333,7 +363,7 @@ export function Composer(props: {
       }}>
       <header>
         <h2>{subject || (quote?.kind === 'reply' ? 'Reply' : 'New message')}</h2>
-        <IconButton icon={wide ? Minimize2 : Maximize2} label={wide ? 'Smaller' : 'Full size'} click={() => setWide(!wide)} />
+        {!props.solo && <IconButton icon={SquareArrowOutUpRight} label="Open in a window" click={() => void moveOut()} />}
         <IconButton icon={X} label="Close" click={() => void closeUp()} />
       </header>
       <div className="field-row">

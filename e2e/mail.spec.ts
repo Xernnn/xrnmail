@@ -165,17 +165,68 @@ test('images stay blocked on the next message', async () => {
 
 test('the page has only the bridge, and a page reached by accident gets nothing', async () => {
   run = await launch()
-  const { page } = run
-  const globals = await page.evaluate(() => ({
-    node: typeof (window as unknown as { require?: unknown }).require,
-    process: typeof (window as unknown as { process?: unknown }).process,
-    mail: typeof window.mail
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Plan', text: 'Early idea' }), { arrived: earlier(3) })
+  // A thread and a draft in windows of their own are the same page behind the same walls.
+  await signIn(run)
+  await page.getByText('Plan').click()
+  const [thread] = await Promise.all([app.waitForEvent('window'), page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Open in a window' }).click()])
+  await expect(thread.getByRole('heading', { name: 'Plan' })).toBeVisible()
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const [draft] = await Promise.all([app.waitForEvent('window'), page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Open in a window' }).click()])
+  await expect(draft.getByLabel('Subject')).toBeVisible()
+  expect(thread.url()).toContain('solo=thread')
+  expect(draft.url()).toContain('solo=draft')
+  const all = [page, thread, draft]
+
+  for (const shown of all) {
+    const globals = await shown.evaluate(() => ({
+      node: typeof (window as unknown as { require?: unknown }).require,
+      process: typeof (window as unknown as { process?: unknown }).process,
+      mail: typeof window.mail
+    }))
+    expect(globals).toEqual({ node: 'undefined', process: 'undefined', mail: 'object' })
+    // The bridge is the page's alone: a frame put inside one doesn't get it.
+    const framed = await shown.evaluate(async () => {
+      const frame = document.createElement('iframe')
+      const loaded = new Promise((resolve) => frame.addEventListener('load', resolve, { once: true }))
+      frame.srcdoc = '<p>inside</p>'
+      document.body.append(frame)
+      await loaded
+      const inside = typeof (frame.contentWindow as unknown as { mail?: unknown }).mail
+      frame.remove()
+      return inside
+    })
+    expect(framed).toBe('undefined')
+  }
+  const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((shown) => {
+    const contents = shown.webContents as unknown as { getLastWebPreferences(): Record<string, unknown> | null }
+    const { sandbox, contextIsolation, nodeIntegration, webSecurity, webviewTag } = contents.getLastWebPreferences() ?? {}
+    return { sandbox, contextIsolation, nodeIntegration, webSecurity, webviewTag: webviewTag === true }
   }))
-  expect(globals).toEqual({ node: 'undefined', process: 'undefined', mail: 'object' })
-  await page.evaluate(() => void (window.location.href = 'https://example.com/'))
-  await pause(400)
-  expect(page.url()).toContain('index.html')
-  await expect.poll(run.opened).toEqual(['https://example.com/'])
+  expect(preferences).toHaveLength(3)
+  for (const one of preferences) {
+    expect(one).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, webviewTag: false })
+  }
+
+  // None can open a window itself: only the app's own request does that.
+  for (const shown of all) {
+    expect(await shown.evaluate(() => window.open('https://example.org/') === null)).toBe(true)
+    expect(await shown.evaluate(() => window.open(window.location.href) === null)).toBe(true)
+  }
+  await pause(300)
+  expect(app.windows()).toHaveLength(3)
+  expect(await run.opened()).toEqual(['https://example.org/', 'https://example.org/', 'https://example.org/'])
+
+  // And none can be sent anywhere else: it stays, and the address goes to the browser.
+  for (const [i, shown] of all.entries()) {
+    const before = shown.url()
+    await shown.evaluate((url) => void (window.location.href = url), `https://example.com/${i}`)
+    await pause(400)
+    expect(shown.url()).toBe(before)
+    expect(before).toContain('index.html')
+  }
+  await expect.poll(run.opened).toEqual(['https://example.org/', 'https://example.org/', 'https://example.org/', 'https://example.com/0', 'https://example.com/1', 'https://example.com/2'])
 })
 
 test('following a thread: it opens in Gmail, and reads back from the saved mail', async () => {

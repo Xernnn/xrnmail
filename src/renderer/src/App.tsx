@@ -14,6 +14,7 @@ import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
+import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
 import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
 
@@ -21,13 +22,17 @@ const TAKES_AWAY = ['archive', 'trash', 'spam', 'forever', 'move']
 
 interface Toast {
   text: string
-  undo?: () => void
+  /** What it gives back is waited for by a window of its own, which mustn't close on an Undo still on its way. */
+  undo?: () => unknown
   /** How long it stays, when Undo lasts longer than usual. */
   ms?: number
 }
 
 const TOAST_MS = 5000
 const PAGE = 200
+
+/** Set in a window of its own, which shows one thread or one draft and none of the rest. */
+const SOLO = soloFrom(window.location.search)
 
 const keyOf = (ref: ThreadRef): string => `${ref.account}/${ref.thread}`
 
@@ -89,7 +94,19 @@ export function App(): ReactNode {
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ThreadRow[] | null>(null)
   const [limit, setLimit] = useState(PAGE)
-  const [open, setOpen] = useState<ThreadRef | null>(null)
+  const [open, setOpen] = useState<ThreadRef | null>(SOLO?.kind === 'thread' ? { account: SOLO.account, thread: SOLO.thread } : null)
+  /** In a window of its own: whether its thread is in Trash or Spam just now, and whether it's anywhere at all. */
+  const [soloBins, setSoloBins] = useState(SOLO?.kind === 'thread' && SOLO.bins)
+  const [missing, setMissing] = useState(false)
+  /** In a composer of its own, once its draft has been looked for. */
+  const [soloReady, setSoloReady] = useState(false)
+  /** An Undo pressed in a window of its own and not yet done. What's read of the thread meanwhile is
+   *  already old, and [undoEpoch] moves on when it's done so a read begun before then is too. */
+  const [undoing, setUndoing] = useState(false)
+  const undoingNow = useRef(false)
+  /** What an open composer does before its window closes. */
+  const leaving = useRef<(() => Promise<void>) | null>(null)
+  const undoEpoch = useRef(0)
   const [messages, setMessages] = useState<MessageView[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -137,9 +154,10 @@ export function App(): ReactNode {
   setClock24(profile?.clock24 ?? true) // before anything below writes a time
 
   const unread = (accounts ?? []).reduce((sum, a) => sum + a.unread, 0)
+  const soloTitle = SOLO?.kind === 'thread' ? messages[0]?.subject || 'xrnmail' : SOLO ? composing?.subject || 'New message' : null
   useEffect(() => {
-    document.title = unread > 0 ? `(${unread}) xrnmail` : 'xrnmail'
-  }, [unread])
+    document.title = soloTitle ?? (unread > 0 ? `(${unread}) xrnmail` : 'xrnmail')
+  }, [unread, soloTitle])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -147,16 +165,32 @@ export function App(): ReactNode {
     return () => clearTimeout(timer)
   }, [toast])
 
+  /** Undo, from the toast. A window of its own stays until it's done and what it holds has been read again. */
+  const undoNow = (undo: (() => unknown) | undefined): void => {
+    setToast(null)
+    if (!undo) return
+    if (!SOLO) return void undo()
+    undoingNow.current = true
+    setUndoing(true)
+    setMissing(false)
+    void Promise.resolve().then(undo).catch(() => undefined).then(() => {
+      undoingNow.current = false
+      undoEpoch.current += 1
+      setUndoing(false)
+      bump()
+    })
+  }
+
   const searching = search.trim() !== ''
   const split = profile?.focused ?? false
   const active: View = searching
     ? { kind: 'search', text: search.trim() }
     : split && view.kind === 'inbox' ? { ...view, focus: view.focus ?? 'focused' } : view
-  const bins = active.kind === 'trash' || active.kind === 'spam'
+  const bins = SOLO ? soloBins : active.kind === 'trash' || active.kind === 'spam'
   const list = rows ?? []
 
   useEffect(() => {
-    if (active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
+    if (SOLO || active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
     const asked = ++listAsked.current
     const timer = setTimeout(() => {
       void window.mail.list(active as ListQuery, limit).then((found) => {
@@ -168,13 +202,49 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (!open) return setMessages([])
-    void window.mail.thread(open.account, open.thread, bins).then((found) => {
+    void (async () => {
+      const epoch = undoEpoch.current
+      let found = await window.mail.thread(open.account, open.thread, bins)
+      if (SOLO && found.length === 0) {
+        // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
+        // what sent it there is never out of reach.
+        const moved = await window.mail.thread(open.account, open.thread, !bins)
+        if (moved.length > 0) {
+          found = moved
+          setSoloBins(!bins)
+        }
+      }
+      if (SOLO && found.length === 0 && (undoingNow.current || epoch !== undoEpoch.current)) return // the read after the Undo says
       setMessages(found)
       setReads((n) => n + 1) // opening it read it, and the row should say so
-      if (found.length === 0) setOpen(null) // gone from the server while on screen
-    })
+      if (SOLO) setMissing(found.length === 0)
+      else if (found.length === 0) setOpen(null) // gone from the server while on screen
+    })()
     return undefined
   }, [open?.account, open?.thread, version])
+
+  // A window of its own that's being closed is told first, and closes itself once what's typed is safe.
+  useEffect(() => window.mail.onLeaving(() => {
+    void Promise.resolve().then(() => leaving.current?.()).catch(() => undefined).then(() => window.close())
+  }), [])
+
+  // A composer of its own starts from the draft it was opened for.
+  useEffect(() => {
+    if (SOLO?.kind !== 'draft') return
+    const id = SOLO.id
+    void window.mail.drafts().then((all) => {
+      setComposing(all.find((draft) => draft.id === id) ?? null)
+      setSoloReady(true)
+    })
+  }, [])
+
+  // A window of its own closes once what it held is gone: after any Undo has had its time, and never
+  // around a reply being written.
+  useEffect(() => {
+    if (!SOLO || toast?.undo || undoing || accounts === null) return
+    const done = SOLO.kind === 'thread' ? missing && !composing : soloReady && !composing
+    if (done || accounts.length === 0) window.close()
+  }, [missing, soloReady, composing, toast, undoing, accounts])
 
   const move = useCallback(
     (step: number) => {
@@ -207,12 +277,14 @@ export function App(): ReactNode {
       if (refs.length === 0) return
       const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins) || (action.kind === 'unread' && open !== null)
       try {
-        if (leaves) leave(refs)
+        if (leaves && !SOLO) leave(refs)
         const token = await window.mail.act(refs, action)
+        // Reading it again would only mark it read again, so a window of its own goes with it.
+        if (SOLO && action.kind === 'unread') return window.close()
         setPicked(new Set())
         if (label) {
           const text = refs.length > 1 ? `${label}: ${refs.length} threads` : label
-          setToast({ text, undo: () => void window.mail.undo(token) })
+          setToast({ text, undo: () => window.mail.undo(token) })
         }
       } catch (e) {
         say(problem(e))
@@ -236,10 +308,10 @@ export function App(): ReactNode {
       setPanel(null)
       setBulkSnooze(false)
       try {
-        leave(refs)
+        if (!SOLO) leave(refs)
         await window.mail.snooze(refs, at)
         setPicked(new Set())
-        setToast({ text: `Snoozed until ${longTime(at)}`, undo: () => void window.mail.unsnooze(refs) })
+        setToast({ text: `Snoozed until ${longTime(at)}`, undo: () => window.mail.unsnooze(refs) })
       } catch (e) {
         say(problem(e))
       }
@@ -285,6 +357,8 @@ export function App(): ReactNode {
 
   const reopen = async (draft: Draft): Promise<void> => {
     try {
+      // Being written in a window of its own: that window comes forward, and there's still one editor.
+      if (draft.state !== 'queued' && await window.mail.showDraftWindow(draft.id)) return
       if (draft.state === 'queued') await window.mail.unsend(draft.id)
       setComposing({ ...draft, state: 'draft', sendAt: null })
     } catch (e) {
@@ -303,9 +377,9 @@ export function App(): ReactNode {
         say(problem(e))
       }
     }
-    if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo: () => void undo() })
+    if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo })
     const left = when - Date.now()
-    setToast(left > 0 ? { text: 'Sending', undo: () => void undo(), ms: left } : { text: 'Sent' })
+    setToast(left > 0 ? { text: 'Sending', undo, ms: left } : { text: 'Sent' })
   }
 
   const sent = (id: number, when: number, scheduled: boolean): void => {
@@ -372,7 +446,7 @@ export function App(): ReactNode {
   const pin = async (refs: ThreadRef[], on: boolean): Promise<void> => {
     try {
       await window.mail.pin(refs, on)
-      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => void window.mail.pin(refs, !on) })
+      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => window.mail.pin(refs, !on) })
     } catch (error) {
       say(problem(error))
     }
@@ -550,7 +624,7 @@ export function App(): ReactNode {
         close: () => {
           if (starting.current) starting.current.off = true
           else if (picked.size > 0) setPicked(new Set())
-          else setOpen(null)
+          else if (!SOLO) setOpen(null)
         },
         compose: () => void compose({ kind: 'new' }),
         reply: () => { if (last) reply('reply', last.id) },
@@ -615,7 +689,7 @@ export function App(): ReactNode {
   }
 
   if (accounts === null) return null
-  if (accounts.length === 0) return <Welcome />
+  if (accounts.length === 0) return SOLO ? null : <Welcome />
 
   const go = (target: View): void => {
     setView(target)
@@ -648,6 +722,52 @@ export function App(): ReactNode {
   const otherCount = overview?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
   const batching = (profile?.batch.times.length ?? 0) > 0
+
+  const popOut = (): void => {
+    if (!open) return
+    // It's read there from now on. Left open here as well, this window would mark it read again
+    // each time it changed, whatever was done to it there.
+    void window.mail.openThreadWindow(open.account, open.thread, bins).then(() => setOpen(null), (e: unknown) => say(problem(e)))
+  }
+  const reader = (
+    <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
+      settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
+      labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
+      act={(action, label) => void run(open ? [open] : [], action, label)}
+      snooze={(at) => void snooze(open ? [open] : [], at)}
+      reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
+      rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
+      trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
+      forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)} />
+  )
+  /** What's drawn over the page, in any window. */
+  const over = (
+    <>
+      {composing && (
+        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
+          solo={SOLO?.kind === 'draft'} leaving={leaving}
+          moveOut={(id) => {
+            setComposing(null)
+            void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))
+          }}
+          close={(saved) => {
+            setComposing(null)
+            if (saved && SOLO?.kind !== 'draft') say('Saved to Drafts') // a composer of its own just closes
+          }} />
+      )}
+      {toast && (
+        <div className="toast" role="status">
+          <span>{toast.text}</span>
+          {toast.undo && <button className="link" onClick={() => undoNow(toast.undo)}>Undo</button>}
+        </div>
+      )}
+      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
+      {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
+      {question && <Confirm question={question} />}
+    </>
+  )
+
+  if (SOLO) return <div className={`app solo solo-${SOLO.kind}`}>{SOLO.kind === 'thread' && reader}{over}</div>
 
   return (
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
@@ -761,38 +881,15 @@ export function App(): ReactNode {
             )}
           </section>
           <div className="resize" aria-hidden="true" onPointerDown={resize} />
-          <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} own={own}
-            settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
-            labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
-            act={(action, label) => void run(open ? [open] : [], action, label)}
-            snooze={(at) => void snooze(open ? [open] : [], at)}
-            reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
-            rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
-            trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
-            forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)} />
+          {reader}
         </div>
       </div>
-      {composing && (
-        <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          close={(saved) => {
-            setComposing(null)
-            if (saved) say('Saved to Drafts')
-          }} />
-      )}
-      {toast && (
-        <div className="toast" role="status">
-          <span>{toast.text}</span>
-          {toast.undo && <button className="link" onClick={() => { toast.undo?.(); setToast(null) }}>Undo</button>}
-        </div>
-      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
       {sideMenu && (
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
           items={[{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target) }]} />
       )}
-      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
-      {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
-      {question && <Confirm question={question} />}
+      {over}
     </div>
   )
 }
