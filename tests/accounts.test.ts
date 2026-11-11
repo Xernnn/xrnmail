@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
+import { pollDeviceCode, type DeviceCode } from '@main/oauth'
 import { MailService, UNDO_MS, type DomainRecords } from '@main/service'
 import { ImapSource, threadOf } from '@main/source'
 import { Store } from '@main/store'
@@ -635,6 +636,20 @@ describe('Outlook sign-in', () => {
     await service.startMicrosoft(O, CLIENT)
     await expect(service.finishMicrosoft()).rejects.toThrow('declined')
     expect(service.accounts()).toEqual([])
+  })
+
+  // slow_down was taken as "not yet" and the next poll came as soon as ever. RFC 8628 says each one
+  // adds 5 seconds to the wait from then on, and a client that keeps on may be refused.
+  it('waits 5 seconds longer each time Microsoft asks it to slow down', async () => {
+    const code: DeviceCode = { deviceCode: 'dev', userCode: 'ABC-123', url: 'https://microsoft.com/devicelogin', intervalMs: 5000, expiresAt: Infinity }
+    const answers = [json({ error: 'slow_down' }, false), json({ error: 'authorization_pending' }, false), json({ error: 'slow_down' }, false)]
+    const asked = vi.fn(async () => answers.shift())
+    const waits: number[] = []
+    for (let i = 0; i < 3; i++) {
+      expect(await pollDeviceCode(asked as unknown as typeof fetch, CLIENT, code, 0)).toBeNull()
+      waits.push(code.intervalMs)
+    }
+    expect(waits).toEqual([10_000, 10_000, 15_000])
   })
 })
 
