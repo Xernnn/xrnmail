@@ -32,6 +32,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
 - **Trash and Spam:** read them, restore from them, or delete for good.
+- **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
+  there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
+  for what they mean there.
 - **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
   side a sender belongs on and it stays there.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
@@ -41,8 +44,14 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   going somewhere else. It warns; it never vouches.
 - **Snooze:** a thread comes back when you say, or when someone replies.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
+- **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
+  Settings, Notifications.
 - **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
 - **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
+  A row in the list shows its thread's files as small cards, unless Appearance says not to.
+- **Windows of their own:** the last button over a thread opens it in its own window, and the
+  composer's does the same for what you're writing. A thread's window follows it into Trash and back,
+  and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
   `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
 - **Safe with hostile mail:** no scripts, and no remote images until you ask. See
@@ -51,8 +60,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   in the list do the same.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
-  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read), recipient chips,
-  side-by-side or one-at-a-time reading, one to four lines of preview, and Settings you can search.
+  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
+  choose which of its entries show and in what order), recipient chips, side-by-side or
+  one-at-a-time reading, one to four lines of preview, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
@@ -88,11 +98,31 @@ Kept from xrnmail, where Edison has nothing: batches and straight-through sender
 over the list, Snoozed and Attachments in the sidebar, the quick reply box under a thread, search
 without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time layout.
 
-Not here, though Edison has them: Pinned and Recently Seen, the Subscription Summary, muting a
-sender's notifications, editing the sidebar's entries, a message or the composer in a window of its
-own, attachment cards in the list, changing single shortcuts, and the Apple Mail, Outlook and Inbox
-sets of keys. Settings and the sync status sit at the foot of the sidebar, because Linux hides the
-menu bar Edison keeps its Preferences in.
+Not here, though Edison has them:
+
+- **Recently Seen.** Nothing to hand says what it lists: it's a name in Edison's sidebar in every
+  picture, and its help pages never describe it.
+- **The Subscription Summary.** Its help pages say what it does (chosen senders are held and delivered
+  together, daily or weekly at a time you pick) and show its schedule in Settings, but not the three
+  things it would add here: the Summary side of Subscriptions, the Summary list in the sidebar, and
+  what a delivered Summary looks like. Batches already hold mail for set times of day, for everyone
+  but the senders let straight through.
+- Changing single shortcuts, and the Apple Mail, Outlook and Inbox sets of keys.
+- Choosing and ordering the accounts' own labels in Edit Menu, and making a label or folder from it.
+  Edit Menu here covers the gathered folders and the Assistant's lists.
+
+Done differently:
+
+- Settings and the sync status sit at the foot of the sidebar, because Linux hides the menu bar
+  Edison keeps its Preferences in. Appearance has an Edit Menu button beside the right-click one.
+- A pinned thread stays where it is in its list and is gathered under Pinned. Whether Edison also
+  lifts pinned mail to the top of a list isn't shown anywhere, so it isn't done.
+- The composer starts as a panel in the window and moves to a window of its own when asked; Edison's
+  is always a window.
+- A thread's own window stays open when the thread is archived or deleted, showing it where it went
+  with Undo still there, and closes when it's marked unread or gone for good.
+- Muted senders are a list of addresses or @domains typed in or added from a message, as blocked
+  senders are; Edison picks them from contacts.
 
 ## What it doesn't do yet
 

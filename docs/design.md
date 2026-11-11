@@ -80,6 +80,12 @@ six seconds for Undo before setting off; everything else goes straight away.
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+- A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
+  means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
+  a pinned thread keeps its place in every other list.
+- A muted sender's mail is left out by both things that announce mail: a sync that finds mail
+  already due neither counts nor names it, and a delivery counts only what the others sent. It
+  lands, and refreshes the list, like any other.
 
 ## Sending
 
