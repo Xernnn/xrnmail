@@ -23,6 +23,8 @@ export interface FakeOptions {
   noArchiveFolder?: boolean
   /** Takes a token instead of a password. */
   token?: string
+  /** Refuses a longer command line, as servers do. RFC 7162 asks clients to stay under 8192 octets. */
+  maxLine?: number
 }
 
 export interface FakeBox {
@@ -249,6 +251,10 @@ export class FakeGmail {
         }
         const whole = `${held}${line}`
         held = ''
+        if (whole.length > (this.options.maxLine ?? Infinity)) {
+          socket.write(`${whole.slice(0, whole.indexOf(' '))} BAD Command line too long\r\n`)
+          continue
+        }
         this.line(socket, whole, body)
         body = null
       }

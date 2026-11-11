@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ImapSource, type ImapConfig } from '@main/source'
 import { Store } from '@main/store'
+import { ImapWriter } from '@main/writer'
 import { syncAccount, type SyncOptions } from '@main/sync'
 import { FakeGmail, rawMail } from './fake-gmail'
 
@@ -185,6 +186,29 @@ describe('a very large folder', () => {
     const uids = Array.from({ length: 200_000 }, (_, i) => i + 5)
     for await (const header of big.flagsOf(uids)) expect(header).toBeUndefined()
     expect(asked).toBe('5:200004')
+  })
+})
+
+describe('a change to a great many messages', () => {
+  // Every UID went into one command line, and "Delete all" from a busy sender names thousands, which
+  // a server that limits its lines refused: the change was tried three times and then put back.
+  it('reaches a server that limits how long a command can be', async () => {
+    await gmail.stop()
+    gmail = new FakeGmail({ maxLine: 8192 })
+    config = { ...config, port: await gmail.listen() }
+    const uids = Array.from({ length: 3000 }, (_, i) => gmail.add(rawMail({ subject: `Deal ${i}` })))
+    const writer = new ImapWriter(config)
+    await writer.connect()
+    try {
+      await writer.apply('@all', uids, { kind: 'star' })
+      expect(gmail.mails.filter((m) => m.flags.includes('\\Flagged'))).toHaveLength(3000)
+      const moved = await writer.apply('@all', uids, { kind: 'trash' })
+      expect(moved?.to?.role).toBe('trash')
+      expect([...(moved?.map?.keys() ?? [])].sort((a, b) => a - b)).toEqual(uids)
+      expect(gmail.mails).toEqual([])
+    } finally {
+      await writer.close()
+    }
   })
 })
 
