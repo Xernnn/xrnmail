@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
-import { readFileSync, truncateSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { launch, ME, signIn, type Running } from './app'
@@ -131,6 +132,36 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
   await expect(list.getByText('Middle')).toHaveCount(0)
   await expect.poll(() => gmail.moved.length, LONG).toBe(1)
   expect(gmail.mails.find((m) => m.raw.toString().includes('Newest'))?.labels).toContain('\\Inbox')
+})
+
+// The refresh that follows a change waits 150 ms, and quitting can close the store and destroy the
+// tray before it comes. When the app took longer than that to go, the refresh still ran, and with
+// unread mail shown it set the image of the destroyed tray, which throws in the main process.
+test('nothing refreshes once quitting has closed the store', async () => {
+  run = await launch()
+  const { page, app } = run
+  await page.getByLabel('Email address').waitFor() // no account, so closing has nothing to wait for
+  const folder = mkdtempSync(join(tmpdir(), 'xrnmail-quit-'))
+  const log = join(folder, 'log.txt')
+  await app.evaluate(({ app: electron, BrowserWindow }, path) => {
+    const { appendFileSync } = process.getBuiltinModule('node:fs')
+    const shown = BrowserWindow.getAllWindows()[0]!
+    const send = shown.webContents.send.bind(shown.webContents)
+    shown.webContents.send = (channel: string, ...args: unknown[]) => {
+      appendFileSync(path, `${channel}\n`)
+      send(channel, ...args)
+    }
+    // The second is the one that closes the store; this listener runs after the app's own.
+    let quits = 0
+    electron.on('before-quit', () => { if (++quits === 2) appendFileSync(path, 'closed\n') })
+    // A window slow to close, as a busy one can be, keeps the app going past the 150 ms.
+    shown.on('close', () => { const until = Date.now() + 300; while (Date.now() < until); })
+  }, log)
+  await page.evaluate(() => window.mail.unsnooze([])) // a change, so a refresh is on its way
+  await run.stop()
+  const events = readFileSync(log, 'utf8').trim().split('\n')
+  expect(events.slice(events.indexOf('closed'))).toEqual(['closed'])
+  rmSync(folder, { recursive: true, force: true })
 })
 
 test('selecting several and acting on them together', async () => {
