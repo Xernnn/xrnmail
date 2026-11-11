@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, CalendarRange, Clock, Mail, MailMinus, MailOpen, Package, Paperclip, Plane, Receipt, Star, Trash2, Undo2, type LucideIcon } from 'lucide-react'
+import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty } from './Common'
 import { clock, factLine, longTime, peopleLine, problem, shortTime } from './format'
@@ -16,11 +16,15 @@ const SWIPE_LOOK: Record<Exclude<SwipeAction, 'none'>, { icon: LucideIcon; tone:
   archive: { icon: Archive, tone: 'swipe-archive' },
   trash: { icon: Trash2, tone: 'swipe-trash' },
   read: { icon: MailOpen, tone: 'swipe-read' },
-  star: { icon: Star, tone: 'swipe-star' },
+  star: { icon: Flag, tone: 'swipe-star' },
   snooze: { icon: Clock, tone: 'swipe-snooze' }
 }
 
-const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Package, travel: Plane, money: Receipt, event: CalendarRange }
+const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Truck, travel: Plane, money: DollarSign, event: Ticket }
+
+/** What a row offers under the pointer, in the place of its date. */
+export type QuickAction = 'archive' | 'flag' | 'trash' | 'read' | 'snooze' | 'spam' | 'none'
+export const QUICK_ACTIONS: QuickAction[] = ['archive', 'flag', 'trash', 'read']
 
 /** The headline of an Assistant entry, and what's most worth seeing next to it. */
 function factHead(facts: Facts): { title: string; side: string } {
@@ -45,6 +49,8 @@ export function Row(props: {
   picked: boolean
   swipeLeft: SwipeAction
   swipeRight: SwipeAction
+  /** The buttons that show under the pointer, in order. */
+  quick: QuickAction[]
   open(): void
   pick(event: MouseEvent): void
   act(action: MailAction, label?: string): void
@@ -89,6 +95,19 @@ export function Row(props: {
   const stateClass = `${on ? 'on' : ''} ${unread ? 'unread' : ''} ${picked ? 'picked' : ''}`
   const files = row.file ? `Has attachment: ${plainName(row.file)}${row.files > 1 ? ` and ${row.files - 1} more` : ''}` : 'Has attachment'
 
+  const quick = (kind: QuickAction): ReactNode => {
+    switch (kind) {
+      case 'archive': return <IconButton key={kind} icon={Check} label="Archive" click={() => act({ kind: 'archive' }, 'Archived')} />
+      case 'flag': return <IconButton key={kind} icon={Flag} label={row.starred ? 'Remove flag' : 'Flag'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
+      case 'trash': return <IconButton key={kind} icon={Trash2} label="Delete" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
+      case 'read': return <IconButton key={kind} icon={unread ? MailOpen : Mail} label={unread ? 'Mark read' : 'Mark unread'} click={() => act({ kind: unread ? 'read' : 'unread' })} />
+      case 'snooze': return <IconButton key={kind} icon={Clock} label="Snooze" click={props.snooze} />
+      case 'spam': return <IconButton key={kind} icon={OctagonAlert} label="Report spam" click={() => act({ kind: 'spam' }, 'Reported as spam')} />
+      case 'none': return null
+    }
+  }
+  const shown = bins ? [] : [...new Set(props.quick)].filter((kind) => kind !== 'none')
+
   return (
     <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
       onContextMenu={(e) => { e.preventDefault(); props.menu(e.clientX, e.clientY) }}>
@@ -99,40 +118,32 @@ export function Row(props: {
       )}
       <div className="thread-card" style={style}>
         {many && account && <span className="account-mark" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
-        {unread && <span className="unread-dot" aria-hidden="true" />}
         <span className="face">
           {facts && FactIcon
-            ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={18} /></span>
-            : <Avatar name={row.fromName} address={row.fromAddress} />}
+            ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={20} /></span>
+            : <Avatar name={row.fromName} address={row.fromAddress} size={44} />}
           <input type="checkbox" className="pick" aria-label={`Select ${row.subject}`} checked={picked} onClick={pick} readOnly />
         </span>
         <button className="thread-open" onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? pick(e) : open())}>
           <span className="thread-top">
+            {unread && <span className="unread-dot" aria-hidden="true" />}
             {unread && <span className="sr-only">Unread, </span>}
             <span className="sender">{head ? head.title : names}</span>
-            {!head && row.count > 1 && <span className="count">{row.count}</span>}
+            {!head && row.count > 1 && <span className="count">({row.count})</span>}
             <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>
           </span>
           <span className="thread-mid">
             <span className="subject">{row.subject || 'No subject'}</span>
-            {row.starred && <Star className="mark star" size={13} aria-label="Starred" />}
+            {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>
         </button>
-        <span className="row-actions">
-          {bins ? (
-            <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />
-          ) : (
-            <>
-              <IconButton icon={Archive} label="Archive" click={() => act({ kind: 'archive' }, 'Archived')} />
-              <IconButton icon={Trash2} label="Delete" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-              <IconButton icon={unread ? MailOpen : Mail} label={unread ? 'Mark read' : 'Mark unread'} click={() => act({ kind: unread ? 'read' : 'unread' })} />
-              <IconButton icon={Star} label={row.starred ? 'Remove star' : 'Star'} on={row.starred} click={() => act({ kind: row.starred ? 'unstar' : 'star' })} />
-              <IconButton icon={Clock} label="Snooze" click={props.snooze} />
-            </>
-          )}
-        </span>
+        {(bins || shown.length > 0) && (
+          <span className="row-actions">
+            {bins ? <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} /> : shown.map(quick)}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -146,7 +157,7 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   return (
     <div className={draft.error ? 'thread problem' : 'thread'}>
       <div className="thread-card">
-        <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} /></span>
+        <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} size={44} /></span>
         <button className="thread-open" onClick={open}>
           <span className="thread-top">
             <span className="sender">{people.map(chipLabel).join(', ') || 'No recipients'}</span>
@@ -170,7 +181,7 @@ export function Subscriptions(props: { version: number; unsubscribe(message: num
     void window.mail.subscriptions().then(setItems)
   }, [props.version])
   if (items === null) return null
-  if (items.length === 0) return <Empty icon={MailMinus} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+  if (items.length === 0) return <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
   return (
     <>
       {items.map((item) => (

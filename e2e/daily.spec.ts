@@ -200,6 +200,67 @@ test('the window: a title and search over list and reader, and the sidebar in it
   await expect(page.locator('.threads').getByText('Filed')).toBeVisible()
 })
 
+test('a row under the pointer offers archive, flag, delete and read, and shows two lines of the message', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const long = 'First words of a message that goes on for a good while, long enough that one line of the list could never hold all of it.'
+  gmail.add(rawMail({ subject: 'Lines', text: long }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Other one' }), { arrived: earlier(4), flags: ['\\Seen'] })
+  await signIn(run)
+  const row = page.locator('.threads .thread', { hasText: 'Lines' })
+  await expect(page.locator('.threads h2')).toHaveCount(0) // no headings by day
+  const lineHeight = await row.locator('.snippet').evaluate((el) => parseFloat(getComputedStyle(el).lineHeight))
+  expect((await row.locator('.snippet').boundingBox())?.height).toBe(lineHeight * 2)
+  await expect(row.locator('.unread-dot')).toBeVisible()
+  await expect(row.locator('.sender')).toHaveCSS('font-weight', '700')
+  await expect(page.locator('.threads .thread', { hasText: 'Other one' }).locator('.sender')).toHaveCSS('font-weight', '400')
+  await row.hover()
+  const labels = await row.locator('.row-actions button').evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
+  expect(labels).toEqual(['Archive', 'Flag', 'Delete', 'Mark read'])
+  await expect(row.locator('time')).toBeHidden() // the buttons take the date's place
+  await row.getByRole('button', { name: 'Flag', exact: true }).click()
+  await expect(row.getByLabel('Flagged')).toBeVisible()
+  await row.getByRole('button', { name: 'Mark read' }).click()
+  await expect(row.locator('.unread-dot')).toHaveCount(0)
+  await page.getByText('Lines').click()
+  await expect(row).toHaveClass(/\bon\b/)
+  const tint = await row.locator('.thread-card').evaluate((el) => getComputedStyle(el).backgroundColor)
+  expect(tint).toBe('rgb(226, 236, 249)') // a tint the words stay dark on, not a block of blue
+  await row.hover()
+  await row.getByRole('button', { name: 'Archive' }).click()
+  await expect(row).toHaveCount(0)
+})
+
+test('the bar under a selection takes every row, lets go of them, and Trash can be emptied', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Alpha', 'Beta', 'Gamma'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  await expect(page.locator('.threads .thread')).toHaveCount(3)
+  await page.getByLabel('Select Beta').check({ force: true })
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  await expect(bar.getByText('1 selected')).toBeVisible()
+  const [barBox, listBox] = [await bar.boundingBox(), await page.locator('section.list').boundingBox()]
+  expect((barBox?.y ?? 0) + (barBox?.height ?? 0)).toBeGreaterThan((listBox?.y ?? 0) + (listBox?.height ?? 0) - 40) // it floats at the foot
+  await bar.getByRole('button', { name: 'Select All (3)' }).click()
+  await expect(bar.getByText('3 selected')).toBeVisible()
+  await bar.getByRole('button', { name: 'Cancel' }).click()
+  await expect(bar).toHaveCount(0)
+  await expect(page.locator('.threads .thread')).toHaveCount(3)
+  await page.getByLabel('Select Alpha').check({ force: true })
+  await page.getByLabel('Select Beta').check({ force: true })
+  await bar.getByRole('button', { name: 'Delete selected' }).click()
+  await expect(page.getByText('Moved to Trash: 2 threads')).toBeVisible()
+  await expect.poll(() => gmail.box('[Gmail]/Trash').mails.length, { timeout: 20_000 }).toBe(2) // once Undo has had its chance
+  await page.getByRole('button', { name: 'Trash', exact: true }).click()
+  await expect(page.getByText('2 threads in Trash')).toBeVisible(LONG)
+  await page.getByRole('button', { name: 'Empty Trash now' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Empty Trash' }).click()
+  await expect(page.getByText('Nothing here')).toBeVisible()
+  await expect.poll(() => gmail.box('[Gmail]/Trash').mails.length, { timeout: 20_000 }).toBe(0)
+  expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length).toBe(1)
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -254,7 +315,7 @@ test('snoozing takes a thread away until its time, and it can be found meanwhile
   await expect(page.locator('.threads').getByText('Later please')).toBeVisible()
 })
 
-test('stars and labels reach Gmail', async () => {
+test('flags and labels reach Gmail', async () => {
   run = await launch()
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Keep this' }), { arrived: earlier(5) })

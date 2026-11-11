@@ -1,14 +1,14 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Archive, Check, CheckSquare, Clock, Inbox, Mail, MailOpen, OctagonAlert, Search as SearchIcon, SearchX, Star, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Search as SearchIcon, SearchX, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
 } from '@shared/types'
 import { cleanQuote, Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
-import { dayGroup, longTime, problem, textToHtml } from './format'
-import { BatchStrip, DraftRow, Row, Subscriptions } from './List'
+import { longTime, problem, textToHtml } from './format'
+import { BatchStrip, DraftRow, QUICK_ACTIONS, Row, Subscriptions } from './List'
 import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
@@ -30,7 +30,9 @@ const PAGE = 200
 
 const keyOf = (ref: ThreadRef): string => `${ref.account}/${ref.thread}`
 
-const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 384 }
+const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+/** More than Trash is ever likely to hold on this laptop. */
+const WHOLE_LIST = 20_000
 
 const savedWidth = (): number => {
   try {
@@ -378,6 +380,19 @@ export function App(): ReactNode {
     }
   }
 
+  /** Everything in Trash, not only the rows read so far. */
+  const emptyTrash = async (): Promise<void> => {
+    if (active.kind !== 'trash') return
+    try {
+      const all = (await window.mail.list(active, WHOLE_LIST)).map((r) => ({ account: r.account, thread: r.thread }))
+      if (all.length === 0) return
+      const note = `${all.length === 1 ? '1 thread is' : `${all.length} threads are`} deleted for good. This can't be got back once Undo has gone.`
+      if (await ask({ title: 'Empty Trash?', note, action: 'Empty Trash', danger: true })) void run(all, { kind: 'forever' }, 'Trash emptied')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
   const answer = async (message: number, reply: Rsvp): Promise<void> => {
     try {
       const { id, when } = await window.mail.rsvp(message, reply)
@@ -461,9 +476,9 @@ export function App(): ReactNode {
       row.unread > 0
         ? { label: 'Mark as read', icon: MailOpen, run: () => void run(refs, { kind: 'read' }) }
         : { label: 'Mark as unread', icon: Mail, run: () => void run(refs, { kind: 'unread' }) },
-      { label: row.starred ? 'Remove star' : 'Star', icon: Star, run: () => void run(refs, { kind: row.starred ? 'unstar' : 'star' }) },
+      { label: row.starred ? 'Remove flag' : 'Flag', icon: Flag, run: () => void run(refs, { kind: row.starred ? 'unstar' : 'star' }) },
       'gap',
-      { label: 'Archive', icon: Archive, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
+      { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
       { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
       { label: 'Report spam', icon: OctagonAlert, run: () => void run(refs, { kind: 'spam' }, 'Reported as spam') },
       { label: 'Delete', icon: Trash2, danger: true, run: () => void run(refs, { kind: 'trash' }, 'Moved to Trash') },
@@ -587,10 +602,6 @@ export function App(): ReactNode {
   const single = profile?.layout === 'list'
   const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', profile?.density === 'compact' ? 'compact' : ''].join(' ')
   const emptyList = showDrafts ? shownDrafts.length === 0 : !showSubscriptions && rows !== null && rows.length === 0
-  // Headings by day, where the list runs newest first.
-  const byDay = !showDrafts && !showSubscriptions && active.kind !== 'assistant' && active.kind !== 'snoozed'
-  const now = Date.now()
-  let lastDay = ''
   const otherCount = overview?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
   const batching = (profile?.batch.times.length ?? 0) > 0
@@ -611,30 +622,7 @@ export function App(): ReactNode {
         </header>
         <div className="panes">
           <section className="list" aria-label="Threads">
-            {anyPicked ? (
-              <div className="bulk" role="toolbar" aria-label="Selected threads">
-                <button className="link" onClick={() => setPicked(new Set())}>{picked.size} selected</button>
-                <button className="link" onClick={() => setPicked(new Set(list.map(keyOf)))}>All</button>
-                <span className="grow" />
-                {bins ? (
-                  <>
-                    <IconButton icon={Undo2} label="Restore selected" click={() => void run(refs, { kind: 'inbox' }, 'Moved to Inbox')} />
-                    <IconButton icon={Trash2} label="Delete selected forever" click={() => forever(refs)} />
-                  </>
-                ) : (
-                  <>
-                    <IconButton icon={Archive} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
-                    <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
-                  </>
-                )}
-                <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
-                <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
-                <div className="anchor">
-                  <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
-                  {bulkSnooze && <TimeMenu title="Snooze until" right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
-                </div>
-              </div>
-            ) : split && active.kind === 'inbox' && (
+            {split && active.kind === 'inbox' && (
               <div className="tabs" role="group" aria-label="Focused and Other">
                 <button className={active.focus !== 'other' ? 'tab on' : 'tab'} aria-pressed={active.focus !== 'other'}
                   onClick={() => go({ kind: 'inbox', ...inboxScope })}>Focused</button>
@@ -651,7 +639,14 @@ export function App(): ReactNode {
                 <span className="bar"><i style={{ width: `${Math.round((done / total) * 100)}%` }} /></span>
               </div>
             )}
-            <div className="threads" onScroll={(e) => {
+            {active.kind === 'trash' && list.length > 0 && (
+              <div className="strip">
+                <span className="muted">{list.length >= limit ? `${list.length}+` : list.length} {list.length === 1 ? 'thread' : 'threads'} in Trash</span>
+                <span aria-hidden="true" className="muted">·</span>
+                <button className="link" onClick={() => void emptyTrash()}>Empty Trash now</button>
+              </div>
+            )}
+            <div className={anyPicked ? 'threads picking' : 'threads'} onScroll={(e) => {
               const box = e.currentTarget
               if (list.length >= limit && box.scrollTop + box.clientHeight > box.scrollHeight - 300) setLimit(limit + PAGE)
             }}>
@@ -662,27 +657,19 @@ export function App(): ReactNode {
               {showSubscriptions && (
                 <Subscriptions version={version} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
               )}
-              {!showDrafts && !showSubscriptions && list.map((row, index) => {
-                const day = byDay ? dayGroup(row.date, now) : ''
-                const heading = day !== lastDay ? day : ''
-                lastDay = day
-                return (
-                  <Fragment key={keyOf(row)}>
-                    {heading && <h2 className="list-section">{heading}</h2>}
-                    <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
-                      account={accounts.find((a) => a.email === row.account)}
-                      on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                      swipeLeft={profile?.swipeLeft ?? 'none'} swipeRight={profile?.swipeRight ?? 'none'}
-                      open={() => setOpen({ account: row.account, thread: row.thread })}
-                      pick={(event) => togglePick(row, index, event.shiftKey)}
-                      act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
-                      snooze={() => snoozeRow(row)}
-                      swiped={(action) => swiped(row, action)}
-                      menu={(x, y) => setMenu({ x, y, row })}
-                      drag={(event) => dragged(event, row)} />
-                  </Fragment>
-                )
-              })}
+              {!showDrafts && !showSubscriptions && list.map((row, index) => (
+                <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
+                  account={accounts.find((a) => a.email === row.account)}
+                  on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
+                  swipeLeft={profile?.swipeLeft ?? 'none'} swipeRight={profile?.swipeRight ?? 'none'} quick={QUICK_ACTIONS}
+                  open={() => setOpen({ account: row.account, thread: row.thread })}
+                  pick={(event) => togglePick(row, index, event.shiftKey)}
+                  act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
+                  snooze={() => snoozeRow(row)}
+                  swiped={(action) => swiped(row, action)}
+                  menu={(x, y) => setMenu({ x, y, row })}
+                  drag={(event) => dragged(event, row)} />
+              ))}
               {(rows === null || (firstRead && list.length === 0)) && !showDrafts && !showSubscriptions && <Skeleton />}
               {emptyList && !firstRead && (
                 searching ? <Empty icon={SearchX} title="Nothing found" note="Search covers the mail kept on this laptop." />
@@ -690,6 +677,38 @@ export function App(): ReactNode {
                   : <Empty icon={Inbox} title="Nothing here" />
               )}
             </div>
+            {anyPicked && (
+              <div className="bulk" role="toolbar" aria-label="Selected threads">
+                <div className="bulk-top">
+                  <strong className="grow">{picked.size} selected</strong>
+                  <button className="bulk-pill" onClick={() => setPicked(new Set(list.map(keyOf)))}>Select All ({list.length})</button>
+                  <button className="bulk-pill" onClick={() => setPicked(new Set())}>Cancel</button>
+                </div>
+                <div className="bulk-tools">
+                  {bins ? (
+                    <>
+                      <IconButton icon={Undo2} label="Restore selected" click={() => void run(refs, { kind: 'inbox' }, 'Moved to Inbox')} />
+                      <IconButton icon={Trash2} label="Delete selected forever" click={() => forever(refs)} />
+                    </>
+                  ) : (
+                    <>
+                      <IconButton icon={Check} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
+                      <IconButton icon={OctagonAlert} label="Report selected as spam" click={() => void run(refs, { kind: 'spam' }, 'Reported as spam')} />
+                      <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
+                      <IconButton icon={Flag} label="Flag selected" click={() => void run(refs, { kind: 'star' })} />
+                    </>
+                  )}
+                  <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
+                  <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
+                  {!bins && (
+                    <div className="anchor">
+                      <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
+                      {bulkSnooze && <TimeMenu title="Snooze until" up right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
           <div className="resize" aria-hidden="true" onPointerDown={resize} />
           <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} own={own}
