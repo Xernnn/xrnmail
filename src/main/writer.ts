@@ -27,6 +27,16 @@ export class Refused extends Error {}
 
 const FOLDER_NAMES: Partial<Record<MailboxRole, string>> = { archive: 'Archive', trash: 'Trash', junk: 'Junk', sent: 'Sent' }
 
+/** Servers cap how long a command line can be (RFC 7162 asks clients to stay under 8192 octets), and
+ *  "Delete all" from a busy sender names thousands of messages. 500 UIDs fit in about 5.5 KB. */
+const UIDS_PER_COMMAND = 500
+
+/** Where several moves to the same folder left things, as one. */
+function together(a: Moved | null, b: Moved | null): Moved | null {
+  if (!a || !b) return a ?? b
+  return { to: b.to, map: a.map || b.map ? new Map([...(a.map ?? []), ...(b.map ?? [])]) : null }
+}
+
 export class ImapWriter implements MailWriter {
   private client: ImapFlow
   private boxes: MailboxRef[] = []
@@ -65,11 +75,14 @@ export class ImapWriter implements MailWriter {
     const target = await this.destination(from, action)
     const lock = await this.client.getMailboxLock(from.path)
     try {
-      const range = uids.join(',')
-      if (target) return await this.move(from, range, target)
-      // imapflow answers false, not an error, when a command fails, so every answer is checked.
-      if (!(await this.store(from, range, action))) throw new Refused(action.kind)
-      return null
+      let moved: Moved | null = null
+      for (let at = 0; at < uids.length; at += UIDS_PER_COMMAND) {
+        const range = uids.slice(at, at + UIDS_PER_COMMAND).join(',')
+        if (target) moved = together(moved, await this.move(from, range, target))
+        // imapflow answers false, not an error, when a command fails, so every answer is checked.
+        else if (!(await this.store(from, range, action))) throw new Refused(action.kind)
+      }
+      return moved
     } finally {
       lock.release()
     }

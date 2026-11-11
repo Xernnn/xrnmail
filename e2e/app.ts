@@ -19,6 +19,10 @@ export interface Running {
   stop(): Promise<void>
 }
 
+/** E2E_HEADLESS=1 keeps the windows off the desktop. A tiling window manager also makes them too
+ *  narrow for three panes, which some tests need. */
+const HEADLESS = process.env['E2E_HEADLESS'] ? ['--ozone-platform=headless', '--ozone-override-screen-size=1920,1080'] : []
+
 /** The app on a throwaway profile, signed in to nothing, with links recorded and not opened. */
 export async function launch(options: { colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number] } = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
@@ -27,7 +31,7 @@ export async function launch(options: { colorScheme?: 'light' | 'dark'; gmail?: 
   const smtpPort = await smtp.listen()
   const data = mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
   const app = await _electron.launch({
-    args: ['.', '--no-sandbox'],
+    args: ['.', '--no-sandbox', ...HEADLESS],
     colorScheme: options.colorScheme ?? 'light',
     env: {
       ...process.env,

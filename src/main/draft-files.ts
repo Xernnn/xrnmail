@@ -27,6 +27,11 @@ export class DraftFiles {
     return { id, to: this.path(draft, { id }) }
   }
 
+  /** How big a file is, before any of it is copied. */
+  sizeOf(path: string): number {
+    return statSync(path).size
+  }
+
   fromDisk(draft: number, path: string, type = 'application/octet-stream'): DraftFile {
     const { id, to } = this.place(draft)
     copyFileSync(path, to)

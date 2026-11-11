@@ -976,11 +976,14 @@ export class MailService {
     this.deps.changed()
   }
 
-  private withFile(id: number, add: (draft: Draft) => Draft['files'][number]): Draft {
+  /** [size] is what the file is expected to add, so one that's too big is refused before it's copied. */
+  private withFile(id: number, add: (draft: Draft) => Draft['files'][number], size = 0): Draft {
     const draft = this.draftOrThrow(id)
+    const used = draft.files.reduce((sum, f) => sum + f.size, 0)
+    if (used + size > MAX_DRAFT_BYTES) throw new Error(TOO_BIG)
     const file = add(draft)
     const files = [...draft.files, file]
-    if (files.reduce((sum, f) => sum + f.size, 0) > MAX_DRAFT_BYTES) {
+    if (used + file.size > MAX_DRAFT_BYTES) {
       this.deps.files.remove(id, file)
       throw new Error(TOO_BIG)
     }
@@ -989,9 +992,10 @@ export class MailService {
     return this.draftOrThrow(id)
   }
 
-  /** Paths come from the system's file picker in the main process, never from the page. */
+  /** Paths come from the system's file picker in the main process, never from the page. Each is
+   *  measured first: copying a big one whole, on this process, only to refuse it, held everything up. */
   addFilesFromDisk(id: number, paths: string[]): Draft {
-    paths.forEach((path) => this.withFile(id, () => this.deps.files.fromDisk(id, path)))
+    paths.forEach((path) => this.withFile(id, () => this.deps.files.fromDisk(id, path), this.deps.files.sizeOf(path)))
     return this.draftOrThrow(id)
   }
 

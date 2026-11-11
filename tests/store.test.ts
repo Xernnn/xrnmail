@@ -1,8 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { canOpenDirectly, isPublicHttps, safeFileName } from '@main/safe-url'
 import { searchParts, Store } from '@main/store'
 import { forwardSubject, parseMailto, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
@@ -53,12 +53,12 @@ describe('an older file', () => {
 
   describe('from the version before folders', () => {
     const ME = 'me@example.com'
-    const upgraded = (messages: Parameters<typeof secondVersionProfile>[1]['messages'], pending: Parameters<typeof secondVersionProfile>[1]['pending'] = []): { store: Store; done(): void } => {
+    const upgraded = (messages: Parameters<typeof secondVersionProfile>[1]['messages'], pending: Parameters<typeof secondVersionProfile>[1]['pending'] = []): { store: Store; path: string; done(): void } => {
       const dir = folder()
       const path = join(dir, 'mail.sqlite')
       secondVersionProfile(path, { account: ME, uidValidity: '5', modseq: '120', holdFrom: 50, messages, pending })
       const store = new Store(path)
-      return { store, done: () => { store.close(); rmSync(dir, { recursive: true, force: true }) } }
+      return { store, path, done: () => { store.close(); rmSync(dir, { recursive: true, force: true }) } }
     }
 
     it('keeps every row, its id, and search', () => {
@@ -104,6 +104,32 @@ describe('an older file', () => {
     it('lets go of a change to a message that has gone', () => {
       const { store, done } = upgraded([{ uid: 7, subject: 'One' }], [{ action: { kind: 'star' }, uids: [999] }])
       expect(store.dueActions(ME, 1000)[0]).toMatchObject({ ids: [], before: [] })
+      done()
+    })
+
+    // They run on every change, and what they read sits after the bodies in each row: answered from
+    // the table, every count walked every message's overflow pages.
+    it('answers the counts beside the list from indexes, without reading a message', () => {
+      const { store, path, done } = upgraded([
+        { uid: 7, subject: 'Held', arrived: 900, releaseAt: 5000 },
+        { uid: 8, subject: 'Filed', labels: ['\\Inbox', 'Work'] },
+        { uid: 9, subject: 'Unread' }
+      ])
+      const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare')
+      expect([store.heldCount(1000), store.nextRelease(1000), store.spamCount(1000)]).toEqual([1, 5000, 0])
+      expect(store.labelCounts(1000)).toEqual([{ account: ME, label: 'Work', count: 1 }])
+      expect(store.assistantCounts(1000)).toEqual({ packages: 0, travel: 0, money: 0, events: 0 })
+      expect([store.unreadThreads(1000, 'm.account = ?', ME), store.unreadThreads(1000, 'm.focus = 0')]).toEqual([2, 0])
+      const statements = prepare.mock.calls.map(([sql]) => sql)
+      prepare.mockRestore()
+      const db = new DatabaseSync(path)
+      for (const sql of statements) {
+        const reads = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[])
+          .map((step) => step.detail).filter((detail) => /^(SCAN|SEARCH) (messages|m)\b/.test(detail))
+        expect(reads, sql).not.toEqual([])
+        for (const read of reads) expect(read, sql).toContain('USING COVERING INDEX')
+      }
+      db.close()
       done()
     })
 
@@ -190,6 +216,28 @@ describe('what a stranger chooses', () => {
     expect(safeFileName('.bashrc')).toBe('bashrc')
     expect(safeFileName('')).toBe('attachment')
     expect(safeFileName('a\u0000b\r\n.txt')).toBe('ab.txt')
+  })
+
+  // It was cut to 200 characters, and 125 CJK characters are 375 bytes, past the 255 a Linux file
+  // name can have, so opening such an attachment failed with ENAMETOOLONG.
+  it('a long name is cut to fit a file name, in bytes, keeping its end', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xrnmail-names-'))
+    for (const long of [`${'報告書'.repeat(40)}.pdf`, `${'😀'.repeat(60)}.txt`, `${'a'.repeat(300)}.txt`]) {
+      const name = safeFileName(long)
+      expect(Buffer.byteLength(name), long).toBeLessThanOrEqual(200)
+      expect(Buffer.from(name).toString(), long).toBe(name) // whole characters only
+      expect(long.endsWith(name), long).toBe(true)
+      writeFileSync(join(dir, `12345678-${name}`), 'x') // as opening one names it
+    }
+    expect(safeFileName(`${'.'.repeat(250)}x.txt`)).toBe('x.txt')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  // U+202E shows the rest of a name backwards, so "photo\u202Egpj.exe" looked like photoexe.jpg.
+  it('a name cannot turn itself around to show a false type', () => {
+    expect(safeFileName('photo\u202Egpj.exe')).toBe('photogpj.exe')
+    expect(safeFileName('\u202A\u202B\u202C\u202D\u2066a\u2067b\u2068c\u2069.pdf')).toBe('abc.pdf')
+    expect(safeFileName('\u202E')).toBe('attachment')
   })
 })
 

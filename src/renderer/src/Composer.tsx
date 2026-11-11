@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
+import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
 import { Avatar } from './Common'
@@ -142,6 +143,7 @@ export function Composer(props: {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gone = useRef(false)
   const selection = useRef<Range | null>(null)
+  const ownDrag = useRef(false)
 
   const collect = useCallback((): DraftEdit => ({
     account, from, to, cc, bcc, subject, quote,
@@ -274,6 +276,9 @@ export function Composer(props: {
       setFiles((await window.mail.pickFiles(draft.id)).files)
     } catch (e) {
       setError(problem(e))
+      // Files picked before the one that was refused are on the draft, so they have to be listed.
+      const kept = (await window.mail.drafts().catch(() => [])).find((d) => d.id === draft.id)
+      if (kept) setFiles(kept.files)
     }
   }
 
@@ -292,6 +297,20 @@ export function Composer(props: {
     // As text: what's on the clipboard may well have come from a stranger's email.
     event.preventDefault()
     document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
+  }
+
+  /** As text too, where it's dropped, so a selection dragged out of a web page or a message can't
+   *  bring its markup. Words dragged within the message stay put: the composer takes every drag for
+   *  its files, which leaves Chromium's own drop, and with it moving them, off. */
+  const dropText = (event: DragEvent): void => {
+    if (event.dataTransfer.files.length > 0) return // the composer attaches them
+    event.preventDefault()
+    const text = event.dataTransfer.getData('text/plain')
+    const at = document.caretPositionFromPoint(event.clientX, event.clientY)
+    if (ownDrag.current || !text || !at || !editor.current?.contains(at.offsetNode)) return
+    editor.current.focus()
+    window.getSelection()?.setPosition(at.offsetNode, at.offset)
+    document.execCommand('insertText', false, text)
   }
 
   const signature = props.settings?.identities[account]?.signature.trim()
@@ -338,7 +357,8 @@ export function Composer(props: {
       </label>
       <div className="compose-scroll">
         <div ref={editor} className="editor" role="textbox" aria-multiline="true" aria-label="Message" contentEditable
-          suppressContentEditableWarning onInput={soon} onPaste={paste} />
+          suppressContentEditableWarning onInput={soon} onPaste={paste} onDrop={dropText}
+          onDragStart={() => (ownDrag.current = true)} onDragEnd={() => (ownDrag.current = false)} />
         {signature && <p className="signature muted">-- <br />{signature}</p>}
         {quote && (
           <div className="quote">
@@ -354,8 +374,8 @@ export function Composer(props: {
           {files.map((file) => (
             <li key={file.id}>
               <Paperclip size={14} aria-hidden="true" />
-              <span className="file-name">{file.name}</span> <span className="muted">{fileSize(file.size)}</span>
-              <button type="button" className="icon small" aria-label={`Remove ${file.name}`}
+              <span className="file-name">{plainName(file.name)}</span> <span className="muted">{fileSize(file.size)}</span>
+              <button type="button" className="icon small" aria-label={`Remove ${plainName(file.name)}`}
                 onClick={() => void window.mail.removeFile(draft.id, file.id).then((next) => setFiles(next.files))}>
                 <X size={13} aria-hidden="true" />
               </button>

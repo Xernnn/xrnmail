@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { launch, ME, signIn, type Running } from './app'
 
@@ -132,6 +134,36 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
   expect(gmail.mails.find((m) => m.raw.toString().includes('Newest'))?.labels).toContain('\\Inbox')
 })
 
+// The refresh that follows a change waits 150 ms, and quitting can close the store and destroy the
+// tray before it comes. When the app took longer than that to go, the refresh still ran, and with
+// unread mail shown it set the image of the destroyed tray, which throws in the main process.
+test('nothing refreshes once quitting has closed the store', async () => {
+  run = await launch()
+  const { page, app } = run
+  await page.getByLabel('Email address').waitFor() // no account, so closing has nothing to wait for
+  const folder = mkdtempSync(join(tmpdir(), 'xrnmail-quit-'))
+  const log = join(folder, 'log.txt')
+  await app.evaluate(({ app: electron, BrowserWindow }, path) => {
+    const { appendFileSync } = process.getBuiltinModule('node:fs')
+    const shown = BrowserWindow.getAllWindows()[0]!
+    const send = shown.webContents.send.bind(shown.webContents)
+    shown.webContents.send = (channel: string, ...args: unknown[]) => {
+      appendFileSync(path, `${channel}\n`)
+      send(channel, ...args)
+    }
+    // The second is the one that closes the store; this listener runs after the app's own.
+    let quits = 0
+    electron.on('before-quit', () => { if (++quits === 2) appendFileSync(path, 'closed\n') })
+    // A window slow to close, as a busy one can be, keeps the app going past the 150 ms.
+    shown.on('close', () => { const until = Date.now() + 300; while (Date.now() < until); })
+  }, log)
+  await page.evaluate(() => window.mail.unsnooze([])) // a change, so a refresh is on its way
+  await run.stop()
+  const events = readFileSync(log, 'utf8').trim().split('\n')
+  expect(events.slice(events.indexOf('closed'))).toEqual(['closed'])
+  rmSync(folder, { recursive: true, force: true })
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -222,6 +254,21 @@ test('attachments: saved exactly, opened only when safe', async () => {
   expect(await run.openedFiles()).toHaveLength(1)
 })
 
+// U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('an attachment name cannot turn itself around to show a false type', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Holiday', attachment: { name: 'photo\u202Egpj.exe', type: 'application/octet-stream', body: 'MZ' } }), { arrived: earlier(5) })
+  await signIn(run)
+  const row = page.locator('.threads .thread', { hasText: 'Holiday' })
+  await expect(row.getByLabel('Has attachment: photogpj.exe')).toBeVisible()
+  await row.click()
+  await expect(page.getByRole('list', { name: 'Attachments' }).locator('.file-name')).toHaveText(['photogpj.exe'])
+  await expect(page.getByRole('button', { name: 'Save photogpj.exe' })).toBeVisible()
+  await page.keyboard.press('f') // forwarding takes the file into a draft
+  await expect(composer(page).locator('.file-name')).toHaveText(['photogpj.exe'], LONG)
+})
+
 test('a file only enters a draft as bytes: the page cannot name a path', async () => {
   run = await launch()
   const { page, smtp } = run
@@ -236,6 +283,58 @@ test('a file only enters a draft as bytes: the page cannot name a path', async (
   expect(sent).toBe('passwd')
   await expect.poll(() => smtp.sent.length, LONG).toBe(1)
   expect(smtp.sent[0]?.raw).toContain(Buffer.from('dropped').toString('base64'))
+})
+
+// The first went onto the draft and the composer only listed files after a success, so it would
+// have gone out without being seen.
+test('picking files: one too many is refused, and what did go on is listed', async () => {
+  run = await launch()
+  const { page, app } = run
+  await signIn(run)
+  const folder = join(run.savedTo, '..')
+  const small = join(folder, 'notes.txt')
+  const big = join(folder, 'disk.iso')
+  writeFileSync(small, 'notes')
+  writeFileSync(big, '')
+  truncateSync(big, 20 * 1024 * 1024)
+  await app.evaluate(({ dialog }, paths) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: paths })) as typeof dialog.showOpenDialog
+  }, [small, big])
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const box = composer(page)
+  await box.getByRole('button', { name: 'Attach files' }).click()
+  await expect(box.getByText('18 MB')).toBeVisible()
+  await expect(box.getByRole('button', { name: 'Remove notes.txt' })).toBeVisible()
+  await expect(box.locator('.file-name')).toHaveText(['notes.txt'])
+})
+
+// A selection dragged out of a web page or a message carries its HTML, and the editor took it as it
+// was, though it holds only what is typed here and a paste comes in as text.
+test('what is dropped into the message comes in as plain text', async () => {
+  run = await launch()
+  const { page, app } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  const editor = composer(page).getByLabel('Message')
+  const place = await editor.boundingBox()
+  const cdp = await app.context().newCDPSession(page)
+  const data = {
+    items: [{ mimeType: 'text/html', data: '<b>Bold</b> <a href="https://tracker.example/">words</a>' }, { mimeType: 'text/plain', data: 'Bold words' }],
+    dragOperationsMask: 1
+  }
+  const drag = async (dragged: typeof data | { items: never[]; files: string[]; dragOperationsMask: number }): Promise<void> => {
+    for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+      await cdp.send('Input.dispatchDragEvent', { type, x: (place?.x ?? 0) + 20, y: (place?.y ?? 0) + 8, data: dragged })
+    }
+  }
+  await drag(data)
+  await expect(editor).toHaveText('Bold words')
+  expect(await editor.innerHTML()).not.toMatch(/<b|<a/)
+  const file = join(run.savedTo, '..', 'plan.txt')
+  writeFileSync(file, 'plan')
+  await drag({ items: [], files: [file], dragOperationsMask: 1 }) // files dropped there are still attached
+  await expect(composer(page).locator('.file-name')).toHaveText(['plan.txt'])
+  await expect(editor).toHaveText('Bold words')
 })
 
 test('unsubscribing with one click opens nothing', async () => {

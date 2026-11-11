@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
@@ -797,6 +797,19 @@ describe('sending', () => {
   it('refuses attachments over what Gmail would take', async () => {
     const draft = await write()
     expect(() => service.addFileBytes(draft.id, 'big.bin', 'application/octet-stream', Buffer.alloc(20 * 1024 * 1024))).toThrow('18 MB')
+    expect(service.drafts()[0]?.files).toEqual([])
+  })
+
+  // It was copied whole into the profile, on the main process, and only then found too big.
+  it('measures a picked file before copying it in', async () => {
+    const draft = await write()
+    const big = join(folder, 'disk.iso')
+    writeFileSync(big, '')
+    truncateSync(big, 20 * 1024 * 1024)
+    const copy = vi.spyOn(DraftFiles.prototype, 'fromDisk')
+    expect(() => service.addFilesFromDisk(draft.id, [big])).toThrow('18 MB')
+    expect(copy).not.toHaveBeenCalled()
+    copy.mockRestore()
     expect(service.drafts()[0]?.files).toEqual([])
   })
 

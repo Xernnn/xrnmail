@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
+import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, CalendarRange, Clock, Mail, MailMinus, MailOpen, Package, Paperclip, Plane, Receipt, Star, Trash2, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, Subscription, SwipeAction, ThreadRow } from '@shared/types'
@@ -86,7 +87,7 @@ export function Row(props: {
   const names = peopleLine(row.people.length > 0 ? row.people : [{ name: row.fromName, address: row.fromAddress }], own)
   const unread = row.unread > 0
   const stateClass = `${on ? 'on' : ''} ${unread ? 'unread' : ''} ${picked ? 'picked' : ''}`
-  const files = row.file ? `Has attachment: ${row.file}${row.files > 1 ? ` and ${row.files - 1} more` : ''}` : 'Has attachment'
+  const files = row.file ? `Has attachment: ${plainName(row.file)}${row.files > 1 ? ` and ${row.files - 1} more` : ''}` : 'Has attachment'
 
   return (
     <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}

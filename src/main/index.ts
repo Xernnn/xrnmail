@@ -50,10 +50,12 @@ let tray: AppTray | null = null
 let changeTimer: NodeJS.Timeout | null = null
 /** Set once the app is really going, as opposed to the window closing to the tray. */
 let quitting = false
+/** Set once the store is closed on the way out: nothing refreshes after that. */
+let closed = false
 
 /** Many changes in a burst make one refresh. */
 function tellPage(): void {
-  if (changeTimer) return
+  if (changeTimer || closed) return
   changeTimer = setTimeout(() => {
     changeTimer = null
     window?.webContents.send('changed')
@@ -503,7 +505,11 @@ void app.whenReady().then(() => {
     if (finished) {
       clearInterval(syncing)
       clearInterval(ticking)
+      // A refresh still to come would read the closed store and set the destroyed tray's image.
+      closed = true
+      if (changeTimer) clearTimeout(changeTimer)
       tray?.destroy()
+      tray = null
       store.close()
       if (openedFiles) rmSync(openedFiles, { recursive: true, force: true })
       return

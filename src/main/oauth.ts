@@ -58,7 +58,11 @@ export async function startDeviceCode(post: Post, clientId: string, now: number)
   }
 }
 
-/** Null while the person hasn't finished. Throws once it's clear they won't. */
+/** RFC 8628: each slow_down adds this much to the wait between polls, from then on. */
+const SLOWER_MS = 5000
+
+/** Null while the person hasn't finished, and [code]'s interval grows when Microsoft asks for
+ *  fewer polls. Throws once it's clear they won't finish. */
 export async function pollDeviceCode(post: Post, clientId: string, code: DeviceCode, now: number): Promise<Tokens | null> {
   const { ok, body } = await form(post, `${AUTHORITY}/token`, {
     client_id: clientId,
@@ -67,6 +71,7 @@ export async function pollDeviceCode(post: Post, clientId: string, code: DeviceC
   })
   if (ok && body['access_token']) return tokensFrom(body, now)
   const error = String(body['error'] ?? '')
+  if (error === 'slow_down') code.intervalMs += SLOWER_MS
   if (error === 'authorization_pending' || error === 'slow_down') return null
   throw new Error(error === 'authorization_declined' ? 'The sign-in was declined.' : 'The sign-in code ran out. Try again.')
 }

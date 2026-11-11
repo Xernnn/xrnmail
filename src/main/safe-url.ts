@@ -1,3 +1,5 @@
+import { plainName } from '@shared/names'
+
 /** What may be handed to the operating system. A link in an email can say anything, and
  *  shell.openExternal launches whatever handles the scheme, including file: and smb:. */
 const ALLOWED = new Set(['https:', 'http:', 'mailto:'])
@@ -51,10 +53,21 @@ export function canOpenDirectly(name: string): boolean {
   return extension !== undefined && OPENABLE.has(extension)
 }
 
-/** A name fit to suggest for saving: a stranger wrote it. */
+/** Linux takes 255 bytes in a file name, and opening an attachment puts 9 more in front. */
+const NAME_BYTES = 200
+
+/** A name fit to suggest for saving: a stranger wrote it. A long one keeps its end, where its type
+ *  is, cut by bytes on a character boundary. */
 export function safeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? ''
-  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '').replace(/^\.+/, '').trim().slice(-200)
+  let kept = ''
+  let bytes = 0
+  for (const char of [...plainName(base).replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '')].reverse()) {
+    bytes += Buffer.byteLength(char)
+    if (bytes > NAME_BYTES) break
+    kept = char + kept
+  }
+  const clean = kept.replace(/^\.+/, '').trim()
   return clean || 'attachment'
 }
 
