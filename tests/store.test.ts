@@ -179,6 +179,8 @@ describe('search', () => {
     expect(searchParts('lich thi')).toEqual({ match: '"lich"* "thi"*', filters: [], params: [] })
     expect(searchParts('from:ada subject:tax')).toEqual({ match: 'sender : "ada"* subject : "tax"*', filters: [], params: [] })
     expect(searchParts('has:attachment is:unread').filters).toEqual(['has_attachment = 1', 'seen = 0'])
+    expect(searchParts('is:flagged').filters).toEqual(['flagged = 1']) // what the app calls a star now
+    expect(searchParts('is:starred').filters).toEqual(['flagged = 1'])
   })
 
   it('reads who it went to and when', () => {

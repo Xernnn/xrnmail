@@ -252,6 +252,7 @@ const SEARCH_FLAGS: Record<string, string> = {
   'has:attachment': 'has_attachment = 1',
   'is:unread': 'seen = 0',
   'is:read': 'seen = 1',
+  'is:flagged': 'flagged = 1',
   'is:starred': 'flagged = 1',
   'in:inbox': 'in_inbox = 1'
 }
