@@ -156,6 +156,8 @@ export interface ThreadRow {
   files: number
   /** The names of its first few files, for the cards under a row. */
   cards: string[]
+  /** Kept under Pinned, on this laptop. */
+  pinned: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -213,6 +215,8 @@ export interface MessageView {
   warnings: SenderWarning[]
   /** Where replies go, when it's somewhere else. */
   replyTo: Address[]
+  /** Its thread is kept under Pinned. */
+  pinned: boolean
 }
 
 export interface LabelCount {
@@ -235,7 +239,7 @@ export interface Overview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -343,6 +347,8 @@ export interface MailApi {
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
+  /** Keeps threads under Pinned, or lets them go. It's kept on this laptop: mail servers have no such mark. */
+  pin(targets: ThreadRef[], on: boolean): Promise<void>
   block(address: string): Promise<void>
   unsubscribe(message: number): Promise<UnsubscribeResult>
   subscriptions(): Promise<Subscription[]>

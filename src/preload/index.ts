@@ -27,6 +27,7 @@ const api: MailApi = {
   undo: (token) => call('undo', token),
   snooze: (targets, until) => call('snooze', targets, until),
   unsnooze: (targets) => call('unsnooze', targets),
+  pin: (targets, on) => call('pin', targets, on),
   block: (address) => call('block', address),
   unsubscribe: (message) => call('unsubscribe', message),
   subscriptions: () => call('subscriptions'),

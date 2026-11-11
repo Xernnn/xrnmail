@@ -58,6 +58,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     fill(gmail)
     await signIn(run)
     await page.getByText('Lịch thi cuối kỳ HK1').first().waitFor()
+    await page.locator('.threads').getByText('Order 48213 confirmed').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Pin', exact: true }).click()
     await new Promise((resolve) => setTimeout(resolve, 1200))
     gmail.add(rawMail({ subject: 'Held', text: 'Held.' }))
     gmail.add(rawMail({ subject: 'Held too', text: 'Held.' }))

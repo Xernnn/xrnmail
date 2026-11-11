@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 /** Each entry runs once, in order, and `PRAGMA user_version` records how far a file has come. The
  *  first is safe on a file made before versioning: everything in it is IF NOT EXISTS. Never edit an
  *  entry that has shipped; add one. */
-const MIGRATIONS = [
+export const MIGRATIONS = [
   SCHEMA,
   `
   ALTER TABLE messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT '[]';
@@ -209,6 +209,12 @@ const MIGRATIONS = [
   CREATE INDEX messages_unread ON messages(in_inbox, release_at, bin, focus, arrived, account, thread) WHERE seen = 0 AND hidden = 0;
   DROP INDEX messages_kind;
   CREATE INDEX messages_kind ON messages(kind, release_at, bin, hidden, seen, account, thread);
+  `,
+  // Pinned threads. A mail server has no mark for it, so like a snooze it's kept here by thread.
+  `
+  CREATE TABLE pins(
+    account TEXT NOT NULL, thread TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY(account, thread));
   `
 ]
 
@@ -247,6 +253,9 @@ const parseList = <T>(text: unknown): T[] => {
 /** FTS5 strips marks that decompose, and Vietnamese đ doesn't, so "doc" would miss "Đọc". Applied
  *  to the index and to what's typed. */
 export const foldForSearch = (text: string): string => text.replace(/[đĐ]/g, 'd')
+
+/** Whether a message's thread is pinned, for a query over `messages`. */
+const PINNED = 'EXISTS (SELECT 1 FROM pins p WHERE p.account = messages.account AND p.thread = messages.thread) AS pinned'
 
 /** How many of a thread's files a row of the list names. */
 export const ROW_CARDS = 3
@@ -478,6 +487,7 @@ export class Store {
     const drafts = this.all('SELECT id FROM drafts WHERE account = ?', account).map((r) => Number(r['id']))
     this.db.prepare('DELETE FROM drafts WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM snoozes WHERE account = ?').run(account)
+    this.db.prepare('DELETE FROM pins WHERE account = ?').run(account)
     return drafts
   }
 
@@ -490,20 +500,21 @@ export class Store {
     return old.length
   }
 
-  /** [where] picks messages; `outer` picks whole threads, by `t` and the snooze `s`. Held mail isn't
+  /** [where] picks messages; `outer` picks whole threads, by `t`, the snooze `s` and the pin `p`. Held mail isn't
    *  there at all and hidden mail is on its way out, so both stay out of every clause; [bin] says
    *  which of Trash, Spam or neither is being looked at. */
   private threadRows(where: string, params: SQLInputValue[], now: number, limit: number, options: ThreadOptions = {}): ThreadRow[] {
     const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0 } = options
     const rows = this.all(
       `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, t.latest AS date,
-              t.n, t.unread, t.attachment, t.starred, s.until AS snoozed
+              t.n, t.unread, t.attachment, t.starred, s.until AS snoozed, p.at AS pinned
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
                     SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred
              FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = ? AND ${where} GROUP BY account, thread) t
        JOIN messages m ON m.account = t.account AND m.thread = t.thread AND m.arrived = t.latest
                       AND m.release_at <= ? AND m.hidden = 0 AND m.bin = ?
        LEFT JOIN snoozes s ON s.account = t.account AND s.thread = t.thread
+       LEFT JOIN pins p ON p.account = t.account AND p.thread = t.thread
        WHERE ${outer}
        GROUP BY m.account, m.thread
        ORDER BY ${order} LIMIT ?`,
@@ -523,7 +534,8 @@ export class Store {
       attachment: Number(r['attachment']) > 0,
       starred: Number(r['starred']) > 0,
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
-      facts: factsFrom(r['facts'])
+      facts: factsFrom(r['facts']),
+      pinned: r['pinned'] != null
     }))
   }
 
@@ -578,6 +590,8 @@ export class Store {
         return this.threadRows(by('in_inbox = 1'), params, now, limit, { outer: away, outerParams: [now], order: 's.until ASC' })
       case 'starred':
         return this.threadRows(by('flagged = 1'), params, now, limit)
+      case 'pinned':
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM pins)'), params, now, limit)
       case 'sent':
         return this.threadRows(by(`EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')`), params, now, limit)
       case 'all':
@@ -635,7 +649,8 @@ export class Store {
   /** One thread, as one list of messages. A copy in two folders is still one message. */
   thread(account: string, thread: string, now: number, bins = false): MessageView[] {
     const rows = this.all(
-      `SELECT * FROM messages WHERE account = ? AND thread = ? AND release_at <= ? AND hidden = 0 AND ${bins ? 'bin > 0' : 'bin = 0'} ORDER BY arrived ASC`,
+      `SELECT *, ${PINNED}
+       FROM messages WHERE account = ? AND thread = ? AND release_at <= ? AND hidden = 0 AND ${bins ? 'bin > 0' : 'bin = 0'} ORDER BY arrived ASC`,
       account, thread, now
     )
     const seen = new Set<string>()
@@ -670,13 +685,14 @@ export class Store {
       focused: Number(r['focus']) > 0,
       facts: factsFrom(r['facts']),
       warnings: parseList<SenderWarning>(r['warnings']),
-      replyTo: parseList<Address>(r['reply_to'])
+      replyTo: parseList<Address>(r['reply_to']),
+      pinned: Number(r['pinned']) > 0
     }
   }
 
   /** One message, only if it may be seen now. */
   message(id: number, now: number): MessageDetail | null {
-    const r = this.one('SELECT * FROM messages WHERE id = ? AND release_at <= ? AND hidden = 0', id, now)
+    const r = this.one(`SELECT *, ${PINNED} FROM messages WHERE id = ? AND release_at <= ? AND hidden = 0`, id, now)
     if (!r) return null
     const unsubscribe = String(r['unsubscribe'])
     return {
@@ -829,6 +845,15 @@ export class Store {
 
   unsnooze(ref: ThreadRef): void {
     this.db.prepare('DELETE FROM snoozes WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
+  }
+
+  /** Pinning again keeps the first time. */
+  pin(ref: ThreadRef, at: number): void {
+    this.db.prepare('INSERT OR IGNORE INTO pins(account, thread, at) VALUES(?,?,?)').run(ref.account, ref.thread, at)
+  }
+
+  unpin(ref: ThreadRef): void {
+    this.db.prepare('DELETE FROM pins WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
   }
 
   /** How many snoozed threads came back in (after, upto]. */

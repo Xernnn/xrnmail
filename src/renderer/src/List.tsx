@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
+import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty, KIND_ICONS } from './Common'
 import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
@@ -148,6 +148,7 @@ export function Row(props: {
           <span className="thread-mid">
             <span className="subject">{row.subject || 'No subject'}</span>
             {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
+            {row.pinned && <Pin className="mark pin" size={13} aria-label="Pinned" />}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>

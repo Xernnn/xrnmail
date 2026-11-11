@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Search as SearchIcon, SearchX, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
@@ -50,7 +50,7 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 }
 
 const TITLES: Record<string, string> = {
-  today: 'Today', starred: 'Flagged', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
+  today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
   drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
 }
 /** With several accounts, these gather every account's. */
@@ -368,6 +368,16 @@ export function App(): ReactNode {
     }
   }
 
+  /** Pinned threads stay where they are; Pinned in the sidebar gathers them. */
+  const pin = async (refs: ThreadRef[], on: boolean): Promise<void> => {
+    try {
+      await window.mail.pin(refs, on)
+      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => void window.mail.pin(refs, !on) })
+    } catch (error) {
+      say(problem(error))
+    }
+  }
+
   const block = async (address: string): Promise<void> => {
     if (!await ask({ title: `Block ${address}?`, note: 'New mail from them goes straight to Trash.', action: 'Block', danger: true })) return
     await window.mail.block(address)
@@ -470,6 +480,7 @@ export function App(): ReactNode {
     else if (target.kind === 'trash') void run(refs, { kind: 'trash' }, 'Moved to Trash')
     else if (target.kind === 'spam') void run(refs, { kind: 'spam' }, 'Reported as spam')
     else if (target.kind === 'starred') void run(refs, { kind: 'star' })
+    else if (target.kind === 'pinned') void pin(refs, true)
     else if (target.kind === 'label') {
       const mine = refs.filter((ref) => ref.account === target.account)
       const labels = accounts?.find((a) => a.email === target.account)?.labels
@@ -492,6 +503,9 @@ export function App(): ReactNode {
         ? { label: 'Mark as read', icon: MailOpen, run: () => void run(refs, { kind: 'read' }) }
         : { label: 'Mark as unread', icon: Mail, run: () => void run(refs, { kind: 'unread' }) },
       { label: row.starred ? 'Remove flag' : 'Flag', icon: Flag, run: () => void run(refs, { kind: row.starred ? 'unstar' : 'star' }) },
+      row.pinned
+        ? { label: 'Unpin', icon: PinOff, run: () => void pin(refs, false) }
+        : { label: 'Pin', icon: Pin, run: () => void pin(refs, true) },
       'gap',
       { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
       { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
@@ -743,7 +757,7 @@ export function App(): ReactNode {
             reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
             rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
             trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
-            forever={() => forever(open ? [open] : [])} />
+            forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} />
         </div>
       </div>
       {composing && (

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeft, Ban, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Plane, Printer, Reply,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply,
   ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
@@ -355,6 +355,7 @@ export function Reader(props: {
   trust(address: string): void
   straight(address: string, on: boolean): void
   forever(): void
+  pin(on: boolean): void
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -390,6 +391,7 @@ export function Reader(props: {
 
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
   const starred = messages.some((m) => m.flagged)
+  const pinned = messages.some((m) => m.pinned)
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
   const person = messages.find((m) => m.from.address && m.from.address !== last.account)
   const sender = person?.from.address
@@ -450,6 +452,7 @@ export function Reader(props: {
           <IconButton icon={MoreVertical} label="More" click={() => setPanel(panel === 'more' ? null : 'more')} />
           {panel === 'more' && (
             <Popover right close={() => setPanel(null)}>
+              {!bins && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
               {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}

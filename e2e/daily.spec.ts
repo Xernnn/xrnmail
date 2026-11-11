@@ -262,7 +262,7 @@ test('the window: a title and search over list and reader, and the sidebar in it
     (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
   expect(await names(0)).toEqual(['Inbox'])
   expect(await names(1)).toEqual([ME, 'All Mail'])
-  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
+  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: `Folders of ${ME}` }).click()
   await expect(side.getByRole('button', { name: 'All Mail' })).toHaveCount(0)
@@ -486,6 +486,47 @@ test('attachments: saved exactly, opened only when safe', async () => {
 })
 
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('pinning a thread from the reader, a row\'s menu and by dragging, and Pinned in the sidebar', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Lease', 'Lunch', 'Ledger'].entries()) gmail.add(rawMail({ subject, text: "Details inside." }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const threads = page.locator('.threads')
+  const row = (subject: string): ReturnType<typeof threads.locator> => threads.locator('.thread', { hasText: subject })
+  const side = (name: string | RegExp): ReturnType<typeof page.getByRole> => page.locator('.sidebar').getByRole('button', { name, exact: true })
+  await threads.getByText('Lease').click()
+  await page.getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Pin thread' }).click()
+  await expect(row('Lease').getByLabel('Pinned')).toBeVisible() // marked where it is: it doesn't move
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lunch', 'Lease'])
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('button', { name: 'Unpin thread' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await threads.getByText('Lunch').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Pin', exact: true }).click()
+  await threads.getByText('Ledger').dragTo(side('Pinned'))
+  await expect(threads.getByLabel('Pinned')).toHaveCount(3)
+  await side('Pinned').click()
+  await expect(page.locator('.view-title')).toHaveText('Pinned')
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lunch', 'Lease'])
+  await threads.getByText('Lunch').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Unpin' }).click()
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lease'])
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lunch', 'Lease'])
+  await threads.getByText('Lease').click()
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Archive' }).click() // archived mail stays pinned
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lunch', 'Lease'])
+  await threads.getByText('Lease').click()
+  await page.getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Unpin thread' }).click()
+  await expect(threads.locator('.subject')).toHaveText(['Ledger', 'Lunch'])
+  await side(/^Inbox/).click()
+  await expect(row('Ledger').getByLabel('Pinned')).toBeVisible()
+  await expect(threads.getByText('Lease')).toHaveCount(0)
+  expect(gmail.mails.some((m) => m.flags.includes('\\Flagged'))).toBe(false) // a pin is not a flag
+})
+
 test('a thread\'s files show as cards under its row, and Appearance can take them away', async () => {
   run = await launch()
   const { page, gmail } = run

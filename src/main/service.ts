@@ -757,6 +757,13 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
+  pin(targets: ThreadRef[], on: boolean): void {
+    const now = this.deps.now()
+    targets.forEach((ref) => (on ? this.store.pin(ref, now) : this.store.unpin(ref)))
+    this.deps.changed()
+  }
+
   overview(): Overview {
     const now = this.deps.now()
     return {

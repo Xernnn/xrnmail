@@ -949,6 +949,43 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'all' }).map((row) => row.subject).sort()).toEqual(['Keep in the inbox', 'Mine', 'Put away'])
   })
 
+  it('Pinned gathers pinned threads from wherever they are, and tells the server nothing', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep', 9, 0)
+    await arrive('Other', 9, 5)
+    const before = JSON.stringify(gmail.mails.map((m) => [m.flags, m.labels]))
+    service.pin([ref('Keep')], true)
+    service.pin([ref('Keep')], true) // twice is once
+    await service.syncAll()
+    expect(JSON.stringify(gmail.mails.map((m) => [m.flags, m.labels]))).toBe(before)
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep'])
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.pinned])).toEqual([['Other', false], ['Keep', true]]) // it stays in its place
+    expect(service.thread(ME, ref('Keep').thread).map((m) => m.pinned)).toEqual([true])
+    expect(service.thread(ME, ref('Other').thread).map((m) => m.pinned)).toEqual([false])
+    expect(service.list({ kind: 'pinned', account: 'someone@else.example' })).toEqual([])
+    const kept = ref('Keep')
+    await service.act([kept], { kind: 'archive' })
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep']) // archived, still pinned
+    await service.act([kept], { kind: 'trash' })
+    expect(service.list({ kind: 'pinned' })).toEqual([]) // what's in Trash is in Trash
+    await service.act([kept], { kind: 'inbox' })
+    expect(service.list({ kind: 'pinned' }).map((row) => row.subject)).toEqual(['Keep'])
+    service.pin([kept], false)
+    expect(service.list({ kind: 'pinned' })).toEqual([])
+    expect(service.list({ kind: 'inbox' }).every((row) => !row.pinned)).toBe(true)
+  })
+
+  it('removing an account forgets its pins', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Keep', 9, 0)
+    const kept = ref('Keep')
+    service.pin([kept], true)
+    service.removeAccount(ME)
+    await signedIn()
+    expect(service.list({ kind: 'inbox' }).map((row) => [row.subject, row.pinned])).toEqual([['Keep', false]])
+    expect(service.list({ kind: 'pinned' })).toEqual([])
+  })
+
   it('a row names its first three files, for the cards under it', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     const file = (name: string): { name: string; type: string; body: string } => ({ name, type: 'application/pdf', body: 'x' })

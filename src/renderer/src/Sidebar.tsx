@@ -1,6 +1,6 @@
 import { useState, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronRight, Clock, DollarSign, FileText, Flag, Folder, ListChecks, Mail, Mails, OctagonAlert, Paperclip, Pencil, Plane,
+  CalendarDays, Check, ChevronRight, Clock, DollarSign, FileText, Flag, Folder, ListChecks, Mail, Mails, OctagonAlert, Paperclip, Pencil, Pin, Plane,
   RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
@@ -22,7 +22,7 @@ export const ASSISTANT: [AssistantSection, string, LucideIcon][] = [
 ]
 
 /** Dragging something onto a place in the list does what going there would mean. */
-const DROPS = new Set(['inbox', 'starred', 'all', 'archive', 'spam', 'trash', 'label'])
+const DROPS = new Set(['inbox', 'starred', 'pinned', 'all', 'archive', 'spam', 'trash', 'label'])
 
 /** The accounts whose folders aren't as they start out: folded, or with several accounts unfolded. */
 const CLOSED_KEY = 'xrnmail.sidebar.closed'
@@ -181,6 +181,7 @@ export function Sidebar(props: {
           {item('Today', { kind: 'today' }, { icon: CalendarDays })}
           {item('Unread', { kind: 'unread' }, { icon: Mail })}
           {item('Flagged', { kind: 'starred' }, { icon: Flag })}
+          {item('Pinned', { kind: 'pinned' }, { icon: Pin })}
           {item('Snoozed', { kind: 'snoozed' }, { icon: Clock })}
           {item('Attachments', { kind: 'attachments' }, { icon: Paperclip })}
           {item(`${all}Drafts`, { kind: 'drafts' }, { icon: FileText, count: drafts.length })}

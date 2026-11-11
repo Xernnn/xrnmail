@@ -119,7 +119,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -314,6 +314,7 @@ function register(service: MailService): void {
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
+  handle('pin', (refs: unknown, on: unknown) => service.pin(targets(refs), on === true))
   handle('block', (address: unknown) => service.block(text(address, 320)))
   handle('unsubscribe', async (message: unknown) => {
     const { url, ...result } = await service.unsubscribe(number(message))
