@@ -261,6 +261,48 @@ test('the bar under a selection takes every row, lets go of them, and Trash can 
   expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length).toBe(1)
 })
 
+test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plain', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'To several', from: 'Mai Tran <mai@example.com>', to: `${ME}, Linh Pham <linh@example.com>` }), { arrived: earlier(4) })
+  gmail.add(rawMail({ subject: 'Offers', from: 'Shop <hi@shop.example>', headers: ['List-Unsubscribe: <mailto:leave@shop.example>'] }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plain').click()
+  const tools = page.getByRole('toolbar', { name: 'Thread' })
+  const labels = await tools.getByRole('button').evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
+  expect(labels).toEqual(['Archive', 'Delete', 'Flag', 'Mark unread', 'Labels', 'Snooze', 'More'])
+  const message = page.locator('.message.open')
+  await expect(message).toHaveCSS('border-top-width', '0px') // no card around a message
+  await expect(message.getByText('To: me')).toBeVisible()
+  const bar = page.locator('.reply-bar')
+  await expect(bar.getByRole('button')).toHaveText(['Reply', 'Forward'])
+  const [barBox, readerBox] = [await bar.boundingBox(), await page.locator('.reader').boundingBox()]
+  expect(Math.round((barBox?.y ?? 0) + (barBox?.height ?? 0))).toBe(Math.round((readerBox?.y ?? 0) + (readerBox?.height ?? 0)))
+
+  await page.locator('.threads').getByText('To several').click()
+  await expect(bar.getByRole('button')).toHaveText(['Reply', 'Reply All', 'Forward'])
+  await bar.getByRole('button', { name: 'Reply All' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove mai@example.com' })).toBeVisible()
+  await expect(composer(page).getByRole('button', { name: 'Remove linh@example.com' })).toBeVisible()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await message.getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('button', { name: 'Forward' }).first().click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Fwd: To several')
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+
+  await page.getByRole('button', { name: /^Other/ }).click() // where mail from a list goes
+  await page.locator('.threads').getByText('Offers').click()
+  await expect(message.getByRole('button', { name: 'Unsubscribe' })).toBeVisible()
+  await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Focused' }).click()
+  await page.locator('.threads').getByText('Plain').click()
+  await message.getByRole('button', { name: 'Block' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Block' }).click()
+  await expect(page.getByText('Blocked mai@example.com')).toBeVisible()
+  await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run
