@@ -232,6 +232,13 @@ describe('what a stranger chooses', () => {
     expect(safeFileName(`${'.'.repeat(250)}x.txt`)).toBe('x.txt')
     rmSync(dir, { recursive: true, force: true })
   })
+
+  // U+202E shows the rest of a name backwards, so "photo\u202Egpj.exe" looked like photoexe.jpg.
+  it('a name cannot turn itself around to show a false type', () => {
+    expect(safeFileName('photo\u202Egpj.exe')).toBe('photogpj.exe')
+    expect(safeFileName('\u202A\u202B\u202C\u202D\u2066a\u2067b\u2068c\u2069.pdf')).toBe('abc.pdf')
+    expect(safeFileName('\u202E')).toBe('attachment')
+  })
 })
 
 describe('writing back', () => {

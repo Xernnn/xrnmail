@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
 import { Bold, Clock, Italic, Link, List, Maximize2, Minimize2, Paperclip, Trash2, Underline, Upload, X } from 'lucide-react'
+import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
 import { Avatar } from './Common'
@@ -373,8 +374,8 @@ export function Composer(props: {
           {files.map((file) => (
             <li key={file.id}>
               <Paperclip size={14} aria-hidden="true" />
-              <span className="file-name">{file.name}</span> <span className="muted">{fileSize(file.size)}</span>
-              <button type="button" className="icon small" aria-label={`Remove ${file.name}`}
+              <span className="file-name">{plainName(file.name)}</span> <span className="muted">{fileSize(file.size)}</span>
+              <button type="button" className="icon small" aria-label={`Remove ${plainName(file.name)}`}
                 onClick={() => void window.mail.removeFile(draft.id, file.id).then((next) => setFiles(next.files))}>
                 <X size={13} aria-hidden="true" />
               </button>

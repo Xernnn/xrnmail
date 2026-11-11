@@ -254,6 +254,21 @@ test('attachments: saved exactly, opened only when safe', async () => {
   expect(await run.openedFiles()).toHaveLength(1)
 })
 
+// U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('an attachment name cannot turn itself around to show a false type', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Holiday', attachment: { name: 'photo\u202Egpj.exe', type: 'application/octet-stream', body: 'MZ' } }), { arrived: earlier(5) })
+  await signIn(run)
+  const row = page.locator('.threads .thread', { hasText: 'Holiday' })
+  await expect(row.getByLabel('Has attachment: photogpj.exe')).toBeVisible()
+  await row.click()
+  await expect(page.getByRole('list', { name: 'Attachments' }).locator('.file-name')).toHaveText(['photogpj.exe'])
+  await expect(page.getByRole('button', { name: 'Save photogpj.exe' })).toBeVisible()
+  await page.keyboard.press('f') // forwarding takes the file into a draft
+  await expect(composer(page).locator('.file-name')).toHaveText(['photogpj.exe'], LONG)
+})
+
 test('a file only enters a draft as bytes: the page cannot name a path', async () => {
   run = await launch()
   const { page, smtp } = run

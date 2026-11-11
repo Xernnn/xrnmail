@@ -1,3 +1,5 @@
+import { plainName } from '@shared/names'
+
 /** What may be handed to the operating system. A link in an email can say anything, and
  *  shell.openExternal launches whatever handles the scheme, including file: and smb:. */
 const ALLOWED = new Set(['https:', 'http:', 'mailto:'])
@@ -60,7 +62,7 @@ export function safeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? ''
   let kept = ''
   let bytes = 0
-  for (const char of [...base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '')].reverse()) {
+  for (const char of [...plainName(base).replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '')].reverse()) {
     bytes += Buffer.byteLength(char)
     if (bytes > NAME_BYTES) break
     kept = char + kept

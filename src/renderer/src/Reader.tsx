@@ -4,6 +4,7 @@ import {
   Filter, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Package, Plane, Presentation, Printer, Receipt, Reply, ReplyAll,
   Send, Star, Tag, Trash2, TriangleAlert, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
+import { plainName } from '@shared/names'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
 import { Avatar, Empty } from './Common'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels, type FileKind } from './format'
@@ -87,11 +88,11 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
             <button type="button" className="file" title="Open" onClick={() => open(i)}>
               <span className={`file-tile file-${kind}`} aria-hidden="true"><Icon size={18} /></span>
               <span className="file-words">
-                <span className="file-name">{file.name}</span>
+                <span className="file-name">{plainName(file.name)}</span>
                 <span className="muted">{fileSize(file.size)}</span>
               </span>
             </button>
-            <button type="button" className="icon" aria-label={`Save ${file.name}`} title="Save" onClick={() => save(i)}>
+            <button type="button" className="icon" aria-label={`Save ${plainName(file.name)}`} title="Save" onClick={() => save(i)}>
               <Download size={15} aria-hidden="true" />
             </button>
           </li>
