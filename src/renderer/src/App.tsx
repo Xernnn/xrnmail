@@ -7,12 +7,13 @@ import type {
 } from '@shared/types'
 import { cleanQuote, Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
-import { longTime, problem, textToHtml } from './format'
-import { BatchStrip, DraftRow, QUICK_ACTIONS, Row, Subscriptions } from './List'
+import { longTime, problem, setClock24, textToHtml } from './format'
+import { BatchStrip, DraftRow, NO_SWIPES, Row, Subscriptions, type Swipes } from './List'
 import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
-import { SettingsDialog, SHORTCUTS, type Tab } from './Settings'
+import { SettingsDialog, type Tab } from './Settings'
+import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
 import { Welcome } from './Setup'
 import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
 
@@ -63,7 +64,7 @@ export function titleOf(view: View, many: boolean): string {
   return many && GATHERED.includes(view.kind) && !('account' in view && view.account) ? `All ${title}` : title
 }
 
-function Help({ close }: { close(): void }): ReactNode {
+function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => dialog.current?.showModal(), [])
   return (
@@ -73,7 +74,7 @@ function Help({ close }: { close(): void }): ReactNode {
         <button className="quiet" onClick={close}>Done</button>
       </header>
       <dl className="keys">
-        {SHORTCUTS.map(([key, what]) => (
+        {KEY_LISTS[set].map(([key, what]) => (
           <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>
         ))}
       </dl>
@@ -131,6 +132,8 @@ export function App(): ReactNode {
   useEffect(() => {
     document.documentElement.dataset['theme'] = profile?.theme ?? 'system'
   }, [profile?.theme])
+
+  setClock24(profile?.clock24 ?? true) // before anything below writes a time
 
   const unread = (accounts ?? []).reduce((sum, a) => sum + a.unread, 0)
   useEffect(() => {
@@ -500,51 +503,48 @@ export function App(): ReactNode {
         }
         return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
-        event.preventDefault()
-        setPicked(new Set(list.map(keyOf)))
-        return
-      }
-      if (event.ctrlKey || event.metaKey || event.altKey) return
       const last = messages.at(-1)
-      const handlers: Record<string, () => void> = {
-        '/': focusSearch,
-        j: () => move(1),
-        k: () => move(-1),
-        ArrowDown: () => move(1),
-        ArrowUp: () => move(-1),
-        Escape: () => {
+      const trash = (): void => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash'))
+      const commands: Record<KeyCommand, () => void> = {
+        search: focusSearch,
+        next: () => move(1),
+        previous: () => move(-1),
+        close: () => {
           if (starting.current) starting.current.off = true
           else if (picked.size > 0) setPicked(new Set())
           else setOpen(null)
         },
-        c: () => void compose({ kind: 'new' }),
-        r: () => { if (last) reply('reply', last.id) },
-        a: () => { if (last) reply('replyAll', last.id) },
-        f: () => { if (last) reply('forward', last.id) },
-        e: () => { if (!bins) void run(targets(), { kind: 'archive' }, 'Archived') },
-        '#': () => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash')),
-        Delete: () => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash')),
-        '!': () => void (active.kind === 'spam' ? run(targets(), { kind: 'inbox' }, 'Moved to Inbox') : run(targets(), { kind: 'spam' }, 'Reported as spam')),
-        s: () => {
-          const starred = messages.some((m) => m.flagged)
-          void run(targets(), { kind: starred ? 'unstar' : 'star' })
+        compose: () => void compose({ kind: 'new' }),
+        reply: () => { if (last) reply('reply', last.id) },
+        replyAll: () => { if (last) reply('replyAll', last.id) },
+        forward: () => { if (last) reply('forward', last.id) },
+        archive: () => { if (!bins) void run(targets(), { kind: 'archive' }, 'Archived') },
+        trash,
+        // Out of the list in front of you: archived, where that's something a thread there can be.
+        removeFromView: () => { if (!bins && active.kind !== 'archive' && active.kind !== 'sent') void run(targets(), { kind: 'archive' }, 'Archived') },
+        spam: () => void (active.kind === 'spam' ? run(targets(), { kind: 'inbox' }, 'Moved to Inbox') : run(targets(), { kind: 'spam' }, 'Reported as spam')),
+        flag: () => {
+          const flagged = picked.size > 0 ? list.filter((r) => picked.has(keyOf(r))).every((r) => r.starred) : messages.some((m) => m.flagged)
+          void run(targets(), { kind: flagged ? 'unstar' : 'star' })
         },
-        U: () => void run(targets(), { kind: 'unread' }),
-        b: () => {
+        read: () => void run(targets(), { kind: 'read' }),
+        unread: () => void run(targets(), { kind: 'unread' }),
+        snooze: () => {
           if (picked.size > 0) setBulkSnooze(true)
           else if (open) setPanel('snooze')
         },
-        l: () => { if (open) setPanel('labels') },
-        x: () => {
+        labels: () => { if (open) setPanel('labels') },
+        select: () => {
           const index = list.findIndex((r) => r.account === open?.account && r.thread === open?.thread)
           const row = list[index]
           if (row) togglePick(row, index, false)
         },
-        z: () => toast?.undo?.(),
-        '?': () => setHelp(true)
+        selectAll: () => setPicked(new Set(list.map(keyOf))),
+        undo: () => toast?.undo?.(),
+        help: () => setHelp(true)
       }
-      const handler = handlers[event.key]
+      const command = KEYS[profile?.keys ?? 'edison'][keyName(event)]
+      const handler = command && commands[command]
       if (!handler) return
       event.preventDefault()
       handler()
@@ -600,14 +600,19 @@ export function App(): ReactNode {
   const done = progress.reduce((sum, p) => sum + p.done, 0)
   const total = progress.reduce((sum, p) => sum + p.total, 0)
   const single = profile?.layout === 'list'
-  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', profile?.density === 'compact' ? 'compact' : ''].join(' ')
+  const lines = profile?.previewLines ?? 2
+  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
+  const swipes: Swipes = profile?.swipes
+    ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
+    : NO_SWIPES
+  const quick = profile?.quickOn ? profile.quickActions : []
   const emptyList = showDrafts ? shownDrafts.length === 0 : !showSubscriptions && rows !== null && rows.length === 0
   const otherCount = overview?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
   const batching = (profile?.batch.times.length ?? 0) > 0
 
   return (
-    <div className={appClass} style={{ '--list': `${listWidth}px` } as CSSProperties}>
+    <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn} />
       <div className="main">
@@ -661,7 +666,7 @@ export function App(): ReactNode {
                 <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                  swipeLeft={profile?.swipeLeft ?? 'none'} swipeRight={profile?.swipeRight ?? 'none'} quick={QUICK_ACTIONS}
+                  swipe={swipes} quick={quick}
                   open={() => setOpen({ account: row.account, thread: row.thread })}
                   pick={(event) => togglePick(row, index, event.shiftKey)}
                   act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
@@ -736,7 +741,7 @@ export function App(): ReactNode {
         </div>
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
-      {help && <Help close={() => setHelp(false)} />}
+      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
       {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
       {question && <Confirm question={question} />}
     </div>

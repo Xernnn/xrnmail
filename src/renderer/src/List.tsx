@@ -2,15 +2,28 @@ import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type M
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
-import type { AccountView, Draft, Facts, MailAction, Overview, Subscription, SwipeAction, ThreadRow } from '@shared/types'
+import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty } from './Common'
 import { clock, factLine, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
 
-const SWIPE_FAR = 150
-/** How far a swipe has to go before letting go means it. */
+const SWIPE_FAR = 240
+/** How far a swipe has to go before letting go means it, and how far for the second thing it can do. */
 const SWIPE_COMMIT = 86
+const SWIPE_LONG = 180
 const SWIPE_SETTLE_MS = 130
+
+/** What a swipe does each way: a short one, and a long one. */
+export interface Swipes { left: SwipeAction; leftLong: SwipeAction; right: SwipeAction; rightLong: SwipeAction }
+export const NO_SWIPES: Swipes = { left: 'none', leftLong: 'none', right: 'none', rightLong: 'none' }
+
+/** A long swipe with nothing of its own does what the short one does. */
+export function swipeAction(moved: number, swipe: Swipes): SwipeAction {
+  const long = Math.abs(moved) >= SWIPE_LONG
+  if (Math.abs(moved) < SWIPE_COMMIT) return 'none'
+  if (moved > 0) return long && swipe.rightLong !== 'none' ? swipe.rightLong : swipe.right
+  return long && swipe.leftLong !== 'none' ? swipe.leftLong : swipe.left
+}
 
 const SWIPE_LOOK: Record<Exclude<SwipeAction, 'none'>, { icon: LucideIcon; tone: string }> = {
   archive: { icon: Archive, tone: 'swipe-archive' },
@@ -22,9 +35,6 @@ const SWIPE_LOOK: Record<Exclude<SwipeAction, 'none'>, { icon: LucideIcon; tone:
 
 const FACT_ICONS: Record<Facts['type'], LucideIcon> = { package: Truck, travel: Plane, money: DollarSign, event: Ticket }
 
-/** What a row offers under the pointer, in the place of its date. */
-export type QuickAction = 'archive' | 'flag' | 'trash' | 'read' | 'snooze' | 'spam' | 'none'
-export const QUICK_ACTIONS: QuickAction[] = ['archive', 'flag', 'trash', 'read']
 
 /** The headline of an Assistant entry, and what's most worth seeing next to it. */
 function factHead(facts: Facts): { title: string; side: string } {
@@ -47,8 +57,7 @@ export function Row(props: {
   assistant: boolean
   on: boolean
   picked: boolean
-  swipeLeft: SwipeAction
-  swipeRight: SwipeAction
+  swipe: Swipes
   /** The buttons that show under the pointer, in order. */
   quick: QuickAction[]
   open(): void
@@ -79,11 +88,13 @@ export function Row(props: {
       const went = moved.current
       moved.current = 0
       setShift(0)
-      if (Math.abs(went) >= SWIPE_COMMIT) swiped(went > 0 ? props.swipeRight : props.swipeLeft)
+      const action = swipeAction(went, props.swipe)
+      if (action !== 'none') swiped(action)
     }, SWIPE_SETTLE_MS)
   }
 
-  const action = shift > 0 ? props.swipeRight : props.swipeLeft
+  // Under the row: what letting go now would do, or before that what a short swipe will.
+  const action = Math.abs(shift) >= SWIPE_COMMIT ? swipeAction(shift, props.swipe) : shift > 0 ? props.swipe.right : props.swipe.left
   const look = shift !== 0 && action !== 'none' ? SWIPE_LOOK[action] : null
   const LookIcon = look?.icon
   const facts = assistant ? row.facts : null

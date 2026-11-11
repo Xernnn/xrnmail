@@ -1,3 +1,4 @@
+import type { KeySet } from './keys'
 import type { AccountConfig, Server } from './providers'
 
 /** What crosses between the app's two halves. Both sides read this file. */
@@ -74,6 +75,11 @@ export interface Template {
 /** What a sideways swipe on a thread does. */
 export type SwipeAction = 'archive' | 'trash' | 'read' | 'star' | 'snooze' | 'none'
 
+/** A button a row of the list offers under the pointer, in the place of its date. */
+export type QuickAction = 'archive' | 'flag' | 'trash' | 'read' | 'snooze' | 'spam' | 'none'
+/** A row has room for this many. */
+export const QUICK_SLOTS = 4
+
 export interface Settings {
   batch: BatchSettings
   /** How far back to keep mail on this laptop. */
@@ -100,9 +106,23 @@ export interface Settings {
   microsoftClientId: string
   /** `panes` reads beside the list, `list` is one thing at a time. */
   layout: 'panes' | 'list'
-  density: 'comfortable' | 'compact'
+  /** How many lines of a message a row of the list shows under its subject, none to four. */
+  previewLines: number
+  /** Icons beside the sidebar's entries. */
+  sidebarIcons: boolean
+  /** Times as 17:30, not 5:30 PM. */
+  clock24: boolean
+  /** Which set of keys the keyboard answers to: Edison Mail's, or Gmail's as xrnmail had them. */
+  keys: KeySet
+  /** Whether rows offer buttons under the pointer, and which, in order. */
+  quickOn: boolean
+  quickActions: QuickAction[]
+  /** Whether a sideways swipe on a row does anything. A short one and a long one, each way. */
+  swipes: boolean
   swipeLeft: SwipeAction
+  swipeLeftLong: SwipeAction
   swipeRight: SwipeAction
+  swipeRightLong: SwipeAction
   /** Stay in the tray with the window closed, for notifications and for mail set to go out later. */
   background: boolean
   startAtLogin: boolean
@@ -276,7 +296,8 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'density' | 'swipeLeft' | 'swipeRight' |
+  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 
 /** What the app's menu and the tray can ask the page to do. */

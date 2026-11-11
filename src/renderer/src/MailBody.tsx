@@ -153,7 +153,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted }: Bod
     })
     // A click inside moves the keyboard into the frame, and its keys still belong to the app.
     doc.addEventListener('keydown', (event) => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey }))
     })
     doc.addEventListener('mouseover', (event) => onPeek(linkAt(event.target)?.href ?? null))
     doc.addEventListener('mouseleave', () => onPeek(null))

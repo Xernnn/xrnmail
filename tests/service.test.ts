@@ -991,6 +991,29 @@ describe('settings', () => {
     expect(service.settings()).toMatchObject({ swipeLeft: before.swipeLeft, swipeRight: before.swipeRight })
   })
 
+  it('keeps the list\'s choices within what a row can show', () => {
+    expect(service.settings()).toMatchObject({
+      previewLines: 2, quickOn: true, quickActions: ['archive', 'flag', 'trash', 'read'],
+      swipes: true, swipeLeft: 'archive', swipeLeftLong: 'star', swipeRight: 'read', swipeRightLong: 'trash'
+    })
+    service.saveProfile({ previewLines: 9, quickActions: ['snooze', 'explode' as never, 'spam', 'none', 'archive', 'trash'], swipeLeftLong: 'explode' as never })
+    expect(service.settings()).toMatchObject({ previewLines: 4, quickActions: ['snooze', 'none', 'spam', 'none'], swipeLeftLong: 'star' })
+    service.saveProfile({ previewLines: -3, quickActions: ['flag'], swipeRightLong: 'snooze', quickOn: false, swipes: false })
+    expect(service.settings()).toMatchObject({
+      previewLines: 0, quickActions: ['flag', 'none', 'none', 'none'], swipeRightLong: 'snooze', quickOn: false, swipes: false
+    })
+  })
+
+  it('reads "compact" rows saved by an older version as one line of the message', () => {
+    const saved = (settings: object): void => (service as unknown as { store: { setMeta(key: string, value: string): void } }).store.setMeta('settings', JSON.stringify(settings))
+    saved({ density: 'compact' })
+    expect(service.settings().previewLines).toBe(1)
+    saved({ density: 'comfortable' })
+    expect(service.settings().previewLines).toBe(2)
+    saved({ density: 'compact', previewLines: 3 })
+    expect(service.settings().previewLines).toBe(3)
+  })
+
   it('keeps trusted senders tidy and in one case', () => {
     service.saveProfile({ imagesFrom: ['News@Shop.example', 'news@shop.example', 'not an address'] })
     expect(service.settings().imagesFrom).toEqual(['news@shop.example'])

@@ -1,7 +1,8 @@
 import type {
-  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView,
+  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView, QuickAction,
   NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
+import { QUICK_SLOTS } from '@shared/types'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
@@ -54,9 +55,17 @@ const DEFAULT_SETTINGS: Settings = {
   unsubscribed: [],
   microsoftClientId: '',
   layout: 'panes',
-  density: 'comfortable',
-  swipeLeft: 'trash',
-  swipeRight: 'archive',
+  previewLines: 2,
+  sidebarIcons: true,
+  clock24: true,
+  keys: 'edison',
+  quickOn: true,
+  quickActions: ['archive', 'flag', 'trash', 'read'],
+  swipes: true,
+  swipeLeft: 'archive',
+  swipeLeftLong: 'star',
+  swipeRight: 'read',
+  swipeRightLong: 'trash',
   background: true,
   startAtLogin: false,
   images: 'ask',
@@ -65,6 +74,11 @@ const DEFAULT_SETTINGS: Settings = {
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
 const swipe = (value: SwipeAction | undefined, fallback: SwipeAction): SwipeAction => (value && SWIPES.includes(value) ? value : fallback)
+
+const QUICK: readonly QuickAction[] = ['archive', 'flag', 'trash', 'read', 'snooze', 'spam', 'none']
+/** Always as many as a row has room for, with nothing where the page sent something else. */
+const cleanQuick = (actions: QuickAction[]): QuickAction[] =>
+  Array.from({ length: QUICK_SLOTS }, (_, i) => (QUICK.includes(actions[i] as QuickAction) ? actions[i] as QuickAction : 'none'))
 
 const ACCOUNT_COLORS = ['#5e7f1b', '#2f6fb2', '#b4532a', '#7a4fb5', '#0f8a7e', '#b03a6a']
 
@@ -1156,7 +1170,9 @@ export class MailService {
   settings(): Settings {
     try {
       const saved = JSON.parse(this.store.meta('settings') ?? '{}') as Partial<Settings>
-      const merged = { ...DEFAULT_SETTINGS, ...saved }
+      // "Compact" rows, from before the list counted lines, were rows with one line of the message.
+      const lines = saved.previewLines ?? ((saved as { density?: string }).density === 'compact' ? 1 : DEFAULT_SETTINGS.previewLines)
+      const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       return { ...merged, identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
@@ -1193,9 +1209,17 @@ export class MailService {
       theme: patch.theme ?? settings.theme,
       focused: patch.focused ?? settings.focused,
       layout: patch.layout ?? settings.layout,
-      density: patch.density ?? settings.density,
+      previewLines: patch.previewLines === undefined ? settings.previewLines : clamp(Math.round(patch.previewLines) || 0, 0, 4),
+      sidebarIcons: patch.sidebarIcons ?? settings.sidebarIcons,
+      clock24: patch.clock24 ?? settings.clock24,
+      keys: patch.keys ?? settings.keys,
+      quickOn: patch.quickOn ?? settings.quickOn,
+      quickActions: Array.isArray(patch.quickActions) ? cleanQuick(patch.quickActions) : settings.quickActions,
+      swipes: patch.swipes ?? settings.swipes,
       swipeLeft: swipe(patch.swipeLeft, settings.swipeLeft),
+      swipeLeftLong: swipe(patch.swipeLeftLong, settings.swipeLeftLong),
       swipeRight: swipe(patch.swipeRight, settings.swipeRight),
+      swipeRightLong: swipe(patch.swipeRightLong, settings.swipeRightLong),
       background: patch.background ?? settings.background,
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,

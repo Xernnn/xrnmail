@@ -344,11 +344,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .row-actions { position: absolute; top: 9px; right: 12px; display: none; align-items: center; gap: 2px; padding-left: 22px; background: linear-gradient(to right, transparent, var(--row-bg) 18px); }
 .row-actions .icon { width: 30px; height: 30px; border-radius: 7px; color: var(--nav-icon); }
 .thread:hover .row-actions, .thread:has(:focus-visible) .row-actions { display: flex; }
-.thread:hover time, .thread:has(:focus-visible) time { visibility: hidden; }
-.compact { --preview-lines: 1; }
-.compact .thread-card { padding-block: 8px; }
-.compact .thread { contain-intrinsic-size: auto 78px; }
-.compact .row-actions { top: 4px; }
+.thread:has(.row-actions):hover time, .thread:has(.row-actions):has(:focus-visible) time { visibility: hidden; }
+.no-preview .snippet { display: none; }
+.no-icons .sidebar .nav-icon { display: none; }
 .swipe-under { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 24px; color: #fff; opacity: 0.7; }
 .swipe-under.ready { opacity: 1; }
 .swipe-under.from-right { justify-content: flex-end; }
@@ -471,27 +469,28 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 
 /* Settings and forms */
 
-.settings { width: min(880px, calc(100vw - 32px)); height: min(660px, calc(100vh - 48px)); padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: hidden; }
-.settings[open] { display: flex; flex-direction: column; }
+.settings { width: min(980px, calc(100vw - 32px)); height: min(720px, calc(100vh - 48px)); padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); color: var(--text); box-shadow: var(--shadow); overflow: hidden; }
+.settings[open] { display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .settings::backdrop { background: rgb(10 12 16 / 0.45); }
-.settings header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.settings-body { flex: 1; display: grid; grid-template-columns: 184px minmax(0, 1fr); min-height: 0; }
-.settings-tabs { display: grid; align-content: start; gap: 1px; padding: 12px 10px; background: var(--side); border-right: 1px solid var(--line); font-size: 13.5px; }
-.settings-tabs input { margin-bottom: 8px; padding: 7px 12px; border-radius: 999px; font-size: 13px; }
-.settings-page { overflow-y: auto; }
-.settings h2 { font-size: 16px; }
-.settings section { display: grid; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
-.settings section:last-child { border-bottom: 0; }
-.settings h3 { font-size: 14px; font-weight: 700; color: var(--text); }
+.settings-tabs { display: grid; align-content: start; padding: 18px 0; background: var(--side); font-size: 14px; overflow-y: auto; }
+.settings-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.settings-main > header { flex: none; display: flex; align-items: center; gap: 12px; padding: 20px 26px 16px 34px; border-bottom: 1px solid var(--line); }
+.settings h2 { flex: 1; min-width: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.settings-main > header input { width: 230px; padding: 8px 12px; border: 0; border-radius: 8px; background: var(--field); font-size: 13px; }
+.settings-page { flex: 1; min-height: 0; padding: 10px 34px 26px; overflow-y: auto; }
+.settings section { display: grid; gap: 12px; max-width: 620px; padding: 14px 0 18px; }
+.settings h3 { margin-bottom: 2px; color: var(--muted); font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .settings section > .quiet { justify-self: start; }
 .settings label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
 .settings label input, .settings label select, .settings label textarea { color: var(--text); font-size: 14px; }
-.settings label.inline { grid-template-columns: 1fr auto; align-items: center; gap: 12px; color: var(--text); }
-.settings label.inline select { width: auto; }
-.settings label.check input { appearance: none; position: relative; width: 36px; height: 21px; padding: 0; border: 0; border-radius: 999px; background: var(--outline); cursor: pointer; transition: background 0.15s; }
-.settings label.check input::before { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); transition: transform 0.15s var(--ease); }
-.settings label.check input:checked { background: var(--primary); }
-.settings label.check input:checked::before { transform: translateX(15px); }
+.settings label.inline { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
+.settings label.inline select { width: auto; min-width: 150px; padding-block: 6px; }
+.settings label.inline input[type="color"] { width: 44px; height: 30px; padding: 2px; }
+.settings label.check { display: flex; align-items: center; gap: 11px; color: var(--text); font-size: 14px; cursor: pointer; }
+.settings label.check input { appearance: none; flex: none; position: relative; width: 18px; height: 18px; padding: 0; border: 1.5px solid var(--outline); border-radius: 4px; background: var(--bg); cursor: pointer; }
+.settings label.check input:checked { border-color: var(--primary); background: var(--primary); }
+.settings label.check input:checked::before { content: ""; position: absolute; inset: 0; background: #fff; -webkit-mask: var(--tick) center / 11px no-repeat; mask: var(--tick) center / 11px no-repeat; }
+.settings .line input { width: auto; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .chips input { width: 120px; padding: 5px 9px; }
 .chip { padding: 5px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
@@ -543,6 +542,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .toast .link { color: var(--toast-link); font-weight: 700; }
 
 .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; margin: 0; padding: 16px 20px; font-size: 13px; }
+.settings .keys { padding: 4px 0; }
 .keys div { display: flex; justify-content: space-between; gap: 10px; }
 .keys dd { margin: 0; color: var(--muted); }
 kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--surface-2); font: inherit; font-size: 12px; }

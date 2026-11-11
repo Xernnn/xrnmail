@@ -158,7 +158,8 @@ test('the look can be set, and sticks', async () => {
   const { page } = run
   await signIn(run)
   await page.getByRole('button', { name: 'Settings' }).click()
-  await page.getByLabel('Look').selectOption('dark')
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByLabel('Theme').selectOption('dark')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await page.reload()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')

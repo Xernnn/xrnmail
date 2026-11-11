@@ -4,9 +4,10 @@ import { promises as dns } from 'node:dns'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
-  AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, Quote,
+  AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
   Rsvp, Server, SwipeAction, Template, ThreadRef
 } from '@shared/types'
+import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
@@ -252,9 +253,15 @@ function profile(value: unknown): ProfilePatch {
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
   if (p['layout'] === 'panes' || p['layout'] === 'list') patch.layout = p['layout']
-  if (p['density'] === 'comfortable' || p['density'] === 'compact') patch.density = p['density']
-  if (p['swipeLeft'] !== undefined) patch.swipeLeft = text(p['swipeLeft'], 16) as SwipeAction
-  if (p['swipeRight'] !== undefined) patch.swipeRight = text(p['swipeRight'], 16) as SwipeAction
+  if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
+  for (const key of ['sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
+    if (p[key] !== undefined) patch[key] = p[key] === true
+  }
+  if (p['keys'] === 'edison' || p['keys'] === 'gmail') patch.keys = p['keys']
+  if (Array.isArray(p['quickActions'])) patch.quickActions = p['quickActions'].slice(0, QUICK_SLOTS).map((a) => text(a, 16) as QuickAction)
+  for (const key of ['swipeLeft', 'swipeLeftLong', 'swipeRight', 'swipeRightLong'] as const) {
+    if (p[key] !== undefined) patch[key] = text(p[key], 16) as SwipeAction
+  }
   if (p['background'] !== undefined) patch.background = p['background'] === true
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']

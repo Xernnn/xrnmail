@@ -137,6 +137,52 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
 // The refresh that follows a change waits 150 ms, and quitting can close the store and destroy the
 // tray before it comes. When the app took longer than that to go, the refresh still ran, and with
 // unread mail shown it set the image of the destroyed tray, which throws in the main process.
+test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen instead', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['First', 'Second', 'Third', 'Fourth'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(8 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const row = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject })
+  await list.getByText('Fourth').click()
+  await page.keyboard.press('Backspace') // out of view: archived
+  await expect(page.getByText('Archived')).toBeVisible()
+  await expect(row('Fourth')).toHaveCount(0)
+  await expect(page.locator('.thread-subject')).toHaveText('Third')
+  await page.keyboard.press('Shift+Backspace')
+  await expect(page.getByText('Moved to Trash')).toBeVisible()
+  await expect(row('Third')).toHaveCount(0)
+  await expect(page.locator('.thread-subject')).toHaveText('Second')
+  await page.keyboard.press('Control+s')
+  await expect(row('Second').getByLabel('Flagged')).toBeVisible()
+  await page.keyboard.press('Control+r')
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Second')
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await expect(composer(page)).toHaveCount(0) // keys are the composer's own until it has gone
+  await page.keyboard.press('Control+Shift+U')
+  await expect(row('Second').locator('.unread-dot')).toBeVisible()
+  await page.keyboard.press('d')
+  await expect(composer(page).getByLabel('To')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(composer(page)).toHaveCount(0)
+  await page.keyboard.press('?')
+  await expect(page.getByText('Remove from view')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Shortcuts' }).click()
+  await page.getByLabel('Shortcut set').selectOption('gmail')
+  await expect(page.getByText('Remove from view')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Done' }).click()
+  await list.getByText('Second').click()
+  await page.keyboard.press('Backspace') // not a key of this set
+  await page.keyboard.press('d')
+  await expect(composer(page)).toHaveCount(0)
+  await expect(page.locator('.thread-subject')).toHaveText('Second')
+  await page.keyboard.press('Delete')
+  await expect(row('Second')).toHaveCount(0)
+})
+
 test('nothing refreshes once quitting has closed the store', async () => {
   run = await launch()
   const { page, app } = run
@@ -530,11 +576,13 @@ test('settings keep who you are, and it signs what you send', async () => {
   await signIn(run)
   await undoOff(page)
   await page.getByRole('button', { name: 'Settings' }).click()
-  await page.getByRole('button', { name: 'Writing' }).click()
+  await page.getByRole('button', { name: 'Accounts' }).click()
   await page.getByLabel('Your name').fill('Sơn Nguyễn')
+  await page.getByRole('button', { name: 'Signatures' }).click() // straight on, while the name is still being saved
   await page.getByLabel('Signature').fill('Sent from xrnmail')
-  await page.getByLabel('Your name').click()
   await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(() => page.evaluate((me) => window.mail.settings().then((s) => s.identities[me]), ME))
+    .toMatchObject({ name: 'Sơn Nguyễn', signature: 'Sent from xrnmail' })
   await page.keyboard.press('c')
   const box = composer(page)
   await expect(box.getByText('Sent from xrnmail')).toBeVisible()
@@ -549,7 +597,7 @@ test('settings keep who you are, and it signs what you send', async () => {
 test('a thread can be right-clicked, dragged to the sidebar and swiped away', async () => {
   run = await launch()
   const { page, gmail } = run
-  for (const subject of ['Menu me', 'Drag me', 'Swipe me']) gmail.add(rawMail({ subject }), { arrived: earlier(5) })
+  for (const subject of ['Menu me', 'Drag me', 'Swipe me', 'Swipe further']) gmail.add(rawMail({ subject }), { arrived: earlier(5) })
   await signIn(run)
   const threads = page.locator('.threads')
   await threads.getByText('Menu me').click({ button: 'right' })
@@ -558,8 +606,12 @@ test('a thread can be right-clicked, dragged to the sidebar and swiped away', as
   await threads.getByText('Drag me').dragTo(page.getByRole('button', { name: 'Trash', exact: true }))
   await expect(threads.getByText('Drag me')).toHaveCount(0)
   await threads.getByText('Swipe me').hover()
-  await page.mouse.wheel(200, 0)
+  await page.mouse.wheel(100, 0) // a short way to the left
   await expect(threads.getByText('Swipe me')).toHaveCount(0)
+  await expect(page.getByText('Archived')).toBeVisible()
+  await threads.getByText('Swipe further').hover()
+  await page.mouse.wheel(-200, 0) // a long way to the right
+  await expect(threads.getByText('Swipe further')).toHaveCount(0)
   await expect(page.getByText('Moved to Trash')).toBeVisible()
 })
 
@@ -587,12 +639,62 @@ test('addresses become chips, and one still being typed goes too', async () => {
   await expect.poll(() => smtp.sent[0]?.to.slice().sort()).toEqual(['ada@example.com', 'mai@example.com', 'zed@example.com'])
 })
 
+test('settings come in Edison\'s sections, and what they choose for the list takes hold', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const long = 'First words of a message that goes on for a good while, long enough that one line of the list could never hold all of it.'
+  gmail.add(rawMail({ subject: 'Row', text: long }), { arrived: earlier(2) })
+  await signIn(run)
+  const settings = page.getByRole('button', { name: 'Settings' })
+  await settings.click()
+  await expect(page.getByRole('navigation', { name: 'Settings' }).getByRole('button')).toHaveText([
+    'General', 'Notifications', 'Accounts', 'Appearance', 'Customize Actions', 'Shortcuts', 'Signatures', 'Templates', 'Blocked Senders',
+    'Batches', 'xrnhub', 'About'
+  ])
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await expect(page.getByRole('heading', { name: 'Appearance', level: 2 })).toBeVisible()
+  await page.getByLabel('Preview lines').selectOption('1')
+  await page.getByLabel('Show icons in the sidebar').uncheck()
+  await page.getByLabel('Use the 24-hour clock').uncheck()
+  await page.getByRole('button', { name: 'Customize Actions' }).click()
+  await page.getByLabel('Action 1').selectOption('snooze')
+  await page.getByLabel('Action 4').selectOption('none')
+  await page.getByRole('button', { name: 'Blocked Senders' }).click()
+  await page.getByLabel('Sender to block').fill('Pest@Example.com')
+  await page.getByRole('button', { name: 'Block', exact: true }).click()
+  await page.getByRole('button', { name: 'Unblock pest@example.com' }).click()
+  await expect(page.getByText('Nobody is blocked.')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+
+  const row = page.locator('.threads .thread', { hasText: 'Row' })
+  const lineHeight = await row.locator('.snippet').evaluate((el) => parseFloat(getComputedStyle(el).lineHeight))
+  expect((await row.locator('.snippet').boundingBox())?.height).toBe(lineHeight)
+  await expect(page.locator('.sidebar .nav-icon').first()).toBeHidden()
+  await row.hover()
+  const labels = (): Promise<(string | null)[]> => row.locator('.row-actions button').evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
+  expect(await labels()).toEqual(['Snooze', 'Flag', 'Delete'])
+  await page.getByText('Row').click()
+  await expect(page.locator('.message.open .when')).toHaveText(/\d (AM|PM)$/)
+
+  await settings.click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByLabel('Preview lines').selectOption('0')
+  await page.getByRole('button', { name: 'Customize Actions' }).click()
+  await page.getByLabel('Show quick actions when the pointer is over a thread in the list').uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(row.locator('.snippet')).toBeHidden()
+  await row.hover()
+  await expect(row.locator('.row-actions')).toHaveCount(0)
+  await expect(row.locator('time')).toBeVisible()
+})
+
 test('settings can be searched', async () => {
   run = await launch()
   const { page } = run
   await signIn(run)
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByLabel('Search settings').fill('swipe')
-  await expect(page.getByLabel('Swipe left')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Customize Actions' })).toBeVisible()
+  await expect(page.getByLabel('Swipe left, short')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Batches' })).toHaveCount(0)
 })
