@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -216,6 +216,21 @@ describe('what a stranger chooses', () => {
     expect(safeFileName('.bashrc')).toBe('bashrc')
     expect(safeFileName('')).toBe('attachment')
     expect(safeFileName('a\u0000b\r\n.txt')).toBe('ab.txt')
+  })
+
+  // It was cut to 200 characters, and 125 CJK characters are 375 bytes, past the 255 a Linux file
+  // name can have, so opening such an attachment failed with ENAMETOOLONG.
+  it('a long name is cut to fit a file name, in bytes, keeping its end', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xrnmail-names-'))
+    for (const long of [`${'報告書'.repeat(40)}.pdf`, `${'😀'.repeat(60)}.txt`, `${'a'.repeat(300)}.txt`]) {
+      const name = safeFileName(long)
+      expect(Buffer.byteLength(name), long).toBeLessThanOrEqual(200)
+      expect(Buffer.from(name).toString(), long).toBe(name) // whole characters only
+      expect(long.endsWith(name), long).toBe(true)
+      writeFileSync(join(dir, `12345678-${name}`), 'x') // as opening one names it
+    }
+    expect(safeFileName(`${'.'.repeat(250)}x.txt`)).toBe('x.txt')
+    rmSync(dir, { recursive: true, force: true })
   })
 })
 
