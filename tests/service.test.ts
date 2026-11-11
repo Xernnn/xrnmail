@@ -949,6 +949,20 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'all' }).map((row) => row.subject).sort()).toEqual(['Keep in the inbox', 'Mine', 'Put away'])
   })
 
+  it('a row names its first three files, for the cards under it', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    const file = (name: string): { name: string; type: string; body: string } => ({ name, type: 'application/pdf', body: 'x' })
+    gmail.add(rawMail({ subject: 'Four files', attachment: file('a.pdf'), attachments: [file('b.pdf'), file('c.pdf'), file('d.pdf')] }), { arrived: new Date(at(9, 0)) })
+    gmail.add(rawMail({ subject: 'No files' }), { arrived: new Date(at(9, 1)) })
+    clock = at(9, 5)
+    await service.syncAll()
+    const rows = service.list({ kind: 'inbox' })
+    expect(rows.map((row) => [row.subject, row.cards, row.files])).toEqual([['No files', [], 0], ['Four files', ['a.pdf', 'b.pdf', 'c.pdf'], 4]])
+    expect(service.settings().attachmentCards).toBe(true)
+    service.saveProfile({ attachmentCards: false })
+    expect(service.settings().attachmentCards).toBe(false)
+  })
+
   it('Today starts at midnight', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     gmail.add(rawMail({ subject: 'Yesterday' }), { arrived: new Date(at(23, 0, 5)) })

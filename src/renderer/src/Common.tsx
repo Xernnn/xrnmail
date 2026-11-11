@@ -1,5 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { CalendarRange, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from 'lucide-react'
+import type { FileKind } from './format'
+
+/** The picture a file gets from its name, in the list and in the reader. */
+export const KIND_ICONS: Record<FileKind, LucideIcon> = {
+  image: FileImage, pdf: FileText, doc: FileText, sheet: FileSpreadsheet, slides: Presentation, archive: FileArchive,
+  calendar: CalendarRange, audio: FileAudio, video: FileVideo, file: FileIcon
+}
 
 /** Mid tones that carry white letters, light or dark. */
 const AVATAR_COLORS = ['#3a74d9', '#5b5bd6', '#8150c9', '#c0437a', '#d14a3d', '#c8651f', '#a87a12', '#2f8a4f', '#16878a', '#2b7fb0', '#5e6b80']

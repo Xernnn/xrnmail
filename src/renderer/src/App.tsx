@@ -685,7 +685,7 @@ export function App(): ReactNode {
                 <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                  swipe={swipes} quick={quick}
+                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true}
                   open={() => setOpen({ account: row.account, thread: row.thread })}
                   pick={(event) => togglePick(row, index, event.shiftKey)}
                   act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}

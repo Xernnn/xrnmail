@@ -254,7 +254,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
   if (p['layout'] === 'panes' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (p['keys'] === 'edison' || p['keys'] === 'gmail') patch.keys = p['keys']

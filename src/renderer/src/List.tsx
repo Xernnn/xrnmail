@@ -3,8 +3,8 @@ import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
-import { Avatar, Empty } from './Common'
-import { clock, factLine, longTime, peopleLine, problem, shortTime } from './format'
+import { Avatar, Empty, KIND_ICONS } from './Common'
+import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
 
 const SWIPE_FAR = 240
@@ -58,6 +58,8 @@ export function Row(props: {
   on: boolean
   picked: boolean
   swipe: Swipes
+  /** Whether the thread's files show as cards under the row. */
+  cards: boolean
   /** The buttons that show under the pointer, in order. */
   quick: QuickAction[]
   open(): void
@@ -149,6 +151,16 @@ export function Row(props: {
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>
+          {props.cards && row.cards.length > 0 && (
+            <span className="cards" aria-hidden="true">
+              {row.cards.map((name, i) => {
+                const kind = fileKind(name)
+                const Icon = KIND_ICONS[kind]
+                return <span className="card" key={i}><Icon className={`file-${kind}`} size={14} /><span className="card-name">{plainName(name)}</span></span>
+              })}
+              {row.files > row.cards.length && <span className="card more">+{row.files - row.cards.length}</span>}
+            </span>
+          )}
         </button>
         {(bins || shown.length > 0) && (
           <span className="row-actions">

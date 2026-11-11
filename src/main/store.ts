@@ -248,6 +248,9 @@ const parseList = <T>(text: unknown): T[] => {
  *  to the index and to what's typed. */
 export const foldForSearch = (text: string): string => text.replace(/[đĐ]/g, 'd')
 
+/** How many of a thread's files a row of the list names. */
+export const ROW_CARDS = 3
+
 const SEARCH_FLAGS: Record<string, string> = {
   'has:attachment': 'has_attachment = 1',
   'is:unread': 'seen = 0',
@@ -525,7 +528,7 @@ export class Store {
   }
 
   /** Who's in a thread and what's attached. Held and hidden mail stays out of this too. */
-  private whoAndWhat(account: string, thread: string, now: number, bin: number): Pick<ThreadRow, 'people' | 'file' | 'files'> {
+  private whoAndWhat(account: string, thread: string, now: number, bin: number): Pick<ThreadRow, 'people' | 'file' | 'files' | 'cards'> {
     const rows = this.all(
       `SELECT from_name, from_address, attachments FROM messages
        WHERE account = ? AND thread = ? AND release_at <= ? AND hidden = 0 AND bin = ? ORDER BY arrived ASC`,
@@ -538,7 +541,7 @@ export class Store {
       if (!people.has(address.toLowerCase())) people.set(address.toLowerCase(), { name: String(row['from_name']), address })
       files.push(...parseList<AttachmentInfo>(row['attachments']))
     }
-    return { people: [...people.values()], file: files[0]?.name ?? null, files: files.length }
+    return { people: [...people.values()], file: files[0]?.name ?? null, files: files.length, cards: files.slice(0, ROW_CARDS).map((f) => f.name) }
   }
 
   list(query: ListQuery, now: number, limit = 200): ThreadRow[] {

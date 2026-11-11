@@ -28,7 +28,7 @@ const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout undo send pictures images tray background start login',
   notifications: 'new mail tell account',
   accounts: 'add remove service name alias sends as colour color keep laptop days',
-  appearance: 'theme look dark light icons sidebar preview lines clock 24-hour time',
+  appearance: 'theme look dark light icons sidebar preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail',
   signatures: 'signature sign',
@@ -251,6 +251,7 @@ function Appearance(props: { settings: Settings; save: Save }): ReactNode {
         <h3>List</h3>
         <Choice label="Preview lines" value={settings.previewLines} set={(previewLines) => save({ previewLines })}
           options={[[0, 'None'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]} />
+        <Check label="Show a thread's files as cards under its row" on={settings.attachmentCards} set={(attachmentCards) => save({ attachmentCards })} />
         <Check label="Use the 24-hour clock" on={settings.clock24} set={(clock24) => save({ clock24 })} />
       </section>
     </>

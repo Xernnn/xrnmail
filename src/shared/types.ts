@@ -108,6 +108,8 @@ export interface Settings {
   layout: 'panes' | 'list'
   /** How many lines of a message a row of the list shows under its subject, none to four. */
   previewLines: number
+  /** A thread's files as small cards under its row in the list. */
+  attachmentCards: boolean
   /** Icons beside the sidebar's entries. */
   sidebarIcons: boolean
   /** Times as 17:30, not 5:30 PM. */
@@ -152,6 +154,8 @@ export interface ThreadRow {
   /** Its first file, to show under the preview, and how many there are in all. */
   file: string | null
   files: number
+  /** The names of its first few files, for the cards under a row. */
+  cards: string[]
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -296,7 +300,7 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'identities' | 'templates' | 'blocked' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebarIcons' | 'clock24' | 'keys' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 

@@ -341,6 +341,11 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .mark { flex: none; color: var(--muted); }
 .mark.flag { color: var(--star); fill: currentColor; }
 .snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--preview-lines, 2); overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 14px; line-height: 20px; }
+.cards { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 6px; overflow: hidden; }
+.card { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 150px; height: 26px; padding: 0 9px 0 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--nav); font-size: 12px; }
+.card svg { flex: none; }
+.card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.more { flex: none; padding: 0 8px; color: var(--muted); }
 .row-actions { position: absolute; top: 9px; right: 12px; display: none; align-items: center; gap: 2px; padding-left: 22px; background: linear-gradient(to right, transparent, var(--row-bg) 18px); }
 .row-actions .icon { width: 30px; height: 30px; border-radius: 7px; color: var(--nav-icon); }
 .thread:hover .row-actions, .thread:has(:focus-visible) .row-actions { display: flex; }
@@ -623,6 +628,7 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
   .one-pane:not(.reading) .thread time { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); padding-left: 0; }
   .one-pane:not(.reading) .thread-mid { flex: 0 1 auto; max-width: 46%; margin: 0; }
   .one-pane:not(.reading) .snippet { flex: 1; min-width: 0; -webkit-line-clamp: 1; }
+  .one-pane:not(.reading) .cards { display: none; }
   .one-pane:not(.reading) .row-actions { top: 50%; transform: translateY(-50%); }
   .one-pane:not(.reading) .bulk { left: 50%; right: auto; width: 420px; transform: translateX(-50%); animation: none; }
 }

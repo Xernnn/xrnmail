@@ -486,6 +486,26 @@ test('attachments: saved exactly, opened only when safe', async () => {
 })
 
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.
+test('a thread\'s files show as cards under its row, and Appearance can take them away', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const file = (name: string): { name: string; type: string; body: string } => ({ name, type: 'application/octet-stream', body: 'x' })
+  gmail.add(rawMail({ subject: 'Papers', attachment: file('report.pdf'), attachments: [file('sums.xlsx'), file('photo.png'), file('notes.txt')] }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Bare' }), { arrived: earlier(4) })
+  await signIn(run)
+  const row = page.locator('.threads .thread', { hasText: 'Papers' })
+  await expect(row.locator('.card')).toHaveText(['report.pdf', 'sums.xlsx', 'photo.png', '+1'])
+  await expect(page.locator('.threads .thread', { hasText: 'Bare' }).locator('.cards')).toHaveCount(0)
+  const [cards, words] = [await row.locator('.cards').boundingBox(), await row.locator('.snippet').boundingBox()]
+  expect(cards?.y ?? 0).toBeGreaterThanOrEqual((words?.y ?? 0) + (words?.height ?? 0)) // under the preview
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByLabel('Show a thread\'s files as cards under its row').uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(row.locator('.cards')).toHaveCount(0)
+  await expect(row.getByLabel('Has attachment: report.pdf and 3 more')).toBeVisible()
+})
+
 test('an attachment name cannot turn itself around to show a false type', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -493,6 +513,7 @@ test('an attachment name cannot turn itself around to show a false type', async 
   await signIn(run)
   const row = page.locator('.threads .thread', { hasText: 'Holiday' })
   await expect(row.getByLabel('Has attachment: photogpj.exe')).toBeVisible()
+  await expect(row.locator('.card-name')).toHaveText(['photogpj.exe']) // the card under the row tells the same truth
   await row.click()
   await expect(page.getByRole('list', { name: 'Attachments' }).locator('.file-name')).toHaveText(['photogpj.exe'])
   await expect(page.getByRole('button', { name: 'Save photogpj.exe' })).toBeVisible()

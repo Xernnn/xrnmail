@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  ArrowLeft, Ban, CalendarRange, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet,
-  FileText, FileVideo, Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Plane, Presentation, Printer, Reply,
+  ArrowLeft, Ban, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Plane, Printer, Reply,
   ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
-import { Avatar, Empty } from './Common'
-import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels, type FileKind } from './format'
+import { Avatar, Empty, KIND_ICONS } from './Common'
+import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 
@@ -62,11 +62,6 @@ function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: num
       ))}
     </div>
   )
-}
-
-const KIND_ICONS: Record<FileKind, LucideIcon> = {
-  image: FileImage, pdf: FileText, doc: FileText, sheet: FileSpreadsheet, slides: Presentation, archive: FileArchive,
-  calendar: CalendarRange, audio: FileAudio, video: FileVideo, file: FileIcon
 }
 
 function Attachments(props: { message: MessageView; say(text: string): void }): ReactNode {
