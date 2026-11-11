@@ -1,8 +1,9 @@
-import { useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronRight, Clock, DollarSign, FileText, Flag, Folder, ListChecks, Mail, Mails, OctagonAlert, Paperclip, Pencil, Pin, Plane,
-  RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
+  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, ListChecks, Mail, Mails, OctagonAlert,
+  Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
+import { arranged, cleanSidebar, moved, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
 import { ago, mailbox } from './format'
 
@@ -20,6 +21,28 @@ const showCount = (count: number): string => (count > BIGGEST_COUNT ? `${BIGGEST
 export const ASSISTANT: [AssistantSection, string, LucideIcon][] = [
   ['travel', 'Travel', Plane], ['packages', 'Packages', Truck], ['money', 'Bills & Receipts', DollarSign], ['events', 'Events', Ticket]
 ]
+
+/** The entries of the two lists that can be edited. With several accounts, [gathered] ones are "All …". */
+const ENTRIES: Record<SidebarEntry, { label: string; icon: LucideIcon; target: View; gathered?: boolean }> = {
+  today: { label: 'Today', icon: CalendarDays, target: { kind: 'today' } },
+  unread: { label: 'Unread', icon: Mail, target: { kind: 'unread' } },
+  starred: { label: 'Flagged', icon: Flag, target: { kind: 'starred' } },
+  pinned: { label: 'Pinned', icon: Pin, target: { kind: 'pinned' } },
+  snoozed: { label: 'Snoozed', icon: Clock, target: { kind: 'snoozed' } },
+  attachments: { label: 'Attachments', icon: Paperclip, target: { kind: 'attachments' } },
+  drafts: { label: 'Drafts', icon: FileText, target: { kind: 'drafts' }, gathered: true },
+  spam: { label: 'Spam', icon: OctagonAlert, target: { kind: 'spam' } },
+  trash: { label: 'Trash', icon: Trash2, target: { kind: 'trash' } },
+  archive: { label: 'Archive', icon: Check, target: { kind: 'archive' }, gathered: true },
+  sent: { label: 'Sent', icon: Send, target: { kind: 'sent' }, gathered: true },
+  subscriptions: { label: 'Subscriptions', icon: ListChecks, target: { kind: 'subscriptions' } },
+  ...Object.fromEntries(ASSISTANT.map(([section, label, icon]) => [section, { label, icon, target: { kind: 'assistant', section } }])) as
+    Record<AssistantSection, { label: string; icon: LucideIcon; target: View }>
+}
+const GROUP_NAMES = ['Folders', 'Assistant']
+
+/** What an entry carries while it's dragged to another place in its list. */
+const ENTRY = 'application/x-xrnmail-entry'
 
 /** Dragging something onto a place in the list does what going there would mean. */
 const DROPS = new Set(['inbox', 'starred', 'pinned', 'all', 'archive', 'spam', 'trash', 'label'])
@@ -45,12 +68,35 @@ export function Sidebar(props: {
   compose(): void
   settings(): void
   drop(target: View, refs: ThreadRef[]): void
-  /** Right-clicked: a list of mail, and where the pointer was. */
-  menu(target: ListQuery, x: number, y: number): void
+  /** Right-clicked: a list of mail, or none when it was somewhere else on the sidebar, and where the pointer was. */
+  menu(target: ListQuery | null, x: number, y: number): void
+  /** Which entries show, and in what order. */
+  choice: SidebarChoice
+  /** Being edited: the entries turn into switches that can be moved. */
+  editing: boolean
+  /** Editing is over, with what was chosen, or with nothing when it was called off. */
+  edited(choice: SidebarChoice | null): void
 }): ReactNode {
   const { accounts, overview, view, go, drafts } = props
   const many = accounts.length > 1
   const [closed, setClosed] = useState(savedClosed)
+  const [draft, setDraft] = useState(() => cleanSidebar(props.choice))
+
+  // Each time editing starts, it starts from what's saved.
+  useEffect(() => {
+    if (props.editing) setDraft(cleanSidebar(props.choice))
+  }, [props.editing])
+
+  useEffect(() => {
+    if (!props.editing) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      props.edited(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [props.editing])
 
   const toggle = (id: string): void => {
     const next = new Set(closed)
@@ -91,9 +137,9 @@ export function Sidebar(props: {
       <button className={`nav-item ${options.extra ?? ''} ${isOn(target) ? 'on' : ''}`} aria-current={isOn(target) ? 'page' : undefined}
         onClick={() => go(target)} {...dropping(target)}
         onContextMenu={(e) => {
-          if (target.kind === 'drafts' || target.kind === 'subscriptions') return
           e.preventDefault()
-          props.menu(target, e.clientX, e.clientY)
+          e.stopPropagation()
+          props.menu(target.kind === 'drafts' || target.kind === 'subscriptions' ? null : target, e.clientX, e.clientY)
         }}>
         {options.lead}
         {Icon && <Icon className="nav-icon" size={16} aria-hidden="true" />}
@@ -106,7 +152,6 @@ export function Sidebar(props: {
   const syncing = accounts.some((a) => a.syncing)
   const unread = accounts.reduce((sum, a) => sum + a.unread, 0)
   const lastSync = Math.max(0, ...accounts.map((a) => a.syncedAt ?? 0))
-  const all = many ? 'All ' : ''
 
   /** What belongs to one account alone: its own folders when there are several accounts, and its labels. */
   const folders = (a: AccountView): ReactNode => {
@@ -158,8 +203,75 @@ export function Sidebar(props: {
     )
   }
 
+  const labelOf = (entry: SidebarEntry): string => `${many && ENTRIES[entry].gathered ? 'All ' : ''}${ENTRIES[entry].label}`
+  const countOf = (entry: SidebarEntry): number | undefined =>
+    entry === 'drafts' ? drafts.length : entry === 'spam' ? overview?.spam : entry in (overview?.assistant ?? {}) ? overview?.assistant[entry as AssistantSection] : undefined
+
+  if (props.editing) {
+    const toggleEntry = (entry: SidebarEntry): void =>
+      setDraft({ ...draft, hidden: draft.hidden.includes(entry) ? draft.hidden.filter((e) => e !== entry) : [...draft.hidden, entry] })
+    return (
+      <nav className="sidebar editing" aria-label="Mailboxes">
+        <div className="sidebar-top">
+          <button className="link" onClick={() => props.edited(null)}>Cancel</button>
+          <span className="grow" />
+          <button className="pill strong" onClick={() => props.edited(draft)}>Done</button>
+        </div>
+        <div className="sidebar-scroll">
+          {SIDEBAR_GROUPS.map((group, g) => {
+            const list = arranged(group, draft)
+            return (
+              <Fragment key={g}>
+                {g > 0 && <hr />}
+                <ul className="nav-group nav-editing" aria-label={GROUP_NAMES[g]}>
+                  {list.map((entry, at) => {
+                    const { icon: Icon } = ENTRIES[entry]
+                    const label = labelOf(entry)
+                    return (
+                      <li className="nav-edit" key={entry} draggable
+                        onDragStart={(e) => { e.dataTransfer.setData(ENTRY, entry); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragOver={(e) => {
+                          if (!e.dataTransfer.types.includes(ENTRY)) return
+                          e.preventDefault()
+                          e.currentTarget.classList.add('drop')
+                        }}
+                        onDragLeave={(e) => e.currentTarget.classList.remove('drop')}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          e.currentTarget.classList.remove('drop')
+                          const from = e.dataTransfer.getData(ENTRY) as SidebarEntry
+                          if (from in ENTRIES) setDraft(moved(draft, from, entry))
+                        }}>
+                        <label className="grow">
+                          <input type="checkbox" checked={!draft.hidden.includes(entry)} onChange={() => toggleEntry(entry)} aria-label={`Show ${label}`} />
+                          <Icon className="nav-icon" size={16} aria-hidden="true" />
+                          <span className="grow">{label}</span>
+                        </label>
+                        <button className="icon" aria-label={`Move ${label} up`} disabled={at === 0}
+                          onClick={() => setDraft(moved(draft, entry, list[at - 1] ?? entry))}><ChevronUp size={14} aria-hidden="true" /></button>
+                        <button className="icon" aria-label={`Move ${label} down`} disabled={at === list.length - 1}
+                          onClick={() => setDraft(moved(draft, entry, list[at + 1] ?? entry))}><ChevronDown size={14} aria-hidden="true" /></button>
+                        <GripHorizontal className="nav-grip" size={15} aria-hidden="true" />
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Fragment>
+            )
+          })}
+        </div>
+      </nav>
+    )
+  }
+
+  const choice = cleanSidebar(props.choice)
+
   return (
-    <nav className="sidebar" aria-label="Mailboxes">
+    <nav className="sidebar" aria-label="Mailboxes"
+      onContextMenu={(e) => {
+        e.preventDefault()
+        props.menu(null, e.clientX, e.clientY)
+      }}>
       <div className="sidebar-top">
         <button className="compose" title="New message (c)" onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
         <span className="grow" />
@@ -176,27 +288,19 @@ export function Sidebar(props: {
         <hr />
         <div className="nav-group">{accounts.map(account)}</div>
         {accounts.map((a) => a.error && <div className="nav-error" role="alert" key={a.id}>{many ? `${mailbox(a.email)}: ` : ''}{a.error}</div>)}
-        <hr />
-        <div className="nav-group">
-          {item('Today', { kind: 'today' }, { icon: CalendarDays })}
-          {item('Unread', { kind: 'unread' }, { icon: Mail })}
-          {item('Flagged', { kind: 'starred' }, { icon: Flag })}
-          {item('Pinned', { kind: 'pinned' }, { icon: Pin })}
-          {item('Snoozed', { kind: 'snoozed' }, { icon: Clock })}
-          {item('Attachments', { kind: 'attachments' }, { icon: Paperclip })}
-          {item(`${all}Drafts`, { kind: 'drafts' }, { icon: FileText, count: drafts.length })}
-          {item('Spam', { kind: 'spam' }, { icon: OctagonAlert, count: overview?.spam })}
-          {item('Trash', { kind: 'trash' }, { icon: Trash2 })}
-          {item(`${all}Archive`, { kind: 'archive' }, { icon: Check })}
-          {item(`${all}Sent`, { kind: 'sent' }, { icon: Send })}
-        </div>
-        <hr />
-        <div className="nav-group">
-          {item('Subscriptions', { kind: 'subscriptions' }, { icon: ListChecks })}
-          {ASSISTANT.map(([kind, label, icon]) => (
-            <div key={kind}>{item(label, { kind: 'assistant', section: kind }, { icon, count: overview?.assistant[kind] })}</div>
-          ))}
-        </div>
+        {SIDEBAR_GROUPS.map((group, g) => {
+          const shown = arranged(group, choice).filter((entry) => !choice.hidden.includes(entry))
+          return shown.length > 0 && (
+            <Fragment key={g}>
+              <hr />
+              <div className="nav-group">
+                {shown.map((entry) => (
+                  <Fragment key={entry}>{item(labelOf(entry), ENTRIES[entry].target, { icon: ENTRIES[entry].icon, count: countOf(entry) })}</Fragment>
+                ))}
+              </div>
+            </Fragment>
+          )
+        })}
       </div>
       <div className="sidebar-foot">
         <span className="muted grow status">{syncing ? 'Checking for mail' : lastSync > 0 ? `Updated ${ago(lastSync)}` : ''}</span>

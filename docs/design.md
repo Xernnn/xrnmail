@@ -290,6 +290,10 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
 - `Sidebar.tsx`: Compose and refresh, the inbox, the accounts (each unfolds its own folders and
   labels), the gathered folders in Edison's order, then the Assistant's lists. Right-clicking a place
   offers to mark all of it read, which asks the store for the whole list, not the rows on screen.
+  Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
+  moved, by their arrows or by dragging, each within its own list. The choice is a setting
+  (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
+  up after the one it follows, shown, in a choice saved before it existed.
 - `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
   floats under a selection, and what every key and button does.
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick

@@ -1,5 +1,6 @@
 import type { KeySet } from './keys'
 import type { AccountConfig, Server } from './providers'
+import type { SidebarChoice } from './sidebar'
 
 /** What crosses between the app's two halves. Both sides read this file. */
 
@@ -112,6 +113,8 @@ export interface Settings {
   previewLines: number
   /** A thread's files as small cards under its row in the list. */
   attachmentCards: boolean
+  /** Which of the sidebar's folders and Assistant lists show, and in what order. */
+  sidebar: SidebarChoice
   /** Icons beside the sidebar's entries. */
   sidebarIcons: boolean
   /** Times as 17:30, not 5:30 PM. */
@@ -306,7 +309,7 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 

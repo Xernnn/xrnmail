@@ -204,6 +204,11 @@ test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen i
   await page.getByLabel('Shortcut set').selectOption('gmail')
   await expect(page.getByText('Remove from view')).toHaveCount(0)
   await page.getByRole('button', { name: 'Done' }).click()
+  // The window hears of a changed setting a moment after it's saved. Its own list of keys says when.
+  await page.keyboard.press('?')
+  await expect(page.getByRole('heading', { name: 'Keys' })).toBeVisible()
+  await expect(page.locator('.keys')).not.toContainText('Remove from view')
+  await page.getByRole('button', { name: 'Done' }).click()
   await list.getByText('Second').click()
   await page.keyboard.press('Backspace') // not a key of this set
   await page.keyboard.press('d')
@@ -634,6 +639,70 @@ test('a composer of its own closed with nothing in it leaves no draft, and Undo 
   await solo.keyboard.press('Escape') // closed with words in it: kept in Drafts, and the window goes
   await expect.poll(() => app.windows().length).toBe(1)
   await expect.poll(() => page.evaluate(async () => (await window.mail.drafts()).map((d) => [d.subject, d.state]))).toEqual([['Too soon', 'draft']])
+})
+
+test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragging, and it lasts', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'One' }), { arrived: earlier(5) })
+  await signIn(run)
+  const side = page.locator('.sidebar')
+  const names = async (group: number): Promise<string[]> =>
+    (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
+  const folders = side.getByRole('list', { name: 'Folders' })
+  const assistant = side.getByRole('list', { name: 'Assistant' })
+
+  await side.getByRole('button', { name: 'Today', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: 'Mark all as read' })).toBeVisible() // a place keeps its own entry
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await expect(side.getByRole('button', { name: 'Compose' })).toHaveCount(0)
+  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
+  await expect(folders.getByRole('button', { name: 'Move Today up' })).toBeDisabled()
+  await expect(folders.getByRole('button', { name: 'Move Sent down' })).toBeDisabled()
+  await folders.getByLabel('Show Snoozed').uncheck()
+  await folders.getByRole('button', { name: 'Move Pinned up' }).click()
+  await folders.getByRole('button', { name: 'Move Today down' }).click()
+  await folders.getByRole('listitem').filter({ hasText: 'Sent' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Unread' }))
+  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  await assistant.getByLabel('Show Events').uncheck()
+  await assistant.getByRole('listitem').filter({ hasText: 'Packages' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Trash' })) // not into the other list
+  await expect(assistant.getByRole('listitem')).toHaveText(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
+  await side.getByRole('button', { name: 'Done' }).click()
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
+  await side.getByRole('button', { name: 'Pinned', exact: true }).click() // and they still go where they went
+  await expect(page.locator('.view-title')).toHaveText('Pinned')
+
+  // Called off, by the button or by Esc, nothing changes. Away from any entry the menu has the one thing.
+  await side.locator('.sidebar-foot .status').click({ button: 'right' })
+  await expect(page.getByRole('menuitem')).toHaveText(['Edit Menu'])
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await expect(folders.getByLabel('Show Snoozed')).not.toBeChecked()
+  await folders.getByLabel('Show Unread').uncheck()
+  await side.getByRole('button', { name: 'Cancel' }).click()
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  await side.getByRole('button', { name: 'Drafts', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menuitem')).toHaveText(['Edit Menu'])
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await folders.getByLabel('Show Unread').uncheck()
+  await page.keyboard.press('Escape')
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+
+  // Settings leads to the same place, and what was hidden comes back where it was put.
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Edit Menu' }).click()
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
+  await folders.getByLabel('Show Snoozed').check()
+  await side.getByRole('button', { name: 'Done' }).click()
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  const saved = await page.evaluate(async () => (await window.mail.settings()).sidebar)
+  expect(saved.hidden).toEqual(['events'])
+  expect(saved.order.slice(0, 5)).toEqual(['sent', 'unread', 'today', 'pinned', 'starred'])
+  await page.reload()
+  await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
 })
 
 test('muting a sender from the reader, and the muted senders in Settings', async () => {

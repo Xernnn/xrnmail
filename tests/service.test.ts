@@ -1043,6 +1043,24 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'pinned' })).toEqual([])
   })
 
+  it('keeps which entries the sidebar shows and their order, made whole whatever was saved', () => {
+    expect(service.settings().sidebar.hidden).toEqual([])
+    expect(service.settings().sidebar.order.slice(0, 4)).toEqual(['today', 'unread', 'starred', 'pinned'])
+    service.saveProfile({ sidebar: { order: ['sent', 'today', 'nonsense', 'sent'] as never, hidden: ['spam', 'spam', 'x'] as never } })
+    const saved = service.settings().sidebar
+    expect(saved.order.slice(0, 3)).toEqual(['sent', 'today', 'unread'])
+    expect(saved.hidden).toEqual(['spam'])
+    expect(new Set(saved.order).size).toBe(16)
+    service.saveProfile({ theme: 'dark' }) // another setting leaves it be
+    expect(service.settings().sidebar).toEqual(saved)
+    // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.
+    const old = { ...service.settings(), sidebar: { order: saved.order.filter((entry) => entry !== 'pinned'), hidden: ['spam'] } }
+    store.setMeta('settings', JSON.stringify(old))
+    const read = service.settings().sidebar
+    expect(read.order[read.order.indexOf('starred') + 1]).toBe('pinned')
+    expect(read.hidden).toEqual(['spam'])
+  })
+
   it('a row names its first three files, for the cards under it', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     const file = (name: string): { name: string; type: string; body: string } => ({ name, type: 'application/pdf', body: 'x' })

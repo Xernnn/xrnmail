@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
@@ -14,6 +14,7 @@ import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
+import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
 import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
@@ -30,6 +31,9 @@ interface Toast {
 
 const TOAST_MS = 5000
 const PAGE = 200
+
+/** Until the settings are read: everything, as it starts out. */
+const NO_CHOICE = cleanSidebar(null)
 
 /** Set in a window of its own, which shows one thread or one draft and none of the rest. */
 const SOLO = soloFrom(window.location.search)
@@ -119,7 +123,9 @@ export function App(): ReactNode {
   const [toast, setToast] = useState<Toast | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; row: ThreadRow } | null>(null)
-  const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery } | null>(null)
+  const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery | null } | null>(null)
+  /** The sidebar's entries are being chosen and put in order. */
+  const [editingMenu, setEditingMenu] = useState(false)
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
@@ -762,7 +768,10 @@ export function App(): ReactNode {
         </div>
       )}
       {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
-      {settings && <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)} />}
+      {settings && (
+        <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)}
+          editMenu={SOLO ? undefined : () => { setSettings(null); setEditingMenu(true) }} />
+      )}
       {question && <Confirm question={question} />}
     </>
   )
@@ -773,7 +782,14 @@ export function App(): ReactNode {
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
-        menu={(target, x, y) => setSideMenu({ x, y, target })} />
+        menu={(target, x, y) => setSideMenu({ x, y, target })}
+        choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
+        edited={(choice) => {
+          setEditingMenu(false)
+          if (!choice) return
+          setProfile((now) => (now ? { ...now, sidebar: choice } : now)) // shown at once; the save follows
+          void window.mail.saveProfile({ sidebar: choice }).catch((e: unknown) => say(problem(e))).then(bump)
+        }} />
       <div className="main">
         <header className="band">
           <h1 className="view-title">{titleOf(active, many)}</h1>
@@ -887,7 +903,10 @@ export function App(): ReactNode {
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
       {sideMenu && (
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
-          items={[{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target) }]} />
+          items={[
+            ...(sideMenu.target ? [{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target as ListQuery) }] : []),
+            { label: 'Edit Menu', icon: SlidersHorizontal, run: () => setEditingMenu(true) }
+          ]} />
       )}
       {over}
     </div>

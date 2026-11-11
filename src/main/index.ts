@@ -7,6 +7,7 @@ import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
   Rsvp, Server, SwipeAction, Template, ThreadRef
 } from '@shared/types'
+import { cleanSidebar } from '@shared/sidebar'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
@@ -256,6 +257,7 @@ function profile(value: unknown): ProfilePatch {
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
+  if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true

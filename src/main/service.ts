@@ -3,6 +3,7 @@ import type {
   NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { QUICK_SLOTS } from '@shared/types'
+import { cleanSidebar } from '@shared/sidebar'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
@@ -58,6 +59,7 @@ const DEFAULT_SETTINGS: Settings = {
   layout: 'panes',
   previewLines: 2,
   attachmentCards: true,
+  sidebar: cleanSidebar(null),
   sidebarIcons: true,
   clock24: true,
   keys: 'edison',
@@ -1196,7 +1198,8 @@ export class MailService {
       const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
-      return { ...merged, identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
+      // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
+      return { ...merged, sidebar: cleanSidebar(merged.sidebar), identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -1233,6 +1236,7 @@ export class MailService {
       layout: patch.layout ?? settings.layout,
       previewLines: patch.previewLines === undefined ? settings.previewLines : clamp(Math.round(patch.previewLines) || 0, 0, 4),
       attachmentCards: patch.attachmentCards ?? settings.attachmentCards,
+      sidebar: patch.sidebar ? cleanSidebar(patch.sidebar) : settings.sidebar,
       sidebarIcons: patch.sidebarIcons ?? settings.sidebarIcons,
       clock24: patch.clock24 ?? settings.clock24,
       keys: patch.keys ?? settings.keys,

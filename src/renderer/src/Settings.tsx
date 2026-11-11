@@ -28,7 +28,7 @@ const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout undo send pictures images tray background start login',
   notifications: 'new mail tell account mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days',
-  appearance: 'theme look dark light icons sidebar preview lines attachment cards files clock 24-hour time',
+  appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail',
   signatures: 'signature sign',
@@ -258,7 +258,7 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
   )
 }
 
-function Appearance(props: { settings: Settings; save: Save }): ReactNode {
+function Appearance(props: { settings: Settings; save: Save; editMenu?: () => void }): ReactNode {
   const { settings, save } = props
   return (
     <>
@@ -270,6 +270,12 @@ function Appearance(props: { settings: Settings; save: Save }): ReactNode {
       <section>
         <h3>Sidebar</h3>
         <Check label="Show icons in the sidebar" on={settings.sidebarIcons} set={(sidebarIcons) => save({ sidebarIcons })} />
+        {props.editMenu && (
+          <div className="line">
+            <span className="grow muted">Which entries it shows, and in what order. Right-clicking the sidebar does the same.</span>
+            <button className="quiet" onClick={props.editMenu}>Edit Menu</button>
+          </div>
+        )}
       </section>
       <section>
         <h3>List</h3>
@@ -435,6 +441,7 @@ function Pages(props: {
   settings: Settings
   ask: Ask
   save: Save
+  editMenu?: () => void
   saveBatch(batch: BatchSettings): void
   saveKeep(days: number): void
 }): ReactNode {
@@ -445,7 +452,7 @@ function Pages(props: {
       {page === 'general' && <General settings={settings} save={save} />}
       {page === 'notifications' && <Notifications accounts={accounts} ids={ids} muted={settings.muted} save={save} />}
       {page === 'accounts' && <Accounts accounts={accounts} settings={settings} ids={ids} ask={props.ask} saveKeep={props.saveKeep} />}
-      {page === 'appearance' && <Appearance settings={settings} save={save} />}
+      {page === 'appearance' && <Appearance settings={settings} save={save} editMenu={props.editMenu} />}
       {page === 'actions' && <Actions settings={settings} save={save} />}
       {page === 'shortcuts' && (
         <section>
@@ -465,7 +472,11 @@ function Pages(props: {
   )
 }
 
-export function SettingsDialog(props: { accounts: AccountView[]; close(): void; version: number; tab: Tab; ask: Ask }): ReactNode {
+export function SettingsDialog(props: {
+  accounts: AccountView[]; close(): void; version: number; tab: Tab; ask: Ask
+  /** Leaves Settings for the sidebar, with its entries ready to be chosen and moved. */
+  editMenu?: () => void
+}): ReactNode {
   const dialog = useRef<HTMLDialogElement>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [tab, setTab] = useState<Tab>(props.tab)
@@ -517,7 +528,7 @@ export function SettingsDialog(props: { accounts: AccountView[]; close(): void; 
           <button className="quiet" onClick={props.close}>Done</button>
         </header>
         {settings && (
-          <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} save={save}
+          <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} save={save} editMenu={props.editMenu}
             saveBatch={(b) => void saveBatch(b)} saveKeep={(d) => void saveKeep(d)} />
         )}
       </div>
