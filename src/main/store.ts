@@ -199,6 +199,16 @@ const MIGRATIONS = [
   `
   ALTER TABLE messages ADD COLUMN files_cut INTEGER NOT NULL DEFAULT 0;
   UPDATE messages SET files_cut = 1 WHERE truncated = 1;
+  `,
+  // The counts beside the list read columns that sit after the bodies, so answering them from the
+  // table walked every message's overflow pages. These hold all that a count reads. They're partial
+  // and start with a column the counts read a range of: one that started with bin and hidden was the
+  // planner's choice for every list as well, and made the lists twenty times slower.
+  `
+  CREATE INDEX messages_visible ON messages(release_at, account, labels) WHERE hidden = 0 AND bin = 0;
+  CREATE INDEX messages_unread ON messages(in_inbox, release_at, bin, focus, arrived, account, thread) WHERE seen = 0 AND hidden = 0;
+  DROP INDEX messages_kind;
+  CREATE INDEX messages_kind ON messages(kind, release_at, bin, hidden, seen, account, thread);
   `
 ]
 
@@ -590,7 +600,7 @@ export class Store {
   assistantCounts(now: number): Record<AssistantSection, number> {
     const rows = this.all(
       `SELECT kind, COUNT(DISTINCT account || thread) AS n FROM messages
-       WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND seen = 0 AND kind != '' GROUP BY kind`,
+       WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND seen = 0 AND kind > '' GROUP BY kind`,
       now
     )
     const count = (kind: string): number => Number(rows.find((r) => r['kind'] === kind)?.['n'] ?? 0)
@@ -990,10 +1000,12 @@ export class Store {
     })
   }
 
+  /** The index is named because, left to itself, the planner walks messages_thread for the grouping
+   *  and reads every message for its labels. */
   labelCounts(now: number): LabelCount[] {
     const rows = this.all(
       `SELECT m.account AS account, j.value AS label, COUNT(*) AS n
-       FROM messages m, json_each(m.labels) j
+       FROM messages m INDEXED BY messages_visible, json_each(m.labels) j
        WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND j.value NOT LIKE '\\%' ESCAPE '|'
        GROUP BY m.account, j.value ORDER BY m.account, j.value`,
       now
