@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTime, isVip, nextBatchAfter, releaseAt, type BatchRules } from '@main/batches'
+import { holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, releaseAt, type BatchRules, type SummaryRules } from '@main/batches'
 
 const at = (day: number, hour: number, minute = 0): number => new Date(2026, 10, day, hour, minute).getTime()
 const TIMES = ['09:00', '13:00', '17:00']
@@ -56,5 +56,45 @@ describe('releaseAt', () => {
   })
   it('batching off shows everything', () => {
     expect(releaseAt(mail(), 'me@x.com', HOLD_FROM, { times: [], vip: [] })).toBe(at(6, 10))
+  })
+})
+
+describe('the Summary', () => {
+  // 6 November 2026 is a Friday.
+  const DAILY: SummaryRules = { senders: ['news@shop.example', '@letters.example'], every: 'daily', time: '08:00', day: 1 }
+  const WEEKLY: SummaryRules = { ...DAILY, every: 'weekly', day: 1 }
+  const mail = (from: string, over = {}): { arrived: number; fromAddress: string; labels: string[] } => ({
+    arrived: at(6, 10), fromAddress: from, labels: ['\\Inbox'], ...over
+  })
+
+  it('lands daily at its time, strictly after', () => {
+    expect(nextSummaryAfter(at(6, 10), DAILY)).toBe(at(7, 8))
+    expect(nextSummaryAfter(at(6, 7, 59), DAILY)).toBe(at(6, 8))
+    expect(nextSummaryAfter(at(6, 8), DAILY)).toBe(at(7, 8))
+  })
+  it('lands weekly on its day', () => {
+    expect(nextSummaryAfter(at(6, 10), WEEKLY)).toBe(at(9, 8)) // the Monday after
+    expect(nextSummaryAfter(at(9, 7), WEEKLY)).toBe(at(9, 8))
+    expect(nextSummaryAfter(at(9, 8), WEEKLY)).toBe(at(16, 8))
+    expect(nextSummaryAfter(at(6, 10), { ...WEEKLY, day: 5 })).toBe(at(13, 8)) // Friday's has gone: next Friday
+  })
+  it('falls back to the morning for a time that makes no sense', () => {
+    expect(nextSummaryAfter(at(6, 10), { ...DAILY, time: '25:00' })).toBe(at(7, 8))
+  })
+  it('holds its senders for it, not for the next batch', () => {
+    const rules = { ...RULES, summary: DAILY }
+    expect(holdOf(mail('News@Shop.example'), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(7, 8), summary: true })
+    expect(holdOf(mail('a@letters.example'), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(7, 8), summary: true })
+    expect(holdOf(mail('ada@example.com'), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(6, 13), summary: false })
+  })
+  it('holds them with batches off, and before a straight-through rule that covers them too', () => {
+    expect(holdOf(mail('news@shop.example'), 'me@x.com', HOLD_FROM, { times: [], vip: [], summary: DAILY })).toEqual({ at: at(7, 8), summary: true })
+    expect(holdOf(mail('news@shop.example'), 'me@x.com', HOLD_FROM, { ...RULES, vip: ['@shop.example'], summary: DAILY })).toEqual({ at: at(7, 8), summary: true })
+  })
+  it('never holds what never waits', () => {
+    const rules = { ...RULES, summary: DAILY }
+    expect(holdOf(mail('news@shop.example', { arrived: HOLD_FROM - 1 }), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: HOLD_FROM - 1, summary: false })
+    expect(holdOf(mail('news@shop.example', { labels: ['Receipts'] }), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(6, 10), summary: false })
+    expect(releaseAt(mail('news@shop.example'), 'news@shop.example', HOLD_FROM, rules)).toBe(at(6, 10))
   })
 })

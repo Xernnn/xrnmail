@@ -6,6 +6,7 @@ import type {
   Subscription, ThreadRef, ThreadRow
 } from '@shared/types'
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
+import type { Hold } from './batches'
 import type { Unsubscribe } from './parse'
 
 /**
@@ -40,6 +41,8 @@ export interface StoredMail {
   truncated: boolean
   size: number
   releaseAt: number
+  /** Held for the Summary, and once it lands, part of the Summary it came with. */
+  summary: boolean
   focused: boolean
   facts: Facts | null
   warnings: SenderWarning[]
@@ -50,6 +53,15 @@ export interface HeldMail {
   arrived: number
   fromAddress: string
   labels: string[]
+}
+
+/** The Summary that landed last: when, and what of it is still waiting to be read in the inbox. */
+export interface LatestSummary {
+  at: number
+  /** Threads in it still unread in the inbox. */
+  unread: number
+  /** Who sent those, by name, each once. */
+  senders: string[]
 }
 
 /** How far a folder has been read. */
@@ -222,6 +234,18 @@ export const MIGRATIONS = [
     account TEXT NOT NULL, thread TEXT NOT NULL, at INTEGER NOT NULL,
     PRIMARY KEY(account, thread));
   CREATE INDEX recent_at ON recent(at);
+  `,
+  // The Subscription Summary. A message held for it is marked, and stays marked once it lands, which
+  // is how it's kept out of the inbox and gathered by the Summary it came with. The counts beside the
+  // list now ask about it too, so the indexes that answer them carry it, starting as before; and the
+  // Summary's own few rows have an index that holds all its counts read.
+  `
+  ALTER TABLE messages ADD COLUMN summary INTEGER NOT NULL DEFAULT 0;
+  DROP INDEX messages_visible;
+  CREATE INDEX messages_visible ON messages(release_at, account, labels, summary) WHERE hidden = 0 AND bin = 0;
+  DROP INDEX messages_unread;
+  CREATE INDEX messages_unread ON messages(in_inbox, release_at, bin, focus, arrived, account, thread, summary) WHERE seen = 0 AND hidden = 0;
+  CREATE INDEX messages_summary ON messages(release_at, account, thread, hidden, bin, in_inbox, seen, from_name, from_address, arrived) WHERE summary = 1;
   `
 ]
 
@@ -413,8 +437,8 @@ export class Store {
           `INSERT OR IGNORE INTO messages(account, box, uid, thread, gmail_id, message_id, subject, from_name, from_address,
              to_json, cc_json, reply_to, refs, unsubscribe, arrived, snippet, body_text, body_html, attachments,
              has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, files_cut, size, release_at,
-             focus, kind, facts, warnings)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+             summary, focus, kind, facts, warnings)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           mail.account, mail.box, mail.uid, mail.thread, mail.gmailId, mail.messageId, mail.subject, mail.from.name, mail.from.address,
@@ -425,7 +449,7 @@ export class Store {
           JSON.stringify(mail.labels), mail.labels.includes(INBOX) ? 1 : 0, binOf(mail.labels),
           // Gmail's own unsent drafts live in All Mail too; a thread shouldn't show them as sent.
           mail.seen ? 1 : 0, mail.flagged ? 1 : 0, mail.labels.includes(DRAFT) ? 1 : 0,
-          mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt,
+          mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt, mail.summary ? 1 : 0,
           mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings)
         )
       if (Number(result.changes) === 0) return null
@@ -522,9 +546,10 @@ export class Store {
     const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0 } = options
     const rows = this.all(
       `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, t.latest AS date,
-              t.n, t.unread, t.attachment, t.starred, s.until AS snoozed, p.at AS pinned
+              t.n, t.unread, t.attachment, t.starred, t.delivered, s.until AS snoozed, p.at AS pinned
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
-                    SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred
+                    SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred,
+                    MAX(CASE WHEN summary = 1 THEN release_at END) AS delivered
              FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = ? AND ${where} GROUP BY account, thread) t
        JOIN messages m ON m.account = t.account AND m.thread = t.thread AND m.arrived = t.latest
                       AND m.release_at <= ? AND m.hidden = 0 AND m.bin = ?
@@ -550,7 +575,8 @@ export class Store {
       starred: Number(r['starred']) > 0,
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
       facts: factsFrom(r['facts']),
-      pinned: r['pinned'] != null
+      pinned: r['pinned'] != null,
+      summaryAt: r['delivered'] == null ? null : Number(r['delivered'])
     }))
   }
 
@@ -598,9 +624,15 @@ export class Store {
     const away = 's.until > ? AND s.at >= t.latest'
     switch (query.kind) {
       case 'inbox': {
+        // What a Summary brought is kept apart from the rest of the inbox, under Summary.
         const side = query.focus ? ` AND focus = ${query.focus === 'focused' ? 1 : 0}` : ''
-        return this.threadRows(by(`in_inbox = 1${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+        return this.threadRows(by(`in_inbox = 1 AND summary = 0${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
       }
+      case 'summary':
+        // Each Summary together, the last to land first.
+        return this.threadRows(by('in_inbox = 1 AND summary = 1'), params, now, limit, {
+          outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now], order: 't.delivered DESC, t.latest DESC'
+        })
       case 'snoozed':
         return this.threadRows(by('in_inbox = 1'), params, now, limit, { outer: away, outerParams: [now], order: 's.until ASC' })
       case 'starred':
@@ -986,12 +1018,13 @@ export class Store {
     this.db.prepare('UPDATE messages SET focus = ? WHERE lower(from_address) = ?').run(focused ? 1 : 0, address.toLowerCase())
   }
 
-  /** Threads with something unread in an inbox. A snoozed thread isn't waiting for anyone. */
+  /** Threads with something unread in an inbox. A snoozed thread isn't waiting for anyone, and what a
+   *  Summary brought is counted under Summary. */
   unreadThreads(now: number, where: string, ...params: SQLInputValue[]): number {
     const row = this.one(
       `SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread FROM messages m
          LEFT JOIN snoozes s ON s.account = m.account AND s.thread = m.thread
-         WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.in_inbox = 1 AND m.seen = 0
+         WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.in_inbox = 1 AND m.seen = 0 AND m.summary = 0
            AND NOT (s.until IS NOT NULL AND s.until > ? AND s.at >= m.arrived) AND ${where})`,
       now, now, ...params
     )
@@ -1016,6 +1049,24 @@ export class Store {
     }))
   }
 
+  /** What's here from each of these addresses, most first. */
+  sendersOf(addresses: string[], now: number): Subscription[] {
+    const rows = this.all(
+      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest
+       FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND lower(from_address) IN (SELECT value FROM json_each(?))
+       GROUP BY account, lower(from_address) ORDER BY n DESC, latest DESC`,
+      now, JSON.stringify(addresses.map((a) => a.toLowerCase()))
+    )
+    return rows.map((r) => ({
+      account: String(r['account']),
+      name: String(r['name'] ?? ''),
+      address: String(r['address']),
+      count: Number(r['n']),
+      latest: Number(r['latest']),
+      message: Number(r['newest'])
+    }))
+  }
+
   /** Every thread a sender has mail in, that could be seen now. */
   threadsFrom(account: string, address: string, now: number): ThreadRef[] {
     return this.all(
@@ -1024,22 +1075,51 @@ export class Store {
     ).map((r) => ({ account, thread: String(r['thread']) }))
   }
 
+  /** Mail waiting for the next batch. What waits for the Summary is counted apart. */
   heldCount(now: number): number {
-    return Number(this.one('SELECT COUNT(*) AS n FROM messages WHERE release_at > ? AND hidden = 0 AND bin = 0', now)?.['n'] ?? 0)
+    return Number(this.one('SELECT COUNT(*) AS n FROM messages WHERE release_at > ? AND hidden = 0 AND bin = 0 AND summary = 0', now)?.['n'] ?? 0)
   }
 
+  /** When the next batch brings something. */
   nextRelease(now: number): number | null {
-    const value = this.one('SELECT MIN(release_at) AS t FROM messages WHERE release_at > ? AND hidden = 0 AND bin = 0', now)?.['t']
+    const value = this.one('SELECT MIN(release_at) AS t FROM messages WHERE release_at > ? AND hidden = 0 AND bin = 0 AND summary = 0', now)?.['t']
     return value == null ? null : Number(value)
   }
 
-  /** How many held messages landed in (after, upto]: what a batch brought. */
-  /** Who sent each message a delivery brought in (after, upto], one entry a message. */
-  landedFrom(after: number, upto: number): string[] {
+  /** Mail waiting for the next Summary. */
+  summaryHeld(now: number): number {
+    return Number(this.one('SELECT COUNT(*) AS n FROM messages WHERE summary = 1 AND release_at > ? AND hidden = 0 AND bin = 0', now)?.['n'] ?? 0)
+  }
+
+  /** Threads in Summary with something unread. */
+  summaryUnread(now: number): number {
+    return Number(this.one(
+      `SELECT COUNT(DISTINCT account || thread) AS n FROM messages
+       WHERE summary = 1 AND release_at <= ? AND hidden = 0 AND bin = 0 AND in_inbox = 1 AND seen = 0`,
+      now
+    )?.['n'] ?? 0)
+  }
+
+  /** The Summary that landed last, with what of it is still unread in the inbox. */
+  latestSummary(now: number): LatestSummary | null {
+    const at = this.one('SELECT MAX(release_at) AS t FROM messages WHERE summary = 1 AND release_at <= ? AND hidden = 0', now)?.['t']
+    if (at == null) return null
+    const rows = this.all(
+      `SELECT account || thread AS thread, from_name, from_address FROM messages
+       WHERE summary = 1 AND release_at = ? AND hidden = 0 AND bin = 0 AND in_inbox = 1 AND seen = 0 ORDER BY arrived DESC`,
+      Number(at)
+    )
+    const senders = [...new Set(rows.map((r) => String(r['from_name'] || r['from_address'])))]
+    return { at: Number(at), unread: new Set(rows.map((r) => String(r['thread']))).size, senders }
+  }
+
+  /** Who sent each message a delivery brought in (after, upto], one entry a message, and whether it
+   *  came with a Summary. */
+  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean }[] {
     return this.all(
-      'SELECT from_address FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
+      'SELECT from_address, from_name, summary FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
       after, upto
-    ).map((r) => String(r['from_address']))
+    ).map((r) => ({ from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0 }))
   }
 
   landedBetween(after: number, upto: number): number {
@@ -1051,22 +1131,24 @@ export class Store {
     )
   }
 
+  /** Delivering early is for the batch: what waits for the Summary keeps waiting for it. */
   releaseAll(now: number): number {
-    return Number(this.db.prepare('UPDATE messages SET release_at = ? WHERE release_at > ?').run(now, now).changes)
+    return Number(this.db.prepare('UPDATE messages SET release_at = ? WHERE release_at > ? AND summary = 0').run(now, now).changes)
   }
 
-  /** Moves waiting mail onto a new timetable, after the batch settings change. */
-  retime(compute: (mail: HeldMail) => number, now: number): void {
+  /** Moves waiting mail onto a new timetable, after the batch or Summary settings change, and into or
+   *  out of the Summary. */
+  retime(compute: (mail: HeldMail) => Hold, now: number): void {
     const rows = this.all('SELECT id, account, arrived, from_address, labels FROM messages WHERE release_at > ?', now)
     this.inTransaction(() => {
       for (const row of rows) {
-        const moment = compute({
+        const hold = compute({
           account: String(row['account']),
           arrived: Number(row['arrived']),
           fromAddress: String(row['from_address']),
           labels: parseList<string>(row['labels'])
         })
-        this.db.prepare('UPDATE messages SET release_at = ? WHERE id = ?').run(moment, Number(row['id']))
+        this.db.prepare('UPDATE messages SET release_at = ?, summary = ? WHERE id = ?').run(hold.at, hold.summary ? 1 : 0, Number(row['id']))
       }
     })
   }

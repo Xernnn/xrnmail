@@ -1,13 +1,13 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { QUICK_SLOTS } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
-import { dayKey, isTime, isVip, nextBatchAfter, releaseAt } from './batches'
+import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
 import { escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
@@ -43,6 +43,7 @@ const NOTE_MS = 10 * 60_000
 
 const DEFAULT_SETTINGS: Settings = {
   batch: { times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
+  summary: { senders: [], every: 'daily', time: '08:00', day: 1, chosen: false },
   backfillDays: 90,
   hub: { url: '', user: '', connected: false },
   identities: {},
@@ -115,6 +116,8 @@ export interface ServiceDeps {
   changed(): void
   /** New mail landed. [preview] says who and what, when it's one message found the moment it came. */
   landed?(count: number, preview?: { from: string; subject: string }): void
+  /** A Summary landed: how many messages it brought, and who from. */
+  summarized?(count: number, senders: string[]): void
   post?: typeof fetch
   records?: DomainRecords
   earlyWaitSeconds?: number
@@ -134,6 +137,16 @@ const cleanSenders = (senders: string[]): string[] =>
 
 /** Text set as a new draft's body, in the form the editor keeps. */
 const escapeForEditor = (text: string): string => escapeHtml(text).replace(/\r?\n/g, '<br>')
+
+export function cleanSummary(summary: Partial<SummarySettings>): SummarySettings {
+  return {
+    senders: cleanSenders(Array.isArray(summary.senders) ? summary.senders : []),
+    every: summary.every === 'weekly' ? 'weekly' : 'daily',
+    time: typeof summary.time === 'string' && isTime(summary.time) ? summary.time : '08:00',
+    day: clamp(Number(summary.day), 0, 6),
+    chosen: summary.chosen === true
+  }
+}
 
 export function cleanBatch(batch: BatchSettings): BatchSettings {
   return {
@@ -555,6 +568,8 @@ export class MailService {
     const own = this.ownAddresses(email)
     let fresh = 0
     let preview = { from: '', subject: '' }
+    /** Who sent what a Summary has already brought, found by this pass. */
+    const summed: string[] = []
     const blocked: number[] = []
     let source: MailSource | null = null
     try {
@@ -565,7 +580,7 @@ export class MailService {
         account: email,
         email,
         backfillDays: settings.backfillDays,
-        rules: settings.batch,
+        rules: this.rules(settings),
         now: this.deps.now(),
         progress: (done, total) => {
           status.progress = total >= WORTH_SHOWING && done < total ? { done, total } : null
@@ -578,8 +593,11 @@ export class MailService {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           if (isVip(mail.from.address, settings.blocked)) blocked.push(id)
           else if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
-            fresh++
-            preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
+            if (mail.summary) summed.push(mail.from.name || mail.from.address)
+            else {
+              fresh++
+              preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
+            }
           }
         }
       })
@@ -602,6 +620,12 @@ export class MailService {
     const unwanted = this.store.locate(blocked).map((row) => this.store.visibleState(row.id)).filter((s) => s !== null)
     if (unwanted.length > 0) this.change(email, unwanted, { kind: 'trash' }, this.nextGroup(), 0)
     if (fresh > 0) this.deps.landed?.(fresh, fresh === 1 ? preview : undefined)
+    if (summed.length > 0) this.deps.summarized?.(summed.length, unique(summed))
+  }
+
+  /** What decides when mail lands: the batches, who comes straight through, and the Summary. */
+  private rules(settings = this.settings()): BatchRules {
+    return { ...settings.batch, summary: settings.summary }
   }
 
   /** Mail a sync finds that's already due never passes through a tick's window, which only sees
@@ -626,15 +650,20 @@ export class MailService {
    *  would notice. */
   async tick(): Promise<void> {
     const now = this.deps.now()
-    const senders = this.store.landedFrom(this.lastTick, now)
+    const landed = this.store.landedFrom(this.lastTick, now)
+    const senders = landed.filter((mail) => !mail.summary)
+    const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
     const woken = this.store.wokenBetween(this.lastTick, now)
     this.lastTick = now
-    if (batch + woken > 0) {
+    if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
       const muted = this.settings().muted
-      const loud = senders.filter((from) => !isVip(from, muted)).length + woken
+      const loud = senders.filter((mail) => !isVip(mail.from, muted)).length + woken
       if (loud > 0) this.deps.landed?.(loud)
+      // A Summary is announced as one, apart from the batch.
+      const told = summed.filter((mail) => !isVip(mail.from, muted))
+      if (told.length > 0) this.deps.summarized?.(told.length, unique(told.map((mail) => mail.name || mail.from)))
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
@@ -779,6 +808,7 @@ export class MailService {
 
   overview(): Overview {
     const now = this.deps.now()
+    const { summary } = this.settings()
     return {
       held: this.store.heldCount(now),
       nextBatch: this.nextBatch(now),
@@ -786,7 +816,13 @@ export class MailService {
       labels: this.store.labelCounts(now),
       otherUnread: this.store.unreadThreads(now, 'm.focus = 0'),
       spam: this.store.spamCount(now),
-      assistant: this.store.assistantCounts(now)
+      assistant: this.store.assistantCounts(now),
+      summary: {
+        next: summary.senders.length > 0 ? nextSummaryAfter(now, summary) : null,
+        held: this.store.summaryHeld(now),
+        unread: this.store.summaryUnread(now),
+        latest: this.store.latestSummary(now)
+      }
     }
   }
 
@@ -894,9 +930,20 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Senders mailing in bulk, other than the ones left behind and the ones in the Summary, which
+   *  have sides of their own. */
   subscriptions(): Subscription[] {
-    const left = new Set(this.settings().unsubscribed)
-    return this.store.subscriptions(this.deps.now()).filter((s) => !left.has(s.address))
+    const { unsubscribed, summary } = this.settings()
+    const left = new Set(unsubscribed)
+    return this.store.subscriptions(this.deps.now()).filter((s) => !left.has(s.address) && !isVip(s.address, summary.senders))
+  }
+
+  /** The Summary's senders, with what's here from each, most first; then the ones with nothing here. */
+  summarySenders(): Subscription[] {
+    const { senders } = this.settings().summary
+    const here = this.store.sendersOf(senders.filter((s) => !s.startsWith('@')), this.deps.now())
+    const gone = senders.filter((address) => !here.some((s) => s.address === address)).sort()
+    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0 }))]
   }
 
   /** Senders left behind: first those with mail still here, biggest first, then the ones whose mail has gone. */
@@ -1203,7 +1250,7 @@ export class MailService {
       const saved = JSON.parse(this.store.meta('settings') ?? '{}') as Partial<Settings>
       // "Compact" rows, from before the list counted lines, were rows with one line of the message.
       const lines = saved.previewLines ?? ((saved as { density?: string }).density === 'compact' ? 1 : DEFAULT_SETTINGS.previewLines)
-      const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines }
+      const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
@@ -1220,13 +1267,33 @@ export class MailService {
   /** Waiting mail moves to the next slot of the new timetable. Measuring from now, not from when it
    *  arrived, means changing the times can't deliver anything early by accident. */
   saveBatch(batch: BatchSettings): void {
+    const settings = this.settings()
     const clean = cleanBatch(batch)
-    this.saveSettings({ ...this.settings(), batch: clean })
+    // Coming straight through and waiting for the Summary pull opposite ways, so a sender newly let
+    // through leaves the Summary.
+    const added = clean.vip.filter((v) => !settings.batch.vip.includes(v))
+    const summary = { ...settings.summary, senders: settings.summary.senders.filter((s) => !added.includes(s)) }
+    this.saveSettings({ ...settings, batch: clean, summary })
+    this.retime({ ...clean, summary })
+  }
+
+  /** A sender added to the Summary waits for it from now on, and what it's sent that's waiting for a
+   *  batch moves to the Summary. One taken out goes back to the batches. Moving the time moves what's
+   *  waiting with it. */
+  saveSummary(summary: SummarySettings): void {
+    const settings = this.settings()
+    const clean = cleanSummary(summary)
+    const added = clean.senders.filter((s) => !settings.summary.senders.includes(s))
+    const batch = { ...settings.batch, vip: settings.batch.vip.filter((v) => !added.includes(v)) }
+    this.saveSettings({ ...settings, batch, summary: clean })
+    this.retime({ ...batch, summary: clean })
+  }
+
+  /** Waiting mail moves to its next moment under [rules], measured from now, not from when it
+   *  arrived, so a change can't deliver anything early by accident. */
+  private retime(rules: BatchRules): void {
     const now = this.deps.now()
-    this.store.retime((mail) => {
-      const holdFrom = this.store.holdFrom(mail.account) ?? 0
-      return releaseAt({ ...mail, arrived: now }, mail.account, holdFrom, clean)
-    }, now)
+    this.store.retime((mail) => holdOf({ ...mail, arrived: now }, mail.account, this.store.holdFrom(mail.account) ?? 0, rules), now)
     this.deps.changed()
   }
 

@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useState, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, OctagonAlert,
+  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
 import { arranged, cleanSidebar, moved, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
 import { ago, mailbox } from './format'
 
-export type View = ListQuery | { kind: 'drafts'; account?: string } | { kind: 'subscriptions'; left?: boolean }
+export type View = ListQuery | { kind: 'drafts'; account?: string } | { kind: 'subscriptions'; side?: 'left' | 'summary' }
 
 export const sameView = (a: View, b: View): boolean => JSON.stringify(a) === JSON.stringify(b)
 
@@ -28,6 +28,7 @@ const ENTRIES: Record<SidebarEntry, { label: string; icon: LucideIcon; target: V
   unread: { label: 'Unread', icon: Mail, target: { kind: 'unread' } },
   starred: { label: 'Flagged', icon: Flag, target: { kind: 'starred' } },
   pinned: { label: 'Pinned', icon: Pin, target: { kind: 'pinned' } },
+  summary: { label: 'Summary', icon: Newspaper, target: { kind: 'summary' } },
   snoozed: { label: 'Snoozed', icon: Clock, target: { kind: 'snoozed' } },
   attachments: { label: 'Attachments', icon: Paperclip, target: { kind: 'attachments' } },
   drafts: { label: 'Drafts', icon: FileText, target: { kind: 'drafts' }, gathered: true },
@@ -206,7 +207,7 @@ export function Sidebar(props: {
 
   const labelOf = (entry: SidebarEntry): string => `${many && ENTRIES[entry].gathered ? 'All ' : ''}${ENTRIES[entry].label}`
   const countOf = (entry: SidebarEntry): number | undefined =>
-    entry === 'drafts' ? drafts.length : entry === 'spam' ? overview?.spam : entry in (overview?.assistant ?? {}) ? overview?.assistant[entry as AssistantSection] : undefined
+    entry === 'drafts' ? drafts.length : entry === 'spam' ? overview?.spam : entry === 'summary' ? overview?.summary.unread : entry in (overview?.assistant ?? {}) ? overview?.assistant[entry as AssistantSection] : undefined
 
   if (props.editing) {
     const toggleEntry = (entry: SidebarEntry): void =>

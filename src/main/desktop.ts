@@ -162,6 +162,20 @@ export function notify(count: number, preview: { from: string; subject: string }
   note.show()
 }
 
+/** A Summary is one notice for all it brought: how many, and who from. */
+export function notifySummary(count: number, senders: string[], open: () => void): void {
+  if (!Notification.isSupported()) return
+  const shown = senders.slice(0, 3).join(', ')
+  const more = senders.length > 3 ? ` and ${senders.length - 3} more` : ''
+  const note = new Notification({
+    title: 'Your Summary is here',
+    body: asText(`${count === 1 ? '1 message' : `${count} messages`} from ${shown}${more}`),
+    icon: iconPath()
+  })
+  note.on('click', open)
+  note.show()
+}
+
 const AUTOSTART_FLAG = '--hidden'
 
 export const startedHidden = (argv: string[]): boolean => argv.includes(AUTOSTART_FLAG)

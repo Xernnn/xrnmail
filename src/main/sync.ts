@@ -1,6 +1,6 @@
 import { labelsOf } from './actions'
 import type { Sorted } from './assistant'
-import { releaseAt, type BatchRules } from './batches'
+import { holdOf, type BatchRules } from './batches'
 import { MAX_SOURCE, parseMail, type ParsedMail } from './parse'
 import { threadOf, type MailboxRef, type MailSource, type RemoteMail } from './source'
 import type { Store, StoredMail } from './store'
@@ -71,6 +71,7 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
   }
   const labels = labelsOf(box, remote.labels, gmail)
   const sorted = options.sort?.(mail) ?? { focused: true, facts: null }
+  const hold = holdOf({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, options.rules)
   return {
     account: options.account,
     box: box.id,
@@ -95,7 +96,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
     flagged: remote.flagged,
     truncated: remote.size > MAX_SOURCE,
     size: remote.size,
-    releaseAt: releaseAt({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, options.rules),
+    releaseAt: hold.at,
+    summary: hold.summary,
     focused: sorted.focused,
     facts: sorted.facts,
     warnings: mail.warnings

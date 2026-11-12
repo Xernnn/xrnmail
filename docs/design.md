@@ -203,6 +203,30 @@ sender can write what they like there.
 - Changing the times moves waiting mail to the next slot after now, so a change can't deliver
   anything early. Turning batches off, or adding a sender to the straight-through list, does.
 
+### The Subscription Summary
+
+`holdOf` decides a message's moment, in this order: mail that never waits (from before the account,
+not in the inbox, your own) is there at once; a sender in the Summary waits for its next time, daily
+or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch. The
+Summary comes before straight through because it's the narrower choice (an address against a whole
+@domain, say), and the two lists are kept apart for the same address: adding to one takes it off the
+other.
+
+A message held for the Summary is marked (`summary`), and stays marked once it lands, so a Summary is
+simply the marked messages with the same `release_at`. The inbox and its counts leave marked mail out,
+and the Summary list is the marked mail still in the inbox, by when its Summary landed. Nothing about
+this reaches the server, where the mail sits in the inbox as usual.
+
+- The waiting count, the next delivery and Deliver now are the batch's alone, so Deliver now delivers
+  what it says and the Summary keeps its time. The Summary's own count and next time are beside them.
+- Adding a sender moves what they have waiting for a batch to the Summary; taking one out, or turning
+  the Summary off, sends what it holds of theirs back to the batches. A new time moves what's waiting
+  to it. All of these go through the same `retime` as the batch times, measured from now.
+- A tick tells about a batch and a Summary apart (`landed`, `summarized`), so a Summary is one notice
+  for all it brought. A sync that finds a Summary already landed, after the laptop was off at its
+  time, says so the same way instead of announcing its mail as new. Muted senders count in neither.
+- xrnhub hears only about batches.
+
 ## Hostile mail
 
 A stranger writes every email, and the window holds a bridge to all of them. So there are several

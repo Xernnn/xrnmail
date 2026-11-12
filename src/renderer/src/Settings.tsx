@@ -1,25 +1,28 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
 } from 'lucide-react'
-import { QUICK_SLOTS, type AccountView, type BatchSettings, type Identity, type ProfilePatch, type QuickAction, type Settings, type SwipeAction, type Template } from '@shared/types'
+import {
+  QUICK_SLOTS, type AccountView, type BatchSettings, type Identity, type ProfilePatch, type QuickAction, type Settings, type SummarySettings, type SwipeAction, type Template
+} from '@shared/types'
 import type { Question } from './Common'
 import { problem } from './format'
 import { KEY_LISTS, KEY_SETS } from '@shared/keys'
 import { AddAccount } from './Setup'
+import { SummarySchedule } from './Summary'
 
 const KEEP_DAYS = [30, 90, 365, 1095]
 
 type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 export type Tab =
-  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'blocked' | 'batches' | 'hub' | 'about'
+  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'batches' | 'hub' | 'about'
 
 /** Edison's sections in its order, then what only xrnmail has. */
 const TABS: [Tab, string, LucideIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
-  ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['blocked', 'Blocked Senders', Ban],
+  ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
   ['batches', 'Batches', Clock], ['hub', 'xrnhub', Server], ['about', 'About', Info]
 ]
 
@@ -33,6 +36,7 @@ const TAB_WORDS: Record<Tab, string> = {
   shortcuts: 'keys keyboard set edison gmail',
   signatures: 'signature sign',
   templates: 'template ready text',
+  summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
   batches: 'delivery times straight through vip early',
   hub: 'connect counts',
@@ -75,6 +79,26 @@ function Choice<T extends string | number>(props: { label: string; value: T; opt
         {props.options.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
       </select>
     </label>
+  )
+}
+
+/** When the Summary lands, as Edison's page has it: the schedule, and a way to turn it off. */
+function Summary(props: { summary: SummarySettings; save(summary: SummarySettings): void; ask: Ask }): ReactNode {
+  const { summary, save } = props
+  const senders = summary.senders.length
+  const off = async (): Promise<void> => {
+    const note = `${senders === 1 ? 'Its sender goes' : `Its ${senders} senders go`} back to the deliveries, with what's waiting for it.`
+    if (await props.ask({ title: 'Turn off Summary?', note, action: 'Turn off', danger: true })) save({ ...summary, senders: [], chosen: false })
+  }
+  return (
+    <section>
+      <p className="muted note">Senders chosen in Subscriptions are held, and delivered together at a time you pick.</p>
+      <SummarySchedule summary={summary} set={(next) => save({ ...next, chosen: true })} />
+      <p className="muted note">
+        {senders === 0 ? 'Nobody is in it yet. Add senders from Subscriptions.' : `${senders === 1 ? '1 sender is' : `${senders} senders are`} in it. Subscriptions has them, on its Summary side.`}
+      </p>
+      {senders > 0 && <button className="quiet danger outline" onClick={() => void off()}>Turn off Summary</button>}
+    </section>
   )
 }
 
@@ -443,6 +467,7 @@ function Pages(props: {
   save: Save
   editMenu?: () => void
   saveBatch(batch: BatchSettings): void
+  saveSummary(summary: SummarySettings): void
   saveKeep(days: number): void
 }): ReactNode {
   const { page, accounts, settings, save } = props
@@ -464,6 +489,7 @@ function Pages(props: {
       )}
       {page === 'signatures' && <Signatures accounts={accounts} ids={ids} />}
       {page === 'templates' && <Templates templates={settings.templates} save={(templates) => save({ templates })} />}
+      {page === 'summary' && <Summary summary={settings.summary} save={props.saveSummary} ask={props.ask} />}
       {page === 'blocked' && <Blocked blocked={settings.blocked} save={save} />}
       {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} save={props.saveBatch} />}
       {page === 'hub' && <Hub settings={settings} />}
@@ -492,6 +518,12 @@ export function SettingsDialog(props: {
 
   const saveBatch = async (batch: BatchSettings): Promise<void> => {
     await window.mail.saveBatch(batch)
+    setSettings(await window.mail.settings())
+  }
+
+  const saveSummary = async (summary: SummarySettings): Promise<void> => {
+    setSettings((now) => (now ? { ...now, summary } : now)) // shown at once; the save follows
+    await window.mail.saveSummary(summary)
     setSettings(await window.mail.settings())
   }
 
@@ -529,7 +561,7 @@ export function SettingsDialog(props: {
         </header>
         {settings && (
           <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} save={save} editMenu={props.editMenu}
-            saveBatch={(b) => void saveBatch(b)} saveKeep={(d) => void saveKeep(d)} />
+            saveBatch={(b) => void saveBatch(b)} saveSummary={(s) => void saveSummary(s)} saveKeep={(d) => void saveKeep(d)} />
         )}
       </div>
     </dialog>

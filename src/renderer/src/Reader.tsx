@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
@@ -359,6 +359,8 @@ export function Reader(props: {
   forever(): void
   pin(on: boolean): void
   mute(address: string, on: boolean): void
+  /** Into the Summary, or out of it. */
+  summarize(address: string, on: boolean): void
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -407,6 +409,9 @@ export function Reader(props: {
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
   const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
+  // Only a sender mailing in bulk is offered the Summary, as Edison offers it from Subscriptions.
+  const bulkSender = leaving && !own.includes(leaving.from.address.toLowerCase()) ? leaving.from.address : undefined
+  const summarized = bulkSender !== undefined && (settings?.summary.senders ?? []).includes(bulkSender.toLowerCase())
   // Only the address itself can be taken off here; a whole @domain stays a decision for Settings.
   const listedExactly = sender !== undefined && (vip ?? []).some((v) => v.trim().toLowerCase() === sender.toLowerCase())
 
@@ -464,6 +469,9 @@ export function Reader(props: {
               {sender && !bins && !own.includes(sender.toLowerCase()) && (muted
                 ? moreItem(Bell, 'Unmute notifications', () => props.mute(sender, false))
                 : moreItem(BellOff, 'Mute notifications', () => props.mute(sender, true)))}
+              {bulkSender && !bins && (summarized
+                ? moreItem(Newspaper, 'Remove sender from Summary', () => props.summarize(bulkSender, false))
+                : moreItem(Newspaper, 'Add sender to Summary', () => props.summarize(bulkSender, true)))}
               {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}

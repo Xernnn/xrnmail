@@ -5,13 +5,13 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, Server, SwipeAction, Template, ThreadRef
+  Rsvp, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
@@ -126,7 +126,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -153,6 +153,19 @@ function batchSettings(value: unknown): BatchSettings {
     times: b['times'].map((t) => text(t, 8)),
     vip: b['vip'].map((v) => text(v, 320)),
     earlyPerDay: number(b['earlyPerDay'])
+  }
+}
+
+/** The main process decides what's allowed: `saveSummary` cleans the rest. */
+function summarySettings(value: unknown): SummarySettings {
+  const s = (value ?? {}) as Record<string, unknown>
+  if (!Array.isArray(s['senders']) || s['senders'].length > 500) throw new Error('Bad request')
+  return {
+    senders: s['senders'].map((v) => text(v, 320)),
+    every: s['every'] === 'weekly' ? 'weekly' : 'daily',
+    time: text(s['time'], 8),
+    day: number(s['day']),
+    chosen: s['chosen'] === true
   }
 }
 
@@ -315,6 +328,8 @@ function register(service: MailService): void {
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))
+  handle('saveSummary', (summary: unknown) => service.saveSummary(summarySettings(summary)))
+  handle('summarySenders', () => service.summarySenders())
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())
@@ -552,9 +567,14 @@ void app.whenReady().then(() => {
     openWatcher: (account, login) => new ImapWatcher(imapConfig(account, login)),
     records: test['XRNMAIL_IMAP'] ? undefined : domainRecords,
     files: new DraftFiles(join(app.getPath('userData'), 'drafts')),
-    now: Date.now,
+    // Read through Date each time, so the UI tests can move the main process's clock on.
+    now: () => Date.now(),
     changed: tellPage,
     landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, showWindow),
+    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
+      showWindow()
+      tellCommand('summary')
+    }),
     earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
   })
   mail = service

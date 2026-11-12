@@ -47,6 +47,19 @@ export interface NewAccount {
   smtp?: Server
 }
 
+/** The Subscription Summary: chosen senders, held and delivered together at a time of their own. */
+export interface SummarySettings {
+  /** Addresses or @domains whose new mail waits for the Summary. None, and there's no Summary. */
+  senders: string[]
+  every: 'daily' | 'weekly'
+  /** "HH:MM". */
+  time: string
+  /** For a weekly Summary, the day: 0 is Sunday. */
+  day: number
+  /** Whether a time has been picked. Until one has, the first sender added asks for it. */
+  chosen: boolean
+}
+
 export interface BatchSettings {
   /** "HH:MM", when held mail lands. Empty turns batching off. */
   times: string[]
@@ -83,6 +96,7 @@ export const QUICK_SLOTS = 4
 
 export interface Settings {
   batch: BatchSettings
+  summary: SummarySettings
   /** How far back to keep mail on this laptop. */
   backfillDays: number
   /** xrnhub, if used. It gets counts only, never who or what. */
@@ -163,6 +177,8 @@ export interface ThreadRow {
   cards: string[]
   /** Kept under Pinned, on this laptop. */
   pinned: boolean
+  /** When the Summary that brought it landed, if one did. */
+  summaryAt: number | null
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -240,11 +256,23 @@ export interface Overview {
   spam: number
   /** Unread, by what the Assistant made of it. */
   assistant: Record<AssistantSection, number>
+  summary: SummaryOverview
+}
+
+export interface SummaryOverview {
+  /** When the next Summary lands, while it has senders. */
+  next: number | null
+  /** Messages waiting for it. */
+  held: number
+  /** Threads in Summary with something unread. */
+  unread: number
+  /** The Summary that landed last, and what of it is still unread in the inbox. */
+  latest: { at: number; unread: number; senders: string[] } | null
 }
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today' | 'recent'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -314,7 +342,7 @@ export type ProfilePatch = Partial<Pick<Settings,
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 
 /** What the app's menu and the tray can ask the page to do. */
-export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about'
+export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'
 
 export interface Detected {
   provider: string
@@ -342,6 +370,10 @@ export interface MailApi {
   clearRecent(): Promise<void>
   settings(): Promise<Settings>
   saveBatch(batch: BatchSettings): Promise<void>
+  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the batches. */
+  saveSummary(summary: SummarySettings): Promise<void>
+  /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
+  summarySenders(): Promise<Subscription[]>
   saveBackfill(days: number): Promise<void>
   connectHub(url: string, user: string, secret: string): Promise<void>
   disconnectHub(): Promise<void>

@@ -1,6 +1,6 @@
 import { test } from '@playwright/test'
 import { rawMail } from '../tests/fake-gmail'
-import { launch, signIn } from './app'
+import { hhmm, launch, later, signIn, syncAndSettle } from './app'
 import type { FakeGmail } from '../tests/fake-gmail'
 
 /** Pictures of the app with made-up mail, for looking at it: SHOTS=<folder> npx playwright test shots */
@@ -126,6 +126,44 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'Subscriptions' }).click()
     await page.getByText('Nothing here').or(page.locator('.subscription').first()).or(page.getByText('No subscriptions')).first().waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-subscriptions.png` })
+    await page.getByRole('button', { name: 'Add deals@shop.example to Summary' }).click()
+    const asking = page.getByRole('dialog', { name: 'When your Summary arrives' })
+    await asking.getByRole('radio', { name: /Morning/ }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-summary-schedule.png` })
+    const at = hhmm(Date.now() + 120_000)
+    await asking.getByRole('radio', { name: 'Pick a time' }).check()
+    await asking.getByLabel('Summary time').fill(at)
+    await asking.getByRole('button', { name: 'Schedule' }).click()
+    await page.evaluate(async () => {
+      const { summary } = await window.mail.settings()
+      await window.mail.saveSummary({ ...summary, senders: [...summary.senders, 'hello@smalltools.example', 'digest@letters.example'] })
+    })
+    await page.getByRole('group', { name: 'Sides of Subscriptions' }).getByRole('button', { name: 'Summary' }).click()
+    await page.locator('.subscription').nth(2).waitFor()
+    await page.locator('.summary-bar').getByText('Delivered daily').waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-subscriptions-summary.png` })
+    gmail.add(rawMail({ subject: 'Last chance: deals end tonight', from: 'Deals <deals@shop.example>', text: 'Everything half off.', headers: ['List-Unsubscribe: <https://list.example/u>'] }))
+    gmail.add(rawMail({ subject: 'Five tools for a tidy desk', from: 'Small Tools <hello@smalltools.example>', text: 'A short list, and why each one is on it.' }))
+    gmail.add(rawMail({ subject: 'This week in letters', from: 'The Letter <digest@letters.example>', text: 'Three essays worth your Sunday.' }))
+    await syncAndSettle(page)
+    await later(run, 180_000)
+    await page.getByRole('button', { name: /^Inbox/ }).first().click()
+    await page.getByRole('button', { name: 'Focused', exact: true }).click()
+    await page.getByRole('button', { name: /Your Summary/ }).waitFor({ timeout: 15_000 })
+    await page.screenshot({ path: `${folder}/${colorScheme}-inbox-summary.png` })
+    await page.getByRole('button', { name: /Your Summary/ }).click()
+    await page.locator('.summary-head').first().waitFor()
+    await page.locator('.threads').getByText('Five tools for a tidy desk').click()
+    await page.getByRole('heading', { name: 'Five tools for a tidy desk' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-summary.png` })
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Summary', exact: true }).click()
+    await page.getByRole('button', { name: 'Turn off Summary' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings-summary.png` })
+    await page.getByRole('button', { name: 'Done' }).click()
+    await page.getByRole('button', { name: 'Recently Seen', exact: true }).click()
+    await page.locator('.threads .thread').first().waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-recent.png` })
     await page.getByRole('button', { name: 'Packages' }).click()
     await page.getByText('Your order has shipped').first().click()
     await page.getByRole('heading', { name: 'Your order has shipped' }).waitFor()
