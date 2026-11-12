@@ -173,14 +173,15 @@ export function Row(props: {
   )
 }
 
-export function DraftRow(props: { draft: Draft; open(): void; discard(): void }): ReactNode {
-  const { draft, open, discard } = props
+export function DraftRow(props: { draft: Draft; account?: AccountView; open(): void; discard(): void }): ReactNode {
+  const { draft, account, open, discard } = props
   const people = splitRecipients(draft.to).map(readRecipient)
   const first = people[0]
   const status = draft.error ?? (draft.state === 'queued' && draft.sendAt ? `Sends ${longTime(draft.sendAt)}` : '')
   return (
     <div className={draft.error ? 'thread problem' : 'thread'}>
       <div className="thread-card">
+        {account && <span className="account-mark" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
         <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} size={44} /></span>
         <button className="thread-open" onClick={open}>
           <span className="thread-top">

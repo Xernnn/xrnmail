@@ -333,7 +333,7 @@ export function Reader(props: {
         <button className="icon back" onClick={back} aria-label="Back"><ArrowLeft size={18} aria-hidden="true" /></button>
         {props.many && account && (
           <span className="reader-account" title="The account this thread is in">
-            <span className="dot" style={{ background: account.color }} aria-hidden="true" /><span className="reader-account-name">{account.email}</span>
+            <span className="account-swatch" style={{ background: account.color }} aria-hidden="true" /><span className="reader-account-name">{account.email}</span>
           </span>
         )}
         <span className="grow" />
@@ -392,7 +392,8 @@ export function Reader(props: {
         )}
       </div>
       <div className="messages">
-        <div className="thread-head">
+        <div className={props.many && account ? 'thread-head marked' : 'thread-head'}>
+          {props.many && account && <span className="account-bar" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
           <h2 className="thread-subject">{messages[0]?.subject || 'No subject'}</h2>
           {active.length > 0 && (
             <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>

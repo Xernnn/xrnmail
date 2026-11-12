@@ -18,7 +18,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 
 ## What it does
 
-- **Every account at once:** one inbox across services, or each on its own, with a colour for each.
+- **Every account at once:** one inbox across services, or each on its own, with a colour for each,
+  shown as a broad bar beside every row of a list they share and beside the subject of an open thread.
   Gmail keeps its labels and threads; other services get their folders, and threads worked out from
   the messages. Aliases work too, and a reply goes out from the address the mail came to.
 - **Batches:** new inbox mail waits for the next slot (09:00, 13:00, 17:00 by default). Waiting mail

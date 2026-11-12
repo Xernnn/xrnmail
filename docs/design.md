@@ -343,7 +343,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   asks for the inbox with no side, so it's whole; an account's own inbox, or the only account's, asks
   for Focused or Other, and its Other tab counts that account's alone (`AccountView.otherUnread`).
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
-  actions and its swipes. A swipe is a short one or a long one each way: `swipeAction` decides from
+  actions and its swipes. Where several accounts share a list, which includes search, Recently Seen,
+  the Summary and the gathered drafts, a row carries a bar of its account's colour down its left
+  edge, six pixels wide so it reads at a glance; the reader puts the same bar beside the subject. A swipe is a short one or a long one each way: `swipeAction` decides from
   how far the row went.
 - `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
   the foot.

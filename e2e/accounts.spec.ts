@@ -149,6 +149,49 @@ test('All Inboxes is every inbox, whole: Focused and Other are each account\'s o
   await expect(tabs).toBeVisible()
 })
 
+test('the account a thread is in shows as a broad bar of its colour, in every list and over the thread', async () => {
+  run = await launch({ colorScheme: 'dark' })
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.evaluate((secret) => window.mail.addAccount({ email: 'second@example.com', secret, provider: 'gmail' }), gmail.secret)
+  await page.evaluate(() => window.mail.saveProfile({ identities: {
+    'me@example.com': { name: '', signature: '', aliases: [], color: '#b4532a', notify: true },
+    'second@example.com': { name: '', signature: '', aliases: [], color: '#2f6fb2', notify: true }
+  } }))
+  const side = page.locator('.sidebar')
+  const marks = page.locator('.threads .account-mark')
+  const looks = async (): Promise<{ width: number; height: number; color: string }[]> => marks.evaluateAll((all) => all.map((el) => {
+    const box = el.getBoundingClientRect()
+    return { width: box.width, height: box.height, color: getComputedStyle(el).backgroundColor }
+  }))
+  await side.getByRole('button', { name: /^All Inboxes/ }).click()
+  await expect(marks).toHaveCount(2, { timeout: 15_000 })
+  for (const look of await looks()) {
+    expect(look.width).toBeGreaterThanOrEqual(6)
+    expect(look.height).toBeGreaterThan(40)
+  }
+  expect((await looks()).map((look) => look.color).sort()).toEqual(['rgb(180, 83, 42)', 'rgb(47, 111, 178)'])
+
+  await page.locator('.threads .thread', { has: page.locator('.account-mark[title="second@example.com"]') }).getByText('Lunch?').click()
+  const bar = page.locator('.thread-head .account-bar')
+  await expect(bar).toHaveCSS('background-color', 'rgb(47, 111, 178)')
+  expect((await bar.boundingBox())?.width).toBeGreaterThanOrEqual(6)
+  await expect(page.locator('.reader-account')).toContainText('second@example.com')
+
+  // The same bar wherever several accounts share a list.
+  await side.getByRole('button', { name: 'Recently Seen', exact: true }).click()
+  await expect(marks).toHaveCount(1)
+  await page.getByLabel('Search').fill('Lunch')
+  await expect(marks).toHaveCount(2)
+  await page.getByLabel('Search').fill('')
+  await side.getByRole('button', { name: 'Compose' }).click()
+  await page.getByRole('region', { name: 'Compose' }).getByLabel('Subject').fill('Plans')
+  await page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Close' }).click()
+  await side.getByRole('button', { name: /^All Drafts/ }).click()
+  await expect(page.locator('.threads .account-mark')).toHaveCount(1)
+})
+
 test('the Assistant: parcels, and a Track link that was never in the message', async () => {
   run = await launch()
   const { page, gmail } = run

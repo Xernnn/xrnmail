@@ -902,7 +902,7 @@ export function App(): ReactNode {
               if (list.length >= limit && box.scrollTop + box.clientHeight > box.scrollHeight - 300) setLimit(limit + PAGE)
             }}>
               {showDrafts && shownDrafts.map((draft) => (
-                <DraftRow key={draft.id} draft={draft} open={() => void reopen(draft)}
+                <DraftRow key={draft.id} draft={draft} account={many ? accounts.find((a) => a.email === draft.account) : undefined} open={() => void reopen(draft)}
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
