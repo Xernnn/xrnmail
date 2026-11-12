@@ -36,6 +36,7 @@ const api: MailApi = {
   unsubscribe: (message) => call('unsubscribe', message),
   subscriptions: () => call('subscriptions'),
   unsubscribed: () => call('unsubscribed'),
+  sender: (account, address) => call('sender', account, address),
   clearSender: (account, address) => call('clearSender', account, address),
   setFocus: (address, focused) => call('setFocus', address, focused),
   rsvp: (message, answer) => call('rsvp', message, answer),

@@ -53,8 +53,12 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   account's inbox whole, with nothing set aside, and its count is all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message.
-- **Subscriptions:** everyone mailing you in bulk, with Unsubscribe, Add to Summary and Delete all next
-  to each, and the ones left behind and the ones in the Summary on sides of their own.
+- **Subscriptions:** everyone mailing you in bulk, with how much of each one's mail gets read, and
+  Unsubscribe, Add to Summary and Delete all next to each. Sorted by who sends most, by how much is
+  read, or by name, and for one account or all. Pick several to put them into the Summary at once
+  (or take them out), and open a sender for their page: how much they send, how much came in the
+  last week, how much is read, what to do about them, and their mail. The ones left behind and the
+  ones in the Summary have sides of their own.
 - **The Subscription Summary:** chosen senders' new mail waits, and lands together, daily or weekly at
   the time you pick (the first sender added asks; Settings, Summary changes it or turns it off).
   Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
@@ -195,8 +199,6 @@ warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
 
-- In Subscriptions, picking several senders at once to add to the Summary, and a page for each sender
-  with how much they send and how much of it gets opened.
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 
@@ -233,6 +235,10 @@ Done differently:
   what it quotes as it was quoted, since its HTML is the service's and can carry a stranger's. A draft
   changed on two devices before either heard of the other is kept twice, so neither's words are lost.
   Edison doesn't say what it does then.
+- A sender's figures are counted from the mail kept on this laptop (90 days by default), and "read"
+  is read anywhere, by what your mail service says, since nothing here can know what was opened.
+  Edison works out its open rate on its own servers. Picking several is by the tick box beside each,
+  or with Ctrl or Shift, where Edison's phone app holds a finger down.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 

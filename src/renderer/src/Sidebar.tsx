@@ -159,10 +159,10 @@ export function Sidebar(props: {
     }
   } : {}
 
-  /** An inbox stays lit on either side of Focused and Other, and Subscriptions on either of its sides. */
+  /** An inbox stays lit on either side of Focused and Other, and Subscriptions on any of its sides and a sender's page. */
   const isOn = (target: View): boolean => {
     if (target.kind === 'inbox' && view.kind === 'inbox') return view.account === target.account
-    return target.kind === 'subscriptions' ? view.kind === 'subscriptions' : sameView(view, target)
+    return target.kind === 'subscriptions' ? view.kind === 'subscriptions' || view.kind === 'from' : sameView(view, target)
   }
 
   const item = (label: string, target: View, options: { icon?: LucideIcon; count?: number; extra?: string; lead?: ReactNode } = {}): ReactNode => {

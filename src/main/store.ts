@@ -335,6 +335,19 @@ export const foldForSearch = (text: string): string => text.replace(/[đĐ]/g, '
 /** Whether a message's thread is pinned, for a query over `messages`. */
 const PINNED = 'EXISTS (SELECT 1 FROM pins p WHERE p.account = messages.account AND p.thread = messages.thread) AS pinned'
 
+const WEEK_MS = 7 * 86_400_000
+
+const subscriptionFrom = (r: Row): Subscription => ({
+  account: String(r['account']),
+  name: String(r['name'] ?? ''),
+  address: String(r['address']),
+  count: Number(r['n']),
+  latest: Number(r['latest']),
+  message: Number(r['newest']),
+  read: Number(r['opened'] ?? 0),
+  week: Number(r['week'] ?? 0)
+})
+
 /** How many of a thread's files a row of the list names. */
 export const ROW_CARDS = 3
 
@@ -671,6 +684,10 @@ export class Store {
     if (query.kind === 'assistant') {
       const kinds = SECTIONS[query.section].map(() => '?').join(',')
       return this.threadRows(`kind IN (${kinds})`, SECTIONS[query.section], now, limit)
+    }
+    if (query.kind === 'from') {
+      // One sender's page: every thread they have mail in, wherever it is but Trash and Spam.
+      return this.threadRows('account = ? AND lower(from_address) = ?', [query.account, query.address.toLowerCase()], now, limit)
     }
     const scope = query.account ? ['account = ?'] : []
     const params = query.account ? [query.account] : []
@@ -1160,38 +1177,36 @@ export class Store {
 
   /** Who's mailing you in bulk, by how much. */
   subscriptions(now: number): Subscription[] {
-    const rows = this.all(
-      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest
+    return this.all(
+      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest,
+              SUM(seen) AS opened, SUM(arrived >= ?) AS week
        FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND unsubscribe != '' AND from_address != ''
        GROUP BY account, lower(from_address) ORDER BY n DESC, latest DESC LIMIT 300`,
-      now
-    )
-    return rows.map((r) => ({
-      account: String(r['account']),
-      name: String(r['name'] ?? ''),
-      address: String(r['address']),
-      count: Number(r['n']),
-      latest: Number(r['latest']),
-      message: Number(r['newest'])
-    }))
+      now - WEEK_MS, now
+    ).map(subscriptionFrom)
   }
 
   /** What's here from each of these addresses, most first. */
   sendersOf(addresses: string[], now: number): Subscription[] {
-    const rows = this.all(
-      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest
+    return this.all(
+      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest,
+              SUM(seen) AS opened, SUM(arrived >= ?) AS week
        FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND lower(from_address) IN (SELECT value FROM json_each(?))
        GROUP BY account, lower(from_address) ORDER BY n DESC, latest DESC`,
-      now, JSON.stringify(addresses.map((a) => a.toLowerCase()))
+      now - WEEK_MS, now, JSON.stringify(addresses.map((a) => a.toLowerCase()))
+    ).map(subscriptionFrom)
+  }
+
+  /** One sender on one account, for their page: how much they send and how much of it is read. The
+   *  message it names is their newest with a way out, if any has one. */
+  sender(account: string, address: string, now: number): Subscription | null {
+    const row = this.one(
+      `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest,
+              COALESCE(MAX(CASE WHEN unsubscribe != '' THEN id END), MAX(id)) AS newest, SUM(seen) AS opened, SUM(arrived >= ?) AS week
+       FROM messages WHERE account = ? AND lower(from_address) = ? AND release_at <= ? AND hidden = 0 AND bin = 0`,
+      now - WEEK_MS, account, address.toLowerCase(), now
     )
-    return rows.map((r) => ({
-      account: String(r['account']),
-      name: String(r['name'] ?? ''),
-      address: String(r['address']),
-      count: Number(r['n']),
-      latest: Number(r['latest']),
-      message: Number(r['newest'])
-    }))
+    return row && Number(row['n']) > 0 ? subscriptionFrom(row) : null
   }
 
   /** Every thread a sender has mail in, that could be seen now. */

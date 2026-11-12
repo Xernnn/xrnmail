@@ -459,6 +459,24 @@ describe('the Summary', () => {
     expect(service.summarySenders().map((s) => [s.address, s.count])).toEqual([['news@shop.example', 2], ['gone@else.example', 0]])
     expect(subjects('inbox')).toEqual(['More deals', 'Deals']) // what came before it was in the Summary stays where it was
   })
+
+  it('says how much each sender sends and how much of it is read, and gives each a page of their threads', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Old deals', 9, 0, NEWS, -2) // more than a week before the rest
+    await arrive('Deals', 9, 0, NEWS)
+    await arrive('More deals', 9, 10, NEWS)
+    await arrive('Lunch?', 9, 20)
+    service.thread(ME, ref('Deals').thread) // read one
+    const [news] = service.subscriptions()
+    expect(news).toMatchObject({ address: 'news@shop.example', count: 3, read: 1, week: 2 })
+    expect(service.sender(ME, 'NEWS@shop.example')).toMatchObject({ count: 3, read: 1, week: 2, name: 'Shop News' })
+    expect(service.sender(ME, 'nobody@else.example')).toBeNull()
+    expect(service.list({ kind: 'from', account: ME, address: 'news@shop.example' }).map((r) => r.subject)).toEqual(['More deals', 'Deals', 'Old deals'])
+    service.act([ref('More deals')], { kind: 'archive' }) // archived, it's still theirs; in Trash, it isn't
+    service.act([ref('Old deals')], { kind: 'trash' })
+    expect(service.list({ kind: 'from', account: ME, address: 'news@shop.example' }).map((r) => r.subject)).toEqual(['More deals', 'Deals'])
+    expect(service.sender(ME, 'news@shop.example')).toMatchObject({ count: 2, read: 1 })
+  })
 })
 
 describe('xrnhub', () => {

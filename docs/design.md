@@ -515,5 +515,13 @@ Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown ac
 named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
 off the choosing instead of closing Settings.
 
+Subscriptions say how much of each sender's mail is read (`Subscription.read` over `count`, from the
+`\Seen` flag, so read anywhere) and how much came in the last week, counted in the same query that
+lists them. Sorting and showing one account's are done on the page. A sender's page is a list like
+any other (`ListQuery` `from`: their threads on one account, wherever they are but Trash and Spam)
+under a card that reads their figures again (`sender`) each time anything changes. Several senders
+go into the Summary or out of it as one `editSenders`, so the first one in asks when it should land
+once, and none is lost to another.
+
 "Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
 Sent label. All Mail is still everything.

@@ -195,6 +195,7 @@ function listQuery(value: unknown): ListQuery {
   }
   if (q['kind'] === 'label') return { kind: 'label', account: text(q['account']), label: text(q['label']) }
   if (q['kind'] === 'search') return { kind: 'search', text: text(q['text'], 500) }
+  if (q['kind'] === 'from') return { kind: 'from', account: text(q['account'], 320), address: text(q['address'], 320) }
   throw new Error('Bad request')
 }
 
@@ -419,6 +420,7 @@ function register(service: MailService, avatars: Avatars): void {
   })
   handle('subscriptions', () => service.subscriptions())
   handle('unsubscribed', () => service.unsubscribed())
+  handle('sender', (account: unknown, address: unknown) => service.sender(text(account, 320), text(address, 320)))
   handle('clearSender', (account: unknown, address: unknown) => service.clearSender(text(account, 320), text(address, 320)))
   handle('setFocus', (address: unknown, focused: unknown) => service.setFocus(text(address, 320), focused === true))
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))

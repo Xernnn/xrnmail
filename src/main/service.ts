@@ -1077,7 +1077,11 @@ export class MailService {
     const { senders } = this.settings().summary
     const here = this.store.sendersOf(senders.filter((s) => !s.startsWith('@')), this.deps.now())
     const gone = senders.filter((address) => !here.some((s) => s.address === address)).sort()
-    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0 }))]
+    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0, read: 0, week: 0 }))]
+  }
+
+  sender(account: string, address: string): Subscription | null {
+    return this.store.sender(account, address, this.deps.now())
   }
 
   /** Senders left behind: first those with mail still here, biggest first, then the ones whose mail has gone. */
@@ -1085,7 +1089,7 @@ export class MailService {
     const left = this.settings().unsubscribed
     const here = this.store.subscriptions(this.deps.now()).filter((s) => left.includes(s.address))
     const gone = left.filter((address) => !here.some((s) => s.address === address)).sort()
-    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0 }))]
+    return [...here, ...gone.map((address) => ({ account: '', name: '', address, count: 0, latest: 0, message: 0, read: 0, week: 0 }))]
   }
 
   clearSender(account: string, address: string): number {

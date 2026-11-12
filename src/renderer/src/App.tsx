@@ -7,8 +7,8 @@ import type {
 } from '@shared/types'
 import { Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
-import { longTime, problem, setClock24 } from './format'
-import { BatchStrip, DraftRow, NO_SWIPES, Row, Subscriptions, type Swipes } from './List'
+import { longTime, problem, setClock24, straightThrough } from './format'
+import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
@@ -132,6 +132,9 @@ export function App(): ReactNode {
   const [newFolder, setNewFolder] = useState<string | null>(null)
   /** The first sender going into the Summary asks when it should land. */
   const [scheduling, setScheduling] = useState<{ summary: SummarySettings; done(summary: SummarySettings | null): void } | null>(null)
+  /** On a sender's page: who they are and how they send, and which side of Subscriptions it was opened from. */
+  const [sender, setSender] = useState<Subscription | null>(null)
+  const [senderFrom, setSenderFrom] = useState<'subscribed' | 'left' | 'summary'>('subscribed')
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
@@ -203,6 +206,15 @@ export function App(): ReactNode {
     : split && view.kind === 'inbox' ? { ...view, focus: view.focus ?? 'focused' } : view
   const bins = SOLO ? soloBins : active.kind === 'trash' || active.kind === 'spam'
   const list = rows ?? []
+
+  // A sender's page reads how they send each time something changes: Delete all, or new mail from them.
+  const senderKey = active.kind === 'from' ? `${active.account}/${active.address}` : ''
+  useEffect(() => {
+    if (active.kind !== 'from') return setSender(null)
+    let current = true
+    void window.mail.sender(active.account, active.address).then((found) => { if (current) setSender(found) })
+    return () => { current = false }
+  }, [senderKey, version])
 
   useEffect(() => {
     if (SOLO || active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
@@ -753,6 +765,7 @@ export function App(): ReactNode {
   const subscriptionSide = active.kind === 'subscriptions' ? active.side ?? 'subscribed' : 'subscribed'
   const changeSummary = (): void => setSettings('summary')
   const summaryBar = profile && <SummaryBar summary={profile.summary} overview={overview} change={changeSummary} />
+  const backToSubscriptions = (): void => go(senderFrom === 'subscribed' ? { kind: 'subscriptions' } : { kind: 'subscriptions', side: senderFrom })
   /** Over each Summary's threads in the Summary list: when it landed, and Delete all. */
   const summaryHead = (at: number): ReactNode => {
     const refs = list.filter((r) => r.summaryAt === at).map((r) => ({ account: r.account, thread: r.thread }))
@@ -861,7 +874,7 @@ export function App(): ReactNode {
         }} />
       <div className="main">
         <header className="band">
-          <h1 className="view-title">{titleOf(active, many)}</h1>
+          <h1 className="view-title">{active.kind === 'from' ? sender?.name || active.address : titleOf(active, many)}</h1>
           <div className="search">
             <SearchIcon size={16} aria-hidden="true" />
             <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
@@ -896,6 +909,13 @@ export function App(): ReactNode {
               </div>
             )}
             {active.kind === 'summary' && summaryBar}
+            {active.kind === 'from' && (sender ? (
+              <SenderCard item={sender} back={backToSubscriptions} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
+                summarize={(items, on) => void summarize(items.map((item) => item.address), on)}
+                inSummary={straightThrough(sender.address, profile?.summary.senders ?? [])} left={(profile?.unsubscribed ?? []).includes(sender.address)} />
+            ) : (
+              <div className="strip"><button className="link" onClick={backToSubscriptions}>‹ Subscriptions</button></div>
+            ))}
             {active.kind === 'inbox' && active.focus !== 'other' && overview && <SummaryNotice overview={overview} open={() => go({ kind: 'summary' })} />}
             {active.kind === 'trash' && list.length > 0 && (
               <div className="strip">
@@ -913,8 +933,12 @@ export function App(): ReactNode {
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
-                <Subscriptions version={version} side={subscriptionSide} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
-                  summarize={(item, on) => void summarize([item.address], on)}
+                <Subscriptions version={version} side={subscriptionSide} accounts={accounts} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
+                  summarize={(items, on) => void summarize(items.map((item) => item.address), on)}
+                  open={(item) => {
+                    setSenderFrom(subscriptionSide)
+                    go({ kind: 'from', account: item.account, address: item.address })
+                  }}
                   top={subscriptionSide === 'summary' && <>{summaryBar}<LatestSummary overview={overview} open={() => go({ kind: 'summary' })} /></>} />
               )}
               {!showDrafts && !showSubscriptions && list.map((row, index) => (

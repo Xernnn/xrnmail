@@ -218,10 +218,15 @@ export interface Subscription {
   account: string
   name: string
   address: string
+  /** Messages from them kept here. */
   count: number
   latest: number
   /** The newest message, which holds the way out. */
   message: number
+  /** Of those, the ones read, here or anywhere else: Edison's open rate is this over [count]. */
+  read: number
+  /** Of those, the ones that came in the last seven days. */
+  week: number
 }
 
 export interface ThreadRef {
@@ -322,6 +327,8 @@ export type ListQuery =
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
+  /** A sender's page: their threads on one account. */
+  | { kind: 'from'; account: string; address: string }
 
 /** A change to mail in Gmail, made because the person asked for it. */
 export type MailAction =
@@ -453,6 +460,8 @@ export interface MailApi {
   subscriptions(): Promise<Subscription[]>
   /** Senders already unsubscribed from. Ones with no mail left here come with a count of 0 and no account. */
   unsubscribed(): Promise<Subscription[]>
+  /** One sender on one account, for their page; null when nothing from them is here. */
+  sender(account: string, address: string): Promise<Subscription | null>
   /** Everything from a sender goes to Trash. Returns what undoes it. */
   clearSender(account: string, address: string): Promise<number>
   /** Keeps a sender on one side of the inbox, for what they've sent and will send. */

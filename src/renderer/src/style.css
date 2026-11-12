@@ -385,7 +385,32 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .subscription strong { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subscription .grow { overflow: hidden; }
 .subscription .note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.subscription-actions { display: grid; gap: 4px; }
+.subscription-actions { display: grid; justify-items: end; gap: 6px; }
+.subscription.picked { background: var(--picked); }
+.subscription:hover .pick, .pick.shown { opacity: 1; }
+.subscription .pick { flex: none; margin-right: -4px; }
+.subscription-open { display: block; max-width: 100%; padding: 0; color: inherit; text-align: left; cursor: pointer; }
+.subscription-open:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+/* Edison's open rate, to the right of each subscription. */
+.open-rate { color: var(--muted); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bulk-room { height: 110px; }
+.subscription-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 4px 20px 6px 18px; color: var(--muted); font-size: 12.5px; }
+.subscription-tools .inline { gap: 8px; font-size: inherit; }
+.subscription-tools select { max-width: 220px; }
+.bulk-action { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 8px; color: inherit; font-size: 13.5px; font-weight: 600; }
+.bulk-action:hover { background: rgb(255 255 255 / 0.18); }
+/* A sender's page, over their threads. */
+.sender-card { display: grid; gap: 14px; padding: 6px 20px 16px 18px; border-bottom: 1px solid var(--line-soft); }
+.sender-back { justify-self: start; font-size: 13px; font-weight: 600; }
+.sender-who { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.sender-who .grow { min-width: 0; }
+.sender-who strong { display: block; font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sender-who .note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sender-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.sender-facts > div { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.sender-facts dt { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sender-facts dd { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+.sender-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 /* Links under a subscription, as Edison sets them: Unsubscribe, Add to Summary. */
 .subscription-links { display: flex; gap: 16px; margin-top: 6px; }
 .subscription-links .link { font-size: 12.5px; font-weight: 600; }
