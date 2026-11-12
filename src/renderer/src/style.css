@@ -480,16 +480,6 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .fact-kind { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .fact-line { font-weight: 500; }
 .message-note { padding-top: 10px; }
-.quick-reply { display: grid; gap: 8px; margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.quick { display: flex; flex-wrap: wrap; gap: 6px; }
-.quick-box { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.quick-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.quick-box textarea { flex: 1; min-height: 36px; max-height: 260px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; resize: none; line-height: 1.5; }
-.quick-box textarea:focus-visible { outline: none; box-shadow: none; }
-.quick-box textarea::placeholder { color: var(--muted); }
-.quick-tools { flex: none; display: flex; align-items: center; gap: 4px; }
-.quick-tools .primary { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 10px; }
-.quick-tools .primary:disabled { background: var(--surface-2); color: var(--muted); opacity: 1; }
 .reply-bar { flex: none; position: relative; z-index: 2; display: flex; gap: 12px; padding: 14px 34px 16px; background: var(--bg); box-shadow: 0 -1px 0 var(--line), 0 -8px 18px rgb(16 24 40 / 0.05); }
 .reply-bar button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-width: 148px; height: 42px; padding: 0 22px; border: 1px solid var(--outline); border-radius: 9px; color: var(--nav); font-size: 14.5px; font-weight: 600; white-space: nowrap; transition: background 0.12s, color 0.12s; }
 .reply-bar button svg { color: var(--nav-icon); }
@@ -669,7 +659,7 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
 
 @media print {
   html, body, #root, .app, .main, .panes, .reader, .messages { display: block; height: auto; overflow: visible; background: #fff; }
-  .sidebar, .band, .list, .resize, .toolbar, .quick-reply, .reply-bar, .peek, .toast, .composer, .body-notes, .batch { display: none; }
+  .sidebar, .band, .list, .resize, .toolbar, .reply-bar, .peek, .toast, .composer, .body-notes, .batch { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

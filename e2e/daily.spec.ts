@@ -468,6 +468,23 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+test('nothing to type into under a thread: replying starts at the buttons at its foot', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Mai Tran <mai@example.com>', text: 'Are you free at noon?' }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Lunch?').click()
+  await page.locator('.messages').getByText('Are you free at noon?').waitFor()
+  const reader = page.locator('.reader')
+  await expect(reader.getByRole('textbox')).toHaveCount(0)
+  await expect(reader.getByPlaceholder(/^Reply to/)).toHaveCount(0)
+  await expect(reader.getByRole('button', { name: 'Thanks!' })).toHaveCount(0)
+  await expect(reader.getByRole('button', { name: 'Expand reply' })).toHaveCount(0)
+  await expect(page.locator('.reply-bar').getByRole('button')).toHaveText(['Reply', 'Forward'])
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply' }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Lunch?')
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run

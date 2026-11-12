@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, Maximize2, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
-  ReplyAll, Send, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
+  ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
@@ -15,8 +15,6 @@ const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
 
 export type ReplyKind = 'reply' | 'replyAll' | 'forward'
 export type Panel = 'snooze' | 'labels' | 'more' | null
-/** What becomes of words typed under a thread. */
-export type QuickSend = 'send' | 'open' | 'keep'
 
 const FORWARDED = /^\s*(fwd?|tr|wg|rv|i)\s*:/i
 /** Threads longer than this show their ends, with the middle folded away. */
@@ -217,97 +215,6 @@ function Message(props: {
   )
 }
 
-/** A few ready answers to a person's message, in the language they wrote in. Nothing leaves the
- *  laptop to come up with these, and pressing one only puts the words in the reply box. */
-function quickAnswers(message: MessageView, own: string[]): string[] {
-  if (message.unsubscribe || own.includes(message.from.address.toLowerCase())) return []
-  if (/no-?reply|notifications?@|mailer-daemon/i.test(message.from.address)) return []
-  return /[ăâđêôơưạảãáàậẩẫấầặẳẵắằẹẻẽéèệểễếềịỉĩíìọỏõóòộổỗốồợởỡớờụủũúùựửữứừỵỷỹýỳ]/i.test(message.text.slice(0, 2000))
-    ? ['Cảm ơn bạn!', 'Mình đã nhận được.', 'Được nhé.']
-    : ['Thanks!', 'Sounds good.', 'Got it, thank you.']
-}
-
-/** Who a plain reply goes to: the same choice the main process makes when it starts one. */
-function replyingTo(message: MessageView, own: string[]): string {
-  const fromMe = own.includes(message.from.address.toLowerCase())
-  const to = fromMe ? message.to : message.replyTo.length > 0 ? message.replyTo : [message.from]
-  return to.map((who) => (own.includes(who.address.toLowerCase()) ? 'me' : nameOf(who))).join(', ') || 'no one yet'
-}
-
-/** The box under a thread. What's typed goes out as an ordinary reply, through the same door. */
-function QuickReply(props: {
-  to: string
-  answers: string[]
-  /** The sender may not be who they say, so the reply opens where its address can be seen first. */
-  careful: boolean
-  send(text: string): Promise<boolean>
-  open(text: string): void
-  keep(text: string): void
-}): ReactNode {
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const box = useRef<HTMLTextAreaElement>(null)
-  const typed = useRef('')
-  typed.current = text
-  const keep = useRef(props.keep)
-  keep.current = props.keep
-
-  // Leaving the thread with words in the box keeps them, in Drafts.
-  useEffect(() => () => { if (typed.current.trim()) keep.current(typed.current) }, [])
-
-  useLayoutEffect(() => {
-    const el = box.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
-  }, [text])
-
-  const send = async (): Promise<void> => {
-    if (!text.trim() || busy) return
-    setBusy(true)
-    const done = await props.send(text)
-    setBusy(false)
-    if (done) {
-      typed.current = ''
-      setText('')
-    }
-  }
-
-  const open = (): void => {
-    const words = text
-    typed.current = ''
-    setText('')
-    props.open(words)
-  }
-
-  return (
-    <div className="quick-reply">
-      {props.answers.length > 0 && !text && (
-        <div className="quick">
-          {props.answers.map((words) => (
-            <button key={words} className="pill" onClick={() => { setText(words); box.current?.focus() }}>{words}</button>
-          ))}
-        </div>
-      )}
-      <div className={text ? 'quick-box typing' : 'quick-box'}>
-        <textarea ref={box} rows={1} value={text} aria-label="Quick reply" placeholder={`Reply to ${props.to}`} spellCheck
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void send() }
-            else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur() }
-          }} />
-        <div className="quick-tools">
-          <IconButton icon={Maximize2} label="Expand reply" click={open} />
-          <button type="button" className="primary" disabled={!text.trim() || busy} title={props.careful ? 'Opens the reply first, to check where it goes' : 'Send (Ctrl+Enter)'}
-            onClick={() => (props.careful ? open() : void send())}>
-            <Send size={14} aria-hidden="true" /> Send
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /** A closed envelope among a few sparks, for when nothing is open. Drawn here, in the page's own colours. */
 function Nothing(): ReactNode {
   return (
@@ -349,7 +256,6 @@ export function Reader(props: {
   act(action: MailAction, label?: string): void
   snooze(at: number): void
   reply(kind: ReplyKind, message: number): void
-  replyWith(message: MessageView, text: string, then: QuickSend): Promise<boolean>
   unsubscribe(message: number): void
   block(address: string): void
   rsvp(message: number, answer: Rsvp): void
@@ -505,12 +411,6 @@ export function Reader(props: {
               unsubscribe={props.unsubscribe} block={props.block} trust={props.trust} />
           </div>
         ))}
-        {!bins && (
-          <QuickReply key={`${last.account}/${last.thread}`} to={replyingTo(last, own)} answers={quickAnswers(last, own)} careful={last.warnings.length > 0}
-            send={(text) => props.replyWith(last, text, 'send')}
-            open={(text) => void props.replyWith(last, text, 'open')}
-            keep={(text) => void props.replyWith(last, text, 'keep')} />
-        )}
       </div>
       {!bins && (
         <div className="reply-bar">

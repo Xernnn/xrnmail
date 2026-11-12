@@ -53,10 +53,6 @@ export function straightThrough(address: string, vip: string[]): boolean {
   })
 }
 
-/** Typed words as the editor would hold them. */
-export const textToHtml = (text: string): string =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>')
-
 export const longTime = (at: number): string =>
   new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12 })
 

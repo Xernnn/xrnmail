@@ -26,8 +26,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Straight through:** addresses or whole @domains that skip the wait, set in Settings or from a
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
-- **Writing:** reply, reply all, forward with attachments, a reply box under every thread, formatting,
-  signatures, templates, drafts that survive a restart, and addresses suggested from your mail.
+- **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
+  that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
+  the foot of a thread, in the composer.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
@@ -108,8 +109,8 @@ To have mail links open here, set it as your mail app after installing:
 ## Where it differs from Edison Mail
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders, the delivery line
-over the list, Snoozed and Attachments in the sidebar, the quick reply box under a thread, search
-without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time layout.
+over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
+warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
 

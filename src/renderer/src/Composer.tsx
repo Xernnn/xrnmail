@@ -14,7 +14,7 @@ import { IconButton, Popover, TimeMenu } from './Menus'
 const SAVE_AFTER_MS = 700
 
 /** What's quoted came from a stranger, so it's cleaned on its way into the draft: this copy is what gets sent. */
-export const cleanQuote = (quote: Quote | null): Quote | null =>
+const cleanQuote = (quote: Quote | null): Quote | null =>
   quote ? { ...quote, html: quote.html ? sanitize(quote.html) : null } : null
 
 const asRecipient = (who: Address): string => {
