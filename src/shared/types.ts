@@ -31,6 +31,8 @@ export interface AccountView {
   folders: string[]
   /** Unread in its inbox. */
   unread: number
+  /** Of those, the ones on the Other side, for its inbox's Other tab. */
+  otherUnread: number
   /** How its mail is marked in shared views. */
   color: string
   /** How far it is through reading what's new, while there's a lot to read. */
@@ -61,7 +63,10 @@ export interface SummarySettings {
 }
 
 export interface BatchSettings {
-  /** "HH:MM", when held mail lands. Empty turns batching off. */
+  /** New mail shows as it arrives, and nothing waits for a batch. The times are kept for switching
+   *  back. Saved settings from before there was a switch are live when they have no times. */
+  live: boolean
+  /** "HH:MM", when held mail lands. Batches always have one: with none, mail is live. */
   times: string[]
   /** Addresses or @domains that skip the wait. */
   vip: string[]
@@ -156,6 +161,13 @@ export interface Settings {
   imagesFrom: string[]
 }
 
+/** A picture for an address: a person's photo, or a company's logo, as a data: address. */
+export interface Face {
+  url: string
+  /** A logo is drawn whole on white; a photo fills its circle. */
+  logo: boolean
+}
+
 export interface ThreadRow {
   account: string
   thread: string
@@ -182,6 +194,8 @@ export interface ThreadRow {
   pinned: boolean
   /** When the Summary that brought it landed, if one did. */
   summaryAt: number | null
+  /** Its newest message has a sender warning, so it's shown with initials whatever pictures there are. */
+  warned: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -213,6 +227,35 @@ export interface Subscription {
 export interface ThreadRef {
   account: string
   thread: string
+}
+
+/** What a message's headers say about where it came from and how, for its details. A receiving
+ *  server wrote these, as far as anything here can tell, and they're shown as what it wrote down. */
+export interface HeaderDetails {
+  /** Known on your own copy of what you sent. */
+  bcc: Address[]
+  /** Which of your addresses the server delivered it to, when it says. */
+  deliveredTo: string
+  /** The top Authentication-Results line: who checked, and what SPF, DKIM and DMARC came to. */
+  checks: { by: string; spf: string; dkim: string; dmarc: string } | null
+  /** The envelope's domain, as Gmail's "mailed-by". */
+  mailedBy: string
+  /** Domains whose DKIM signatures passed, as Gmail's "signed-by". */
+  signedBy: string[]
+  /** How it reached your mail service, "TLS 1.3" or "TLS", or '' when that isn't recorded. */
+  tls: string
+  /** The mailing list it came through. */
+  list: { id: string; name: string } | null
+  /** The Date header: when the sender says they sent it. */
+  sent: number | null
+}
+
+/** A message's details panel: its headers' details, and what's known here about its sender. */
+export interface MessageDetails extends HeaderDetails {
+  /** The headers could be read, now or when it arrived. */
+  recorded: boolean
+  /** Mail has gone from this account to the sender. */
+  wroteTo: boolean
 }
 
 export interface MessageView {
@@ -407,6 +450,21 @@ export interface MailApi {
   saveAttachment(message: number, index: number): Promise<boolean>
   openAttachment(message: number, index: number): Promise<void>
   drafts(): Promise<Draft[]>
+  /** Everything about where a message came from and how. Mail stored before this was kept has its
+   *  headers read from the server, once. */
+  details(message: number): Promise<MessageDetails>
+  /** Puts an email address, and nothing else, on the clipboard. */
+  copyAddress(address: string): Promise<void>
+  /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the
+   *  scenes, and `onFaces` says when there are more. Only lists look up; opening a message doesn't. */
+  faces(addresses: string[], lookUp: boolean): Promise<Record<string, Face | null>>
+  onFaces(listener: () => void): () => void
+  /** A photo for one of your accounts, from the system's file picker, kept on this laptop. Says
+   *  whether one was chosen. */
+  choosePhoto(account: string): Promise<boolean>
+  removePhoto(account: string): Promise<void>
+  /** The accounts with a photo chosen here. */
+  photos(): Promise<string[]>
   /** Opens a thread in a window of its own, or brings forward the one it already has. */
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */

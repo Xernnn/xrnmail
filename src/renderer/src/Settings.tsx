@@ -10,7 +10,9 @@ import { problem } from './format'
 import {
   COMMANDS, FIXED, holder, KEY_SETS, keyName, keysOf, rebound, reset, spell, unbindable, type KeyChanges, type KeyCommand, type KeySet
 } from '@shared/keys'
+import { forgetFaces } from './pictures'
 import { AddAccount } from './Setup'
+import { AccountFace } from './Sidebar'
 import { SummarySchedule } from './Summary'
 
 const KEEP_DAYS = [30, 90, 365, 1095]
@@ -32,7 +34,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout undo send pictures images tray background start login',
   notifications: 'new mail tell account mute muted senders unmute quiet',
-  accounts: 'add remove service name alias sends as colour color keep laptop days',
+  accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
@@ -40,7 +42,7 @@ const TAB_WORDS: Record<Tab, string> = {
   templates: 'template ready text',
   summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
-  batches: 'delivery times straight through vip early',
+  batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
   hub: 'connect counts',
   about: 'version'
 }
@@ -189,6 +191,15 @@ function Summary(props: { summary: SummarySettings; save(summary: SummarySetting
   )
 }
 
+/** The times batches start from when there were none to go back to. */
+const FIRST_TIMES = ['09:00', '13:00', '17:00']
+
+const MODES: [boolean, string, string][] = [
+  [true, 'As it arrives', 'New mail shows the moment your mail service has it.'],
+  [false, 'In batches', 'New mail waits for the times you set, apart from the people let straight through.']
+]
+
+/** How mail arrives: live, or in batches at set times. Switching keeps the times for coming back. */
 function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void }): ReactNode {
   const { batch, save } = props
   const [time, setTime] = useState('')
@@ -199,34 +210,61 @@ function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void
     save({ ...batch, times: [...batch.times, time] })
     setTime('')
   }
+  const choose = (live: boolean): void => {
+    if (live === batch.live) return
+    save({ ...batch, live, times: !live && batch.times.length === 0 ? FIRST_TIMES : batch.times })
+  }
 
   return (
-    <section>
-      <h3>Delivery times</h3>
-      <div className="chips">
-        {batch.times.map((t) => (
-          <button key={t} className="chip" aria-label={`Remove ${t}`}
-            onClick={() => save({ ...batch, times: batch.times.filter((x) => x !== t) })}>
-            {t} <span aria-hidden="true">×</span>
-          </button>
-        ))}
-        <input type="time" aria-label="New time" value={time} onChange={(e) => setTime(e.target.value)} />
-        <button className="quiet" onClick={add} disabled={!time}>Add</button>
-      </div>
-      {batch.times.length === 0 && <p className="muted note">No times: mail arrives as it comes.</p>}
-      <label>
-        Straight through
-        <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
-          onChange={(e) => setVip(e.target.value)}
-          onBlur={() => save({ ...batch, vip: vip.split(/\s+/).filter(Boolean) })} />
-      </label>
-      <label className="inline">
-        Early deliveries a day
-        <select value={batch.earlyPerDay} onChange={(e) => save({ ...batch, earlyPerDay: Number(e.target.value) })}>
-          {[0, 1, 2, 3, 5].map((n) => <option key={n}>{n}</option>)}
-        </select>
-      </label>
-    </section>
+    <>
+      <section>
+        <h3>New mail</h3>
+        <div className="tiles modes" role="radiogroup" aria-label="How new mail arrives">
+          {MODES.map(([live, name, note]) => (
+            <label key={name} className={batch.live === live ? 'tile mode on' : 'tile mode'}>
+              <input type="radio" name="delivery" checked={batch.live === live} onChange={() => choose(live)} />
+              <span className="mode-name">{name}</span>
+              <span className="muted mode-note">{note}</span>
+            </label>
+          ))}
+        </div>
+        {batch.live && (
+          <p className="muted note">
+            Your inbox is watched, so mail and changes made on your other devices show within seconds.
+            {batch.times.length > 0 && ` Your times (${batch.times.join(', ')}) are kept for switching back.`}
+            {' '}Senders in your Summary still wait for its time.
+          </p>
+        )}
+      </section>
+      {!batch.live && (
+        <section>
+          <h3>Delivery times</h3>
+          <div className="chips">
+            {batch.times.map((t) => (
+              <button key={t} className="chip" aria-label={`Remove ${t}`}
+                onClick={() => save({ ...batch, times: batch.times.filter((x) => x !== t) })}>
+                {t} <span aria-hidden="true">×</span>
+              </button>
+            ))}
+            <input type="time" aria-label="New time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <button className="quiet" onClick={add} disabled={!time}>Add</button>
+          </div>
+          {batch.times.length === 1 && <p className="muted note">Taking the last time away makes mail arrive as it comes.</p>}
+          <label>
+            Straight through
+            <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
+              onChange={(e) => setVip(e.target.value)}
+              onBlur={() => save({ ...batch, vip: vip.split(/\s+/).filter(Boolean) })} />
+          </label>
+          <label className="inline">
+            Early deliveries a day
+            <select value={batch.earlyPerDay} onChange={(e) => save({ ...batch, earlyPerDay: Number(e.target.value) })}>
+              {[0, 1, 2, 3, 5].map((n) => <option key={n}>{n}</option>)}
+            </select>
+          </label>
+        </section>
+      )}
+    </>
   )
 }
 
@@ -323,20 +361,42 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; muted:
 function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Identities; saveKeep(days: number): void; ask: Ask }): ReactNode {
   const { accounts, settings, saveKeep, ask, ids } = props
   const [adding, setAdding] = useState(false)
+  /** The accounts with a photo chosen here, rather than their Gravatar or none. */
+  const [photos, setPhotos] = useState<string[]>([])
+  const [error, setError] = useState('')
+  useEffect(() => {
+    void window.mail.photos().then(setPhotos)
+  }, [accounts])
+  const photo = async (account: string, choose: boolean): Promise<void> => {
+    setError('')
+    try {
+      if (choose) await window.mail.choosePhoto(account)
+      else await window.mail.removePhoto(account)
+      forgetFaces()
+      setPhotos(await window.mail.photos())
+    } catch (e) {
+      setError(problem(e))
+    }
+  }
   return (
     <>
       <section>
         <h3>Your accounts</h3>
         {accounts.map((a) => (
           <div className="line" key={a.id}>
-            <span className="dot" style={{ background: a.color }} aria-hidden="true" />
+            <AccountFace account={a} size={28} />
             <span className="grow">{a.email} <span className="muted">{a.providerName}</span></span>
+            {photos.includes(a.email)
+              ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
+              : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
             <button className="quiet danger"
               onClick={() => void ask({ title: `Remove ${a.email} from this laptop?`, note: 'The mail stays on the server.', action: 'Remove', danger: true }).then((yes) => { if (yes) void window.mail.removeAccount(a.id) })}>
               Remove
             </button>
           </div>
         ))}
+        {error && <p className="error">{error}</p>}
+        <p className="muted note">Your photo is your Gravatar, or one chosen here, which stays on this laptop.</p>
         {adding ? <AddAccount done={() => setAdding(false)} /> : <button className="quiet" onClick={() => setAdding(true)}>Add account</button>}
       </section>
       {accounts.map((a) => (
@@ -599,6 +659,7 @@ export function SettingsDialog(props: {
   }, [])
 
   const saveBatch = async (batch: BatchSettings): Promise<void> => {
+    setSettings((now) => (now ? { ...now, batch } : now)) // shown at once; the save follows
     await window.mail.saveBatch(batch)
     setSettings(await window.mail.settings())
   }

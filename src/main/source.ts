@@ -88,6 +88,8 @@ export interface MailSource {
   flagsOf(uids: number[]): AsyncIterable<RemoteHeader>
   /** One message with nothing cut, for its attachments. */
   whole(uid: number): Promise<Buffer | null>
+  /** One message's header alone, for its details. */
+  header(uid: number): Promise<Buffer | null>
   done(): void
   close(): Promise<void>
 }
@@ -123,10 +125,11 @@ export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number } =
   return client
 }
 
-/** Waits on the inbox for something to arrive. It reads nothing and can change nothing. */
+/** Waits on the inbox for something to happen there. It reads nothing and can change nothing. */
 export interface MailWatcher {
-  /** Calls [arrived] for each thing that lands, and resolves when the connection ends. */
-  watch(arrived: () => void): Promise<void>
+  /** Calls [changed] whenever the server says mail landed in the inbox, left it, or had its flags
+   *  changed (read or flagged elsewhere), and resolves when the connection ends. */
+  watch(changed: () => void): Promise<void>
   close(): Promise<void>
 }
 
@@ -140,12 +143,17 @@ export class ImapWatcher implements MailWatcher {
     this.client = imapClient(config, { maxIdleTime: IDLE_REFRESH_MS })
   }
 
-  async watch(arrived: () => void): Promise<void> {
+  /** imapflow tells of three things while IDLE: `exists` when the count goes up, `expunge` for each
+   *  message that left (archived or deleted elsewhere), and `flags` when one was read, unread,
+   *  flagged or unflagged. Each only says to look; the sync does the reading. IDLE is broken and
+   *  started again every few minutes (`maxIdleTime`), and imapflow starts it again by itself after
+   *  anything else on this connection, so it's asked for once. */
+  async watch(changed: () => void): Promise<void> {
     const ended = new Promise<void>((resolve) => this.client.once('close', () => resolve()))
     await this.client.connect()
     const opened = await this.client.mailboxOpen('INBOX', { readOnly: true })
     if (!opened.readOnly) throw new Error('The mailbox did not open read-only, so nothing was fetched.')
-    this.client.on('exists', arrived)
+    for (const event of ['exists', 'expunge', 'flags']) this.client.on(event, () => changed())
     void this.client.idle().catch(() => undefined)
     await ended
   }
@@ -274,6 +282,12 @@ export class ImapSource implements MailSource {
   async whole(uid: number): Promise<Buffer | null> {
     const found = await this.client.fetchOne(String(uid), { uid: true, source: true }, { uid: true })
     return found ? (found.source ?? null) : null
+  }
+
+  /** BODY.PEEK[HEADER]: reading it leaves the message unread. */
+  async header(uid: number): Promise<Buffer | null> {
+    const found = await this.client.fetchOne(String(uid), { uid: true, headers: true }, { uid: true })
+    return found ? (found.headers ?? null) : null
   }
 
   done(): void {

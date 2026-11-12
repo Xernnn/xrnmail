@@ -4,6 +4,7 @@ import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty, KIND_ICONS } from './Common'
+import { wantFaces } from './pictures'
 import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
 
@@ -78,6 +79,9 @@ export function Row(props: {
   const swipes = !bins && !picked
 
   useEffect(() => () => { if (settle.current) clearTimeout(settle.current) }, [])
+  // Everyone the row names is looked up now, so opening the thread asks nothing. A warned sender isn't.
+  const everyone = row.people.map((who) => who.address).filter((address) => !row.warned || address.toLowerCase() !== row.fromAddress.toLowerCase())
+  useEffect(() => wantFaces(everyone), [everyone.join()])
   // Moving with j and k keeps the open thread in sight.
   useEffect(() => { if (on) box.current?.scrollIntoView({ block: 'nearest' }) }, [on])
 
@@ -134,7 +138,7 @@ export function Row(props: {
         <span className="face">
           {facts && FactIcon
             ? <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><FactIcon size={20} /></span>
-            : <Avatar name={row.fromName} address={row.fromAddress} size={44} />}
+            : <Avatar name={row.fromName} address={row.fromAddress} size={44} lookUp plain={row.warned} />}
           <input type="checkbox" className="pick" aria-label={`Select ${row.subject}`} checked={picked} onClick={pick} readOnly />
         </span>
         <button className="thread-open" onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey ? pick(e) : open())}>
@@ -173,14 +177,15 @@ export function Row(props: {
   )
 }
 
-export function DraftRow(props: { draft: Draft; open(): void; discard(): void }): ReactNode {
-  const { draft, open, discard } = props
+export function DraftRow(props: { draft: Draft; account?: AccountView; open(): void; discard(): void }): ReactNode {
+  const { draft, account, open, discard } = props
   const people = splitRecipients(draft.to).map(readRecipient)
   const first = people[0]
   const status = draft.error ?? (draft.state === 'queued' && draft.sendAt ? `Sends ${longTime(draft.sendAt)}` : '')
   return (
     <div className={draft.error ? 'thread problem' : 'thread'}>
       <div className="thread-card">
+        {account && <span className="account-mark" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
         <span className="face"><Avatar name={first?.name ?? ''} address={first?.address ?? draft.account} size={44} /></span>
         <button className="thread-open" onClick={open}>
           <span className="thread-top">
@@ -232,7 +237,7 @@ export function Subscriptions(props: {
       {empty}
       {items.map((item) => (
         <div className="subscription" key={`${item.account}/${item.address}`}>
-          <Avatar name={item.name} address={item.address} size={44} />
+          <Avatar name={item.name} address={item.address} size={44} lookUp />
           <div className="grow">
             <strong>{item.name || item.address}</strong>
             <div className="muted note">{item.address}</div>

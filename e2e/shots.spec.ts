@@ -1,6 +1,7 @@
 import { test } from '@playwright/test'
 import { rawMail } from '../tests/fake-gmail'
 import { hhmm, launch, later, signIn, syncAndSettle } from './app'
+import { png, svgLogo } from './pictures'
 import type { FakeGmail } from '../tests/fake-gmail'
 
 /** Pictures of the app with made-up mail, for looking at it: SHOTS=<folder> npx playwright test shots */
@@ -29,6 +30,13 @@ const REPLY_HTML = `<div dir="ltr">Works for me. Let's keep it to thirty minutes
   <br><div class="gmail_quote"><div class="gmail_attr">On Tue, Mai Tran wrote:</div>
   <blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><div>Can we move the review to Thursday?</div></blockquote></div>`
 
+/** What a receiving server writes on top of a message, for its details. */
+const DELIVERED = [
+  'Delivered-To: me@example.com',
+  'Received: from mail.coffee.example (mail.coffee.example [192.0.2.10]) by mx.google.com with ESMTPS id 7 (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)',
+  'Authentication-Results: mx.google.com; dkim=pass header.i=@coffee.example; spf=pass smtp.mailfrom=bounces@mail.coffee.example; dmarc=pass header.from=coffee.example'
+].join('\n')
+
 function fill(gmail: FakeGmail): void {
   gmail.add(rawMail({ subject: 'Design review', from: 'Mai Tran <mai@example.com>', text: 'Can we move the review to Thursday?' }), { arrived: ago(14), thread: 88n, flags: ['\\Seen'] })
   gmail.add(rawMail({ subject: 'Re: Design review', from: 'Linh Pham <linh@example.com>', text: 'Thursday morning is better for me.' }), { arrived: ago(13), thread: 88n, flags: ['\\Seen'] })
@@ -36,7 +44,7 @@ function fill(gmail: FakeGmail): void {
   gmail.add(rawMail({ subject: 'Re: Design review', from: 'Mai Tran <mai@example.com>', text: 'Thursday at ten then.' }), { arrived: ago(11), thread: 88n, flags: ['\\Seen'] })
   gmail.add(rawMail({ subject: 'Re: Design review', from: 'Linh Pham <linh@example.com>', text: 'Booked the room.' }), { arrived: ago(10.5), thread: 88n, flags: ['\\Seen'] })
   gmail.add(rawMail({ subject: 'Re: Design review', from: 'Bao Le <bao@example.com>', html: REPLY_HTML }), { arrived: ago(10), thread: 88n })
-  gmail.add(rawMail({ subject: 'Order 48213 confirmed', from: 'Coffee House <orders@coffee.example>', html: RECEIPT }), { arrived: ago(2) })
+  gmail.add(`${DELIVERED}\n${rawMail({ subject: 'Order 48213 confirmed', from: 'Coffee House <orders@coffee.example>', html: RECEIPT, date: ago(2), headers: ['Cc: Mai Tran <mai@example.com>', 'Reply-To: Coffee House Help <help@coffee.example>'] })}`, { arrived: ago(2) })
   gmail.add(rawMail({ subject: 'Lịch thi cuối kỳ HK1', from: 'Phòng Đào Tạo <daotao@uni.example>', text: 'Các bạn xem lịch thi đính kèm.\n\nChi tiết: https://uni.example/lich-thi', attachment: { name: 'lich-thi.pdf', type: 'application/pdf', body: 'x'.repeat(240000) } }), { arrived: ago(1) })
   gmail.add(rawMail({ subject: 'The week in small tools', from: 'Small Tools <hello@smalltools.example>', html: NEWSLETTER }), { arrived: ago(3), labels: ['\\Inbox', 'Newsletters'] })
   gmail.add(rawMail({ subject: 'Trip to Da Lat', text: 'Are you still on for Friday?', from: 'Mai Tran <mai@example.com>' }), { arrived: ago(5), thread: 77n })
@@ -50,9 +58,19 @@ function fill(gmail: FakeGmail): void {
   gmail.add(rawMail({ subject: 'Old invoice', text: 'Thrown out.', from: 'Mai Tran <mai@example.com>' }), { box: '[Gmail]/Trash', arrived: ago(40) })
 }
 
+/** Made-up faces: photos for some people, logos for some companies, nothing for the rest. */
+const FACES = {
+  'photo:mai@example.com': png(96, [196, 92, 120]),
+  'photo:linh@example.com': png(96, [52, 120, 170]),
+  'photo:me@example.com': png(96, [70, 140, 90]),
+  'logo:coffee.example': svgLogo('#7c3f1d', 'C'),
+  'logo:smalltools.example': png(48, [30, 30, 30]),
+  'logo:shop.example': svgLogo('#d9480f', 'S')
+}
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`pictures ${colorScheme}`, async () => {
-    const run = await launch({ colorScheme, size: [1280, 840] })
+    const run = await launch({ colorScheme, size: [1280, 840], pictures: FACES })
     const { page, gmail } = run
     await page.screenshot({ path: `${folder}/${colorScheme}-welcome.png` })
     fill(gmail)
@@ -67,6 +85,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByText('2 waiting').waitFor()
     await page.getByText('Trip to Da Lat').first().click()
     await page.locator('.messages').getByText('Bus leaves').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 900)) // faces looked up for the list arrive
     await page.screenshot({ path: `${folder}/${colorScheme}-thread.png` })
     await page.getByLabel('Select Your receipt').check({ force: true })
     await page.getByLabel('Select The week in small tools').check({ force: true })
@@ -97,6 +116,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.frameLocator('iframe.body-frame').getByText('Thanks for your order').waitFor()
     await new Promise((resolve) => setTimeout(resolve, 300))
     await page.screenshot({ path: `${folder}/${colorScheme}-receipt.png` })
+    await page.locator('.message.open').getByRole('button', { name: /^To:/ }).click()
+    await page.getByRole('dialog', { name: 'Message details' }).getByText('Written to', { exact: true }).waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-details.png` })
+    await page.getByRole('dialog', { name: 'Message details' }).getByRole('button', { name: 'Actions for orders@coffee.example' }).click()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-details-menu.png` })
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
     await page.locator('.threads').getByText('Design review').first().click()
     await page.getByRole('button', { name: /more email/ }).waitFor()
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -125,6 +153,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: `${folder}/${colorScheme}-other.png` })
     await page.getByRole('button', { name: 'Subscriptions' }).click()
     await page.getByText('Nothing here').or(page.locator('.subscription').first()).or(page.getByText('No subscriptions')).first().waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 600))
     await page.screenshot({ path: `${folder}/${colorScheme}-subscriptions.png` })
     await page.getByRole('button', { name: 'Add deals@shop.example to Summary' }).click()
     const asking = page.getByRole('dialog', { name: 'When your Summary arrives' })
@@ -160,6 +189,14 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Summary', exact: true }).click()
     await page.getByRole('button', { name: 'Turn off Summary' }).waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-settings-summary.png` })
+    await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Batches' }).click()
+    await page.getByRole('radiogroup', { name: 'How new mail arrives' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings-batches.png` })
+    await page.getByRole('radio', { name: /As it arrives/ }).check()
+    await page.getByText('are kept for switching back').waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings-live.png` })
+    await page.getByRole('radio', { name: /In batches/ }).check()
+    await page.getByLabel('Remove 13:00').waitFor()
     await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Shortcuts' }).click()
     await page.getByRole('button', { name: 'Change the key for Flag' }).click()
     await page.keyboard.press('Control+r')
@@ -183,8 +220,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByText('Your account is locked').first().click()
     await page.getByRole('alert').first().waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-warning.png` })
+    await page.locator('.message.open').getByRole('button', { name: /^To:/ }).click()
+    await page.getByRole('dialog', { name: 'Message details' }).getByText('Warnings', { exact: true }).waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-details-warning.png` })
+    await page.keyboard.press('Escape')
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Accounts' }).click()
+    await page.getByRole('button', { name: 'Choose a photo for me@example.com' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings-accounts.png` })
     await page.getByRole('button', { name: 'Add account' }).click()
     await page.getByRole('radio', { name: 'Other' }).click()
     await page.screenshot({ path: `${folder}/${colorScheme}-add-other.png` })

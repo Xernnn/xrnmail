@@ -1,6 +1,7 @@
 import { labelsOf } from './actions'
 import type { Sorted } from './assistant'
 import { holdOf, type BatchRules } from './batches'
+import { NO_DETAILS } from './details'
 import { MAX_SOURCE, parseMail, type ParsedMail } from './parse'
 import { threadOf, type MailboxRef, type MailSource, type RemoteMail } from './source'
 import type { Store, StoredMail } from './store'
@@ -59,7 +60,8 @@ const UNREADABLE: ParsedMail = {
   attachments: [],
   bulk: false,
   warnings: [],
-  invite: null
+  invite: null,
+  details: NO_DETAILS
 }
 
 async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
@@ -100,7 +102,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
     summary: hold.summary,
     focused: sorted.focused,
     facts: sorted.facts,
-    warnings: mail.warnings
+    warnings: mail.warnings,
+    details: mail === UNREADABLE ? null : mail.details
   }
 }
 

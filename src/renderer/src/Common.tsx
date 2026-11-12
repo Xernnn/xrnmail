@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CalendarRange, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from 'lucide-react'
 import type { FileKind } from './format'
+import { useFace } from './pictures'
 
 /** The picture a file gets from its name, in the list and in the reader. */
 export const KIND_ICONS: Record<FileKind, LucideIcon> = {
@@ -26,13 +27,26 @@ export function initials(name: string, address: string): string {
   return letters.toLocaleUpperCase() || '?'
 }
 
-/** A face for a sender. Pictures would have to be fetched, which would say who writes to you, so
- *  it's made here from their name, and always comes out the same for the same address. */
-export function Avatar(props: { name: string; address: string; size?: number }): ReactNode {
+/** A face for someone: their photo or their company's logo where the main process has one, or
+ *  initials in a colour that's always the same for the same address. [lookUp] lets it be looked up,
+ *  which only lists do; [plain] is initials whatever there is, for mail with a sender warning. */
+export function Avatar(props: { name: string; address: string; size?: number; lookUp?: boolean; plain?: boolean }): ReactNode {
   const size = props.size ?? 40
+  const face = useFace(props.plain ? '' : props.address, props.lookUp ?? false)
+  const [broken, setBroken] = useState<string | null>(null)
+  const shown = face && face.url !== broken ? face : null
   const style: CSSProperties = {
     width: size, height: size, fontSize: Math.round(size * 0.37),
     background: AVATAR_COLORS[hash(props.address.toLowerCase() || props.name) % AVATAR_COLORS.length]
+  }
+  if (shown) {
+    // A BIMI logo is a square meant to fill a circle; a site's icon sits whole on white.
+    const kind = !shown.logo ? 'photo' : shown.url.startsWith('data:image/svg+xml') ? 'logo mark' : 'logo icon'
+    return (
+      <span className={`avatar picture ${kind}`} style={{ width: size, height: size }} aria-hidden="true">
+        <img src={shown.url} alt="" draggable={false} onError={() => setBroken(shown.url)} />
+      </span>
+    )
   }
   return (
     <span className="avatar" style={style} aria-hidden="true">

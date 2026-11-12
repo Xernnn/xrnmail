@@ -468,6 +468,99 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+test('nothing to type into under a thread: replying starts at the buttons at its foot', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Mai Tran <mai@example.com>', text: 'Are you free at noon?' }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Lunch?').click()
+  await page.locator('.messages').getByText('Are you free at noon?').waitFor()
+  const reader = page.locator('.reader')
+  await expect(reader.getByRole('textbox')).toHaveCount(0)
+  await expect(reader.getByPlaceholder(/^Reply to/)).toHaveCount(0)
+  await expect(reader.getByRole('button', { name: 'Thanks!' })).toHaveCount(0)
+  await expect(reader.getByRole('button', { name: 'Expand reply' })).toHaveCount(0)
+  await expect(page.locator('.reply-bar').getByRole('button')).toHaveText(['Reply', 'Forward'])
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply' }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Lunch?')
+})
+
+test('the details under "To: me": who, when, where, what the receiving server found, and what to do with each address', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  const top = [
+    'Delivered-To: me@example.com',
+    'Received: from mail.shop.example (mail.shop.example [192.0.2.1]) by mx.google.com with ESMTPS id 1 (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)',
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@shop.example; spf=pass smtp.mailfrom=bounce@mail.shop.example; dmarc=pass header.from=shop.example'
+  ].join('\n')
+  const headers = ['Cc: Linh Pham <linh@example.com>', 'Reply-To: Help <help@shop.example>', 'List-Id: "Shop News" <news.shop.example>', 'List-Unsubscribe: <mailto:leave@shop.example>']
+  gmail.add(`${top}\n${rawMail({ subject: 'Spring sale', from: 'Shop <news@shop.example>', date: earlier(2), headers })}`, { arrived: earlier(2) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.locator('.threads').getByText('Spring sale').click()
+  const toggle = page.locator('.message.open').getByRole('button', { name: /^To:/ })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await toggle.click()
+  const panel = page.getByRole('dialog', { name: 'Message details' })
+  await expect(panel).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(await panel.locator('dt').allTextContents()).toEqual([
+    'From', 'Reply to', 'To', 'Cc', 'Date', 'Mailbox', 'Mailed by', 'Signed by', 'Security', 'Checks', 'Mailing list', 'Written to'
+  ])
+  for (const words of [
+    'Shop <news@shop.example>', 'Help <help@shop.example>', 'me@example.com (you)', 'Linh Pham <linh@example.com>', 'me@example.com · Inbox',
+    'mail.shop.example', 'Reached your mail service over TLS 1.3', 'SPF pass', 'DKIM pass', 'DMARC pass', 'by mx.google.com',
+    'Shop News news.shop.example', "You haven't written to this sender"
+  ]) await expect(panel).toContainText(words)
+  await expect(panel.getByRole('button', { name: 'Unsubscribe' })).toBeVisible()
+  // All of it shows: nothing around it cuts it off.
+  const [shown, reader] = [await panel.boundingBox(), await page.locator('.reader').boundingBox()]
+  expect(shown?.width ?? 0).toBeGreaterThan(400)
+  expect(await panel.evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    return document.elementFromPoint(box.left + box.width / 2, box.bottom - 8)?.closest('.details-panel') === el
+  })).toBe(true)
+  expect((shown?.x ?? 0) + (shown?.width ?? 0)).toBeLessThanOrEqual((reader?.x ?? 0) + (reader?.width ?? 0))
+
+  // Escape closes it and gives the button the focus back; the keyboard opens it again.
+  await page.keyboard.press('Escape')
+  await expect(panel).toHaveCount(0)
+  await expect(toggle).toBeFocused()
+  await expect(page.locator('.thread-subject')).toHaveText('Spring sale') // the thread stays open
+  await page.keyboard.press('Enter')
+  await expect(panel).toBeVisible()
+
+  // Each address has its actions. Escape closes an address's menu before the panel.
+  await panel.getByRole('button', { name: 'Actions for linh@example.com' }).click()
+  const menu = panel.getByRole('menu', { name: 'Actions for linh@example.com' })
+  await expect(menu.getByRole('menuitem')).toHaveText(['Copy address', 'New message', 'Find mail from them', 'Mute notifications', 'Let straight through'])
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: 'Actions for linh@example.com' }).click()
+  await menu.getByRole('menuitem', { name: 'Copy address' }).click()
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('linh@example.com')
+  await expect(page.getByText('Copied linh@example.com')).toBeVisible()
+  await panel.getByRole('button', { name: 'Actions for news@shop.example' }).click()
+  await expect(panel.getByRole('menuitem', { name: 'Block sender' })).toBeVisible()
+
+  // A click elsewhere closes it.
+  await page.locator('.thread-subject').click()
+  await expect(panel).toHaveCount(0)
+  await toggle.click()
+  await panel.getByRole('button', { name: 'Actions for help@shop.example' }).click()
+  await panel.getByRole('menuitem', { name: 'New message' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove help@shop.example' })).toBeVisible()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await toggle.click()
+  await panel.getByRole('button', { name: 'Actions for news@shop.example' }).click()
+  await panel.getByRole('menuitem', { name: 'Find mail from them' }).click()
+  await expect(page.getByLabel('Search')).toHaveValue('from:news@shop.example')
+  await expect(page.locator('.threads').getByText('Spring sale')).toBeVisible()
+  // Opening the thread read it; nothing else was asked of the server that would change anything.
+  expect(gmail.writes().filter((c) => !c.startsWith('SELECT') && !/\\Seen/.test(c))).toEqual([])
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run

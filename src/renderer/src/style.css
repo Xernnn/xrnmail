@@ -242,6 +242,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .nav-item.on .nav-icon { color: var(--text); }
 .nav-count { flex: none; min-width: 22px; color: var(--nav-icon); font-size: 11.5px; font-weight: 600; text-align: center; }
 .inbox-mark, .account-face { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; margin: 0 -1px; border-radius: 50%; color: #fff; }
+/* A photo keeps the account's colour as a ring, so the sidebar still says which is which. */
+.account-face.photo { overflow: hidden; box-shadow: 0 0 0 2px var(--ring); background: var(--surface-2) !important; }
+.account-face img { width: 100%; height: 100%; object-fit: cover; }
 .inbox-mark { background: var(--accent); }
 .account-face { font-size: 10px; font-weight: 700; line-height: 1; }
 .nav-account-row { position: relative; }
@@ -263,6 +266,11 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 /* Faces, tiles and empty places */
 
 .avatar { position: relative; flex: none; display: inline-grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 600; line-height: 1; letter-spacing: 0.02em; user-select: none; }
+.avatar.picture { overflow: hidden; background: var(--surface-2); }
+.avatar.picture img { width: 100%; height: 100%; object-fit: cover; }
+/* Logos are made for white, in either theme. A site's icon is often small, so it sits inside a margin. */
+.avatar.logo { background: #fff; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.avatar.logo.icon img { width: 62%; height: 62%; object-fit: contain; }
 .fact-tile { flex: none; display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; }
 .fact .fact-tile { width: 38px; height: 38px; }
 .fact-package { background: #c8651f; } .fact-travel { background: #2b7fb0; } .fact-money { background: #16878a; } .fact-event { background: #8150c9; }
@@ -334,7 +342,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .thread-card:has(.thread-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 .thread-open:focus-visible { outline: none; }
 .thread.problem .snippet { color: var(--danger); }
-.account-mark { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+/* Which account a row is, where several share a list: broad enough to read at a glance. */
+.account-mark { position: absolute; left: 0; top: 7px; bottom: 7px; width: 6px; border-radius: 0 4px 4px 0; }
 .face { position: relative; flex: none; display: grid; justify-items: center; align-content: start; gap: 9px; width: 44px; }
 .pick { appearance: none; position: relative; width: 18px; height: 18px; margin: 0; padding: 0; border: 1.5px solid var(--outline); border-radius: 50%; background: var(--bg); opacity: 0; cursor: pointer; transition: opacity 0.1s; }
 .pick:checked { border-color: var(--accent); background: var(--accent); opacity: 1; }
@@ -417,6 +426,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .toolbar > .icon.on, .toolbar > .anchor > .icon.on { color: var(--star); }
 .tool-gap { flex: none; width: 1px; height: 20px; margin: 0 7px; background: var(--line); }
 .reader-account { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 12px; }
+.account-swatch { flex: none; width: 6px; height: 16px; border-radius: 3px; }
 .reader-account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag { padding: 2px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--nav); font-size: 12px; font-weight: 500; }
@@ -428,12 +438,15 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .anchor { position: relative; }
 .back { display: none; }
 .messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px 28px; overflow-y: auto; }
-.thread-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }
+.thread-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }
+.thread-head.marked { padding-left: 18px; }
+.account-bar { position: absolute; left: 0; top: 6px; bottom: 14px; width: 6px; border-radius: 3px; }
 .thread-subject { font-size: 19px; font-weight: 700; line-height: 1.35; letter-spacing: -0.005em; overflow-wrap: anywhere; }
 .message-slot { display: grid; }
 .message-slot + .message-slot { border-top: 1px solid var(--line-soft); }
 .message { flex: none; min-width: 0; }
-.message-head { display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 0 12px; cursor: default; }
+.message-head { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 0 12px; cursor: default; }
+.message-head > .popover.details-panel { top: calc(100% - 6px); left: 58px; width: min(560px, calc(100% - 58px)); }
 .message.open > .message-head { cursor: pointer; }
 .message-head.closed { gap: 18px; padding: 12px 0 12px 4px; cursor: pointer; }
 .message-head.closed:hover { background: var(--hover); }
@@ -450,9 +463,28 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .who-to svg { color: var(--muted); }
 .straight { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; padding: 1px 7px 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; font-weight: 600; }
 .when { flex: none; font-size: 13px; white-space: nowrap; }
-.details { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; padding: 4px; font-size: 12px; white-space: normal; }
-.details dt { color: var(--muted); }
-.details dd { margin: 0; overflow-wrap: anywhere; }
+/* The details under "To: me": Edison's opened header, with Gmail's facts about delivery added. */
+.popover.details-panel { width: min(560px, calc(100vw - 120px)); max-height: min(70vh, 620px); padding: 14px 16px 12px; font-weight: 400; white-space: normal; cursor: auto; }
+.details-panel:focus { outline: none; }
+.details { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 8px 16px; margin: 0; font-size: 12.5px; white-space: normal; }
+.details dt { color: var(--muted); text-align: right; white-space: nowrap; }
+.details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.detail-people { display: grid; gap: 3px; }
+.detail-person { display: grid; }
+.detail-person-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.detail-person-name { font-weight: 600; }
+.selectable { min-width: 0; user-select: text; cursor: text; overflow-wrap: anywhere; }
+.icon.small { width: 22px; height: 22px; border-radius: 6px; }
+.detail-person-menu { display: grid; gap: 1px; margin: 4px 0 6px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.details .account-swatch { display: inline-block; margin-right: 7px; vertical-align: -3px; }
+.check-result { margin-right: 10px; white-space: nowrap; }
+.check-result.bad { color: var(--danger); font-weight: 600; }
+.details-link { margin-left: 8px; }
+.details-warnings { color: var(--caution); }
+.details-warnings p { margin: 0 0 4px; }
+.details-note { margin: 12px 0 0; font-size: 11.5px; }
+.who-to svg { transition: transform 0.12s var(--ease); }
+.who-to svg.flip { transform: rotate(180deg); }
 .fold { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0 9px 5px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 13px; }
 .fold:hover { color: var(--text); }
 .fold-count { display: inline-grid; place-items: center; min-width: 34px; height: 34px; margin-right: 8px; padding: 0 6px; border: 1.5px solid var(--outline); border-radius: 999px; background: var(--bg); color: var(--text); font-weight: 700; }
@@ -480,16 +512,6 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .fact-kind { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .fact-line { font-weight: 500; }
 .message-note { padding-top: 10px; }
-.quick-reply { display: grid; gap: 8px; margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.quick { display: flex; flex-wrap: wrap; gap: 6px; }
-.quick-box { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.quick-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.quick-box textarea { flex: 1; min-height: 36px; max-height: 260px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; resize: none; line-height: 1.5; }
-.quick-box textarea:focus-visible { outline: none; box-shadow: none; }
-.quick-box textarea::placeholder { color: var(--muted); }
-.quick-tools { flex: none; display: flex; align-items: center; gap: 4px; }
-.quick-tools .primary { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 10px; }
-.quick-tools .primary:disabled { background: var(--surface-2); color: var(--muted); opacity: 1; }
 .reply-bar { flex: none; position: relative; z-index: 2; display: flex; gap: 12px; padding: 14px 34px 16px; background: var(--bg); box-shadow: 0 -1px 0 var(--line), 0 -8px 18px rgb(16 24 40 / 0.05); }
 .reply-bar button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-width: 148px; height: 42px; padding: 0 22px; border: 1px solid var(--outline); border-radius: 9px; color: var(--nav); font-size: 14.5px; font-weight: 600; white-space: nowrap; transition: background 0.12s, color 0.12s; }
 .reply-bar button svg { color: var(--nav-icon); }
@@ -564,6 +586,10 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .tile.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .tile:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tile input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.tiles.modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tile.mode { justify-items: start; align-content: start; gap: 3px; padding: 12px 14px; text-align: left; }
+.mode-name { font-size: 13.5px; font-weight: 600; }
+.mode-note { font-size: 12px; line-height: 1.4; }
 .tile-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #fff; font-size: 15px; font-weight: 700; }
 
 /* Settings, Shortcuts: each action, its keys, and Change. */
@@ -669,7 +695,7 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
 
 @media print {
   html, body, #root, .app, .main, .panes, .reader, .messages { display: block; height: auto; overflow: visible; background: #fff; }
-  .sidebar, .band, .list, .resize, .toolbar, .quick-reply, .reply-bar, .peek, .toast, .composer, .body-notes, .batch { display: none; }
+  .sidebar, .band, .list, .resize, .toolbar, .reply-bar, .peek, .toast, .composer, .body-notes, .batch { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -53,12 +53,15 @@ export function straightThrough(address: string, vip: string[]): boolean {
   })
 }
 
-/** Typed words as the editor would hold them. */
-export const textToHtml = (text: string): string =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\r?\n/g, '<br>')
-
 export const longTime = (at: number): string =>
   new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12 })
+
+/** Every part of a moment, to the second and with its zone, for a message's details. */
+export const fullTime = (at: number): string =>
+  new Date(at).toLocaleString([], {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', second: '2-digit', hour12, timeZoneName: 'short'
+  })
 
 export const mailbox = (email: string): string => email.split('@')[0] ?? email
 

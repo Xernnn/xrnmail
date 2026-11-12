@@ -168,22 +168,34 @@ export class FakeGmail {
       gmailId: 6_000_000_000_000_000_000n + this.nextThread++,
       modseq: this.modseq
     })
-    for (const socket of this.idlers) socket.write(`* ${box.mails.length} EXISTS\r\n`)
+    this.tellIdlers(box, `* ${box.mails.length} EXISTS`)
     return uid
   }
 
+  /** As another device changing a message: whoever waits in IDLE on its folder hears the new flags. */
   change(uid: number, labels: string[], flags: string[] = [], path?: string): void {
-    const mail = (path ? this.box(path) : this.home).mails.find((m) => m.uid === uid)
+    const box = path ? this.box(path) : this.home
+    const index = box.mails.findIndex((m) => m.uid === uid)
+    const mail = box.mails[index]
     if (!mail) throw new Error('no such mail')
     mail.labels = labels
     mail.flags = flags
     mail.modseq = ++this.modseq
+    this.tellIdlers(box, `* ${index + 1} FETCH (UID ${mail.uid} FLAGS (${mail.flags.join(' ')}))`)
   }
 
+  /** As another device archiving or deleting a message: whoever waits in IDLE on its folder hears it go. */
   remove(uid: number, path?: string): void {
     const box = path ? this.box(path) : this.home
+    const index = box.mails.findIndex((m) => m.uid === uid)
     box.mails = box.mails.filter((m) => m.uid !== uid)
     this.modseq++
+    if (index >= 0) this.tellIdlers(box, `* ${index + 1} EXPUNGE`)
+  }
+
+  /** What's said to connections waiting in IDLE on one folder. On Gmail the inbox is All Mail here. */
+  private tellIdlers(box: FakeBox, line: string): void {
+    for (const socket of this.idlers) if (this.selected(socket) === box) socket.write(`${line}\r\n`)
   }
 
   private selected(socket: Socket): FakeBox {
@@ -473,6 +485,7 @@ export class FakeGmail {
     const box = this.selected(socket)
     const top = box.mails.at(-1)?.uid ?? 0
     const peek = /BODY\.PEEK\[\](?:<(\d+)\.(\d+)>)?/i.exec(items)
+    const header = /BODY\.PEEK\[HEADER\]/i.test(items)
     const silent = /\bBODY\[/i.test(items.replace(/BODY\.PEEK/gi, ''))
     if (silent) this.commands.push('TOUCHED-SEEN')
     const gmail = !this.options.plain
@@ -488,7 +501,13 @@ export class FakeGmail {
       if (gmail && /X-GM-THRID/i.test(items)) bits.push(`X-GM-THRID ${mail.thread}`)
       if (gmail && /X-GM-LABELS/i.test(items)) bits.push(`X-GM-LABELS (${mail.labels.map(this.bareLabels ? bare : quoted).join(' ')})`)
       const head = `* ${index + 1} FETCH (${bits.join(' ')}`
-      if (peek) {
+      if (header) {
+        const end = mail.raw.indexOf('\r\n\r\n')
+        const top = mail.raw.subarray(0, end < 0 ? mail.raw.length : end + 4)
+        socket.write(`${head} BODY[HEADER] {${top.length}}\r\n`)
+        socket.write(top)
+        socket.write(')\r\n')
+      } else if (peek) {
         const start = Number(peek[1] ?? 0)
         const body = mail.raw.subarray(start, peek[2] ? start + Number(peek[2]) : undefined)
         socket.write(`${head} BODY[]<${start}> {${body.length}}\r\n`)

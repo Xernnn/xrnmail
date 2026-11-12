@@ -3,15 +3,14 @@ import {
   Check, CheckSquare, Clock, Eraser, Flag, History, Inbox, Mail, MailOpen, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
-  AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
+  AccountView, Draft, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
 } from '@shared/types'
-import { cleanQuote, Composer } from './Composer'
+import { Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
-import { longTime, problem, setClock24, textToHtml } from './format'
+import { longTime, problem, setClock24 } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, Subscriptions, type Swipes } from './List'
-import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
-import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
+import { Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
@@ -195,7 +194,10 @@ export function App(): ReactNode {
   }
 
   const searching = search.trim() !== ''
-  const split = profile?.focused ?? false
+  // All Inboxes is every account's inbox whole. Focused and Other belong to each account's own, and
+  // to the inbox of the only account there is.
+  const allInboxes = view.kind === 'inbox' && !view.account && (accounts?.length ?? 0) > 1
+  const split = (profile?.focused ?? false) && view.kind === 'inbox' && !allInboxes
   const active: View = searching
     ? { kind: 'search', text: search.trim() }
     : split && view.kind === 'inbox' ? { ...view, focus: view.focus ?? 'focused' } : view
@@ -409,34 +411,6 @@ export function App(): ReactNode {
   }
 
   const reply = useCallback((kind: ReplyKind, message: number) => void compose({ kind, message }), [compose])
-
-  /** What's typed under a thread becomes an ordinary reply: sent through the same door, with Undo,
-   *  opened in the composer, or kept in Drafts when the thread is left with words still in the box. */
-  const replyWith = async (message: MessageView, text: string, then: QuickSend): Promise<boolean> => {
-    let draft: Draft
-    try {
-      const started = await window.mail.startDraft({ kind: 'reply', message: message.id })
-      const edit: DraftEdit = {
-        account: started.account, from: started.from, to: started.to, cc: started.cc, bcc: started.bcc, subject: started.subject,
-        quote: cleanQuote(started.quote), html: sanitize(textToHtml(text)), text
-      }
-      await window.mail.saveDraft(started.id, edit)
-      draft = { ...started, ...edit }
-    } catch (e) {
-      say(problem(e))
-      return false
-    }
-    // Kept quietly: leaving a thread often comes with its own Undo, which a second message would replace.
-    if (then === 'open') setComposing(draft)
-    else if (then === 'send') {
-      try {
-        announce(draft.id, await window.mail.send(draft.id), false) // a message open in the composer stays open
-      } catch (e) {
-        setComposing({ ...draft, error: problem(e) }) // what it was going to, and why it couldn't
-      }
-    }
-    return true
-  }
 
   /** The straight-through list from the reader: one address on or off, and the rest as they were. */
   const straight = async (address: string, on: boolean): Promise<void> => {
@@ -804,9 +778,11 @@ export function App(): ReactNode {
     : NO_SWIPES
   const quick = profile?.quickOn ? profile.quickActions : []
   const emptyList = showDrafts ? shownDrafts.length === 0 : !showSubscriptions && rows !== null && rows.length === 0
-  const otherCount = overview?.otherUnread ?? 0
+  const splitAccount = active.kind === 'inbox' ? accounts.find((a) => a.email === active.account) ?? (many ? undefined : accounts[0]) : undefined
+  const otherCount = splitAccount?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
-  const batching = (profile?.batch.times.length ?? 0) > 0
+  // Live, nothing waits for a delivery, so there's nobody to let straight through.
+  const batching = profile ? !profile.batch.live && profile.batch.times.length > 0 : false
 
   const popOut = (): void => {
     if (!open) return
@@ -820,11 +796,16 @@ export function App(): ReactNode {
       labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
-      reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
+      reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
       forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}
-      summarize={(address, on) => void summarize(address, on)} />
+      summarize={(address, on) => void summarize(address, on)}
+      write={(address) => void compose({ kind: 'new', account: open?.account, to: address })}
+      find={SOLO ? undefined : (text) => {
+        setSearch(text)
+        focusSearch()
+      }} />
   )
   /** What's drawn over the page, in any window. */
   const over = (
@@ -927,7 +908,7 @@ export function App(): ReactNode {
               if (list.length >= limit && box.scrollTop + box.clientHeight > box.scrollHeight - 300) setLimit(limit + PAGE)
             }}>
               {showDrafts && shownDrafts.map((draft) => (
-                <DraftRow key={draft.id} draft={draft} open={() => void reopen(draft)}
+                <DraftRow key={draft.id} draft={draft} account={many ? accounts.find((a) => a.email === draft.account) : undefined} open={() => void reopen(draft)}
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (

@@ -145,10 +145,21 @@ stopping the rest.
 ### Watching the inbox
 
 One more connection per account sits on `INBOX`, opened read-only, and waits in IDLE. It reads nothing:
-when the server says something landed, it asks for an ordinary sync, so there's still one way into the
-store and the batches apply as usual. If the sync is already running it's asked to go again afterwards,
-because what landed may have missed it. A lost connection is retried after a minute, and the
-three-minute passes carry on regardless, so watching can fail without anything being missed.
+when the server says something landed (`exists`), left (`expunge`: archived or deleted on another
+device), or had its flags changed (`flags`: read or flagged elsewhere), it asks for an ordinary sync,
+so there's still one way into the store and the batches apply as usual. It waits until the server has
+been quiet for 750 ms first, so a burst of news is one sync. If the sync is already running it's asked
+to go again afterwards, because what changed may have missed it. The watch has its own connection, so
+a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
+it again, as it does after anything else on that connection. A lost connection is retried after a
+minute, and the three-minute passes carry on regardless, so watching can fail without anything being
+missed.
+
+Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
+no batch times, so nothing waits for a batch and the next delivery is none, which hides the delivery
+line and Deliver now; the Summary keeps its own time. The batch times stay saved for switching back.
+Settings saved before the switch existed are live exactly when they have no times, which is how they
+behaved; batches always have a time, so taking the last one away is going live.
 
 There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
 them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
@@ -185,8 +196,19 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
   pressed.
 
 Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
-server wrote, and a pass is never shown, because lower lines are the sender's own work and on a server
-that adds no line of its own the top one is too.
+server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
+work and on a server that adds no line of its own the top one is too.
+
+A message's details show those results all the same, as Gmail's details do, labelled as what the
+receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
+strings are dropped before a result is looked for, only the top `Authentication-Results`,
+`Delivered-To` and the topmost `Received` line that names where it came from are read, every value is
+cut short and stripped of control and bidirectional characters, and all of it is shown as text. They
+are kept with the message when it arrives (`details`, as JSON). Mail stored before that has none; the
+first time its details are opened its header alone is fetched, with `BODY.PEEK[HEADER]` so nothing
+is marked read, and kept. Copying an address goes through the main process, which takes only
+something shaped like an address, so a page gone wrong can't put a command on the clipboard to be
+pasted into a terminal.
 
 ## Batches
 
@@ -201,7 +223,8 @@ sender can write what they like there.
   "waiting" figure, in search, or in contacts.
 - Mail that arrived while the laptop was off is measured from when it arrived, so it's simply there.
 - Changing the times moves waiting mail to the next slot after now, so a change can't deliver
-  anything early. Turning batches off, or adding a sender to the straight-through list, does.
+  anything early. Going live, or adding a sender to the straight-through list, does, and the hub
+  hears at once that nothing is waiting.
 
 ### The Subscription Summary
 
@@ -256,9 +279,10 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **The editor holds only what's typed.** A quoted message would otherwise put a stranger's HTML in the
   app's own page, next to the bridge. The quote stays out of the editor, is sanitised on its way into
   the draft, and shows only in a sandboxed frame. Pasting is as plain text, for the same reason.
-- **The reply box under a thread is the composer without its window.** It's a plain text field, and what's
-  typed becomes the same reply draft, its quote cleaned the same way, sent through the same door with
-  Undo. When the sender has a warning, Send opens the composer instead, so where it goes is seen first.
+- **Every reply starts in the composer.** Reply, Reply All and Forward at the foot of a thread open it,
+  with the recipients, the address it goes from and the quote on show before anything is sent. There's
+  no box under a thread to type into, as Edison has none, so all of a reply is decided where it can
+  all be seen.
 - **Files enter a draft only through the system's picker, or as bytes that were dropped or pasted.** The
   page never names a path, so a compromised page can't attach `~/.ssh/id_ed25519` and send it. Being able
   to send mail is the new thing a compromised page could do, which is why this line is held so firmly.
@@ -272,6 +296,33 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.
 - **Blocking** matches the `From` address, which a sender writes, so it's a filter for nuisances and not
   a security wall. Mail it catches goes to Trash, where it can still be found.
+
+## Faces
+
+`avatars.ts` finds a picture for an address: the person's Gravatar, then their company's BIMI logo,
+then DuckDuckGo's icon for the company's domain, and keeps what it found, or that it found nothing,
+on disk (`faces/index.json` beside the pictures, readable only by this user): 30 days for a
+picture, 7 for none, 6 hours after a lookup failed. A company is asked about once for all its
+senders. Free mail domains and your own addresses get no logo. An account's chosen photo is kept
+the same way, with no expiry, and wins over its Gravatar on every address of that account.
+
+Each lookup tells someone something, so the rules are about when and how:
+
+- **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
+  mail that arrived after the account was added), and a list's rows, which ask for everyone they
+  name. The reader, the composer's suggestions and the drafts only ask what's already known
+  (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
+  with a sender warning ask nothing for that sender and show initials.
+- **How.** The main process does all of it with Node's own fetch, which the page's network walls
+  don't cover and don't need to. Only https to a public name, GET, no redirects, no cookies, a time
+  limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
+  from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
+- **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again
+  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. An
+  SVG is shown only as an `<img>`, where scripts don't run and nothing loads, never placed in the
+  page. A picture that fails to draw shows initials.
+- **Testing.** The sources are passed in. Unit tests answer from lists, and the UI tests from files
+  named in `XRNMAIL_PICTURES`; without them a test looks nothing up, so no test reaches the network.
 
 ## Secrets
 
@@ -338,9 +389,13 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   with the server's own separator. The service's own names (INBOX, `[Gmail]`) and what IMAP can't
   name are turned down before anything is sent.
 - `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
-  floats under a selection, and what every key and button does.
+  floats under a selection, and what every key and button does. With several accounts, All Inboxes
+  asks for the inbox with no side, so it's whole; an account's own inbox, or the only account's, asks
+  for Focused or Other, and its Other tab counts that account's alone (`AccountView.otherUnread`).
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
-  actions and its swipes. A swipe is a short one or a long one each way: `swipeAction` decides from
+  actions and its swipes. Where several accounts share a list, which includes search, Recently Seen,
+  the Summary and the gathered drafts, a row carries a bar of its account's colour down its left
+  edge, six pixels wide so it reads at a glance; the reader puts the same bar beside the subject. A swipe is a short one or a long one each way: `swipeAction` decides from
   how far the row went.
 - `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
   the foot.

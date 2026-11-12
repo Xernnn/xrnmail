@@ -48,6 +48,48 @@ test('new mail waits, and delivering early makes you wait first', async () => {
   await expect(page.getByRole('button', { name: 'Deliver now' })).toHaveCount(0)
 })
 
+test('mail as it arrives: one switch, waiting mail comes in, the times are kept, and changes made elsewhere show by themselves', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  await signIn(run)
+  await pause(1200)
+  const list = page.locator('.threads')
+  gmail.add(rawMail({ subject: 'Held back' }))
+  await expect(page.getByText('1 waiting')).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByLabel('Search settings').fill('as it arrives')
+  await expect(page.getByRole('heading', { name: 'Batches' })).toBeVisible()
+  const modes = page.getByRole('radiogroup', { name: 'How new mail arrives' })
+  await expect(modes.getByRole('radio', { name: /In batches/ })).toBeChecked()
+  await modes.getByRole('radio', { name: /As it arrives/ }).check()
+  await expect(modes.getByRole('radio', { name: /As it arrives/ })).toBeChecked()
+  await expect(page.getByLabel('Remove 13:00')).toHaveCount(0)
+  await expect(page.getByText('Your times (09:00, 13:00, 17:00) are kept for switching back.')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(list.getByText('Held back')).toBeVisible()
+  await expect(page.locator('.batch')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Deliver now' })).toHaveCount(0)
+
+  // New mail, and what's done to it on another device, show here without anything being pressed.
+  const uid = gmail.add(rawMail({ subject: 'Right away' }))
+  await expect(list.getByText('Right away')).toBeVisible({ timeout: 15_000 })
+  await expect(list.locator('.thread.unread', { hasText: 'Right away' })).toHaveCount(1)
+  gmail.change(uid, ['\\Inbox'], ['\\Seen'])
+  await expect(list.locator('.thread.unread', { hasText: 'Right away' })).toHaveCount(0, { timeout: 15_000 })
+  gmail.remove(uid)
+  await expect(list.getByText('Right away')).toHaveCount(0, { timeout: 15_000 })
+
+  // Back to batches: the times it had, and new mail waits again.
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Batches' }).click()
+  await page.getByRole('radio', { name: /In batches/ }).check()
+  await expect(page.getByLabel('Remove 13:00')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  gmail.add(rawMail({ subject: 'Waits again' }))
+  await expect(page.getByText('1 waiting')).toBeVisible({ timeout: 15_000 })
+  await expect(list.getByText('Waits again')).toHaveCount(0)
+})
+
 test('search finds Vietnamese without its marks', async () => {
   run = await launch()
   const { page, gmail } = run

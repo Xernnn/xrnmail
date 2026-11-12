@@ -474,7 +474,7 @@ describe('Gmail: Trash and Spam', () => {
   })
 
   it('spam does not count as mail waiting', async () => {
-    service.saveBatch({ ...service.settings().batch, times: ['17:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['17:00'] })
     gmail.add(rawMail({ subject: 'More junk' }), { box: '[Gmail]/Spam', arrived: new Date(at(10, 1)) })
     clock = at(10, 2)
     await service.syncAll()
@@ -765,7 +765,7 @@ describe('held mail in everything the Assistant added', () => {
 
   beforeEach(async () => {
     await add(G, gmail)
-    service.saveBatch({ ...service.settings().batch, times: ['17:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['17:00'] })
     gmail.now = () => new Date(at(10, 1))
     clock = at(10, 2)
     gmail.add(held({ subject: 'Your order has shipped', text: '1Z999AA10123456784' }))
@@ -842,6 +842,18 @@ describe('Focused and Other', () => {
     service.setFocus('bo@example.com', false)
     expect(subjects(service.list({ kind: 'inbox', focus: 'other' }))).toEqual(['Lunch?'])
     expect(service.settings()).toMatchObject({ alwaysFocused: ['deals@shop.example'], alwaysOther: ['bo@example.com'] })
+  })
+
+  it('each account counts its own Other, for its own inbox\'s tab', async () => {
+    yahoo.add(rawMail({ subject: 'Lunch again', from: 'Bo <bo@example.com>' }), { arrived: new Date(at(9, 30)) })
+    await add(Y, yahoo)
+    const other = (email: string): number | undefined => service.accounts().find((a) => a.email === email)?.otherUnread
+    expect([other(G), other(Y)]).toEqual([1, 0])
+    yahoo.add(rawMail({ subject: 'Flash sale', from: 'Sale <sale@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: new Date(at(9, 40)) })
+    gmail.add(rawMail({ subject: 'Daily digest', from: 'Digest <digest@news.example>', headers: ['List-Id: <digest.news.example>'] }), { arrived: new Date(at(9, 45)) })
+    await service.syncAll()
+    expect([other(G), other(Y)]).toEqual([2, 1])
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Daily digest', 'Flash sale', 'Lunch again', 'Lunch?', 'Weekly deals'])
   })
 })
 

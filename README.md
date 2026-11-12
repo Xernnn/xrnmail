@@ -6,7 +6,8 @@
 
 All your mail accounts in one place, delivered in batches. Gmail, Outlook, Yahoo, iCloud or any IMAP
 server sit side by side, and mail lands a few times a day instead of whenever someone sends it, with
-the people who matter coming straight through.
+the people who matter coming straight through. Or, with one switch, it all shows the moment it
+arrives.
 
 It's a full mail client: write, reply, archive, delete, snooze. Your mail stays on your laptop and with
 your mail service, with no server of ours in between. Everything clever happens on your laptop.
@@ -18,16 +19,21 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 
 ## What it does
 
-- **Every account at once:** one inbox across services, or each on its own, with a colour for each.
+- **Every account at once:** one inbox across services, or each on its own, with a colour for each,
+  shown as a broad bar beside every row of a list they share and beside the subject of an open thread.
   Gmail keeps its labels and threads; other services get their folders, and threads worked out from
   the messages. Aliases work too, and a reply goes out from the address the mail came to.
-- **Batches:** new inbox mail waits for the next slot (09:00, 13:00, 17:00 by default). Waiting mail
-  stays out of the list, threads and search until then.
+- **As it arrives, or in batches:** one switch in Settings, Batches. As it arrives, new mail shows within
+  seconds of your mail service having it, and so does what you do on your phone. In batches, new inbox
+  mail waits for the next slot (09:00, 13:00, 17:00 by default), and waiting mail stays out of the
+  list, threads and search until then. Switching keeps your times for coming back to. See
+  [Live mail](#live-mail).
 - **Straight through:** addresses or whole @domains that skip the wait, set in Settings or from a
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
-- **Writing:** reply, reply all, forward with attachments, a reply box under every thread, formatting,
-  signatures, templates, drafts that survive a restart, and addresses suggested from your mail.
+- **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
+  that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
+  the foot of a thread, in the composer.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
@@ -38,8 +44,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
   ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
   and its right-click menu clears it. Reading from the list itself leaves its order as it is.
-- **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
-  side a sender belongs on and it stays there.
+- **Focused and Other:** people on one side, and everything sent to everyone on the other, in each
+  account's inbox. Say which side a sender belongs on and it stays there. All Inboxes is every
+  account's inbox whole, with nothing set aside, and its count is all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message.
 - **Subscriptions:** everyone mailing you in bulk, with Unsubscribe, Add to Summary and Delete all next
@@ -51,6 +58,13 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
 - **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
   going somewhere else. It warns; it never vouches.
+- **Message details:** "To: me ⌄" over a message opens everything about it, as Edison's header does
+  and with what Gmail's details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full
+  date and the one the sender wrote if it's far off, the account and where it is, the address it was
+  delivered to, mailed by and signed by, TLS, the SPF, DKIM and DMARC results the receiving server
+  wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
+  warnings. Every address can be selected, copied, written to, searched for, muted, let straight
+  through or blocked from there. Escape or a click elsewhere closes it.
 - **Snooze:** a thread comes back when you say, or when someone replies.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
@@ -63,6 +77,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
   `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
+- **Faces:** a sender's photo, or their company's logo, where one exists, as in Edison Mail, and
+  coloured initials otherwise. Your own accounts show your photo in the sidebar and Settings, from
+  Gravatar or one you choose there. Who is asked about whom, and when, is under
+  [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
 - **Safe with hostile mail:** no scripts, and no remote images until you ask. See
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
@@ -73,8 +91,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   choose which of its entries show and in what order, each account's own labels or folders among them,
   with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
-- **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
-  keeps it running. Spell check knows your language, plus English and Vietnamese.
+- **Stays with you:** new mail is announced as it lands, the tray shows what's unread, and closing the
+  window keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
 - **xrnhub:** optional, and gets counts only.
 
@@ -105,11 +123,71 @@ Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
 
+## Live mail
+
+With Settings, Batches set to **As it arrives**, mail is live: there's no button to press and nothing
+to wait for.
+
+- **How:** each account keeps one connection open on its inbox, read-only, in IMAP IDLE
+  ([RFC 2177](https://www.rfc-editor.org/rfc/rfc2177)). The server speaks up the moment a message
+  lands there, leaves it (archived or deleted on your phone or the web), or is read or flagged
+  elsewhere. Within a second xrnmail runs its ordinary sync for that account, so what you see is
+  what the server has. A burst of changes, like a phone marking thirty messages read, is one sync.
+- **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
+  sleep, and when the window comes back after a minute away. A watch that drops is opened again
+  after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
+- **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
+  go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
+  project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,
+  which Gmail supports. Outlook's push
+  ([Microsoft Graph change notifications](https://learn.microsoft.com/en-us/graph/change-notifications-overview))
+  needs a public web address for Microsoft to call, and Graph permissions beyond the IMAP and SMTP
+  ones xrnmail asks for, so Outlook is watched over IMAP IDLE too.
+- **In batches** mail is watched the same way, and then waits for its time. The Subscription Summary
+  waits for its own time either way.
+
+## Faces, and what they tell whom
+
+Finding a picture for someone means asking somebody else, so this is all that's asked, and of whom:
+
+- **Gravatar** (gravatar.com, run by Automattic), for each sender and for your own accounts: the
+  SHA-256 hash of the address, never the address itself, asking for a 96-pixel photo. Gravatar sees
+  your IP address and when you asked, and can tell whose hash it is for an address it already knows.
+- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain: the TXT
+  record `default._bimi.<domain>`, then the same for the company domain above it
+  (`e.shop.example`, then `shop.example`). That's where a company publishes its
+  [BIMI](https://bimigroup.org/) logo.
+- **Whoever hosts that logo**, named in the record, often the company itself or a certificate
+  authority such as DigiCert or Entrust: one fetch of the SVG.
+- **DuckDuckGo's icon service** (`icons.duckduckgo.com`, no account or key; Clearbit's free logo
+  service closed in December 2025), for a company with no BIMI logo: the domain name, for its site's
+  icon. Free mail domains (gmail.com, outlook.com, yahoo.com and the like) never get a logo, so a
+  friend on Gmail doesn't get Gmail's, and nor do your own addresses.
+
+When: as new mail from someone arrives here, or when they're first named in a list (a row of the
+inbox, search, Subscriptions and the rest). Never when a message is opened, so nobody learns when
+you read anything. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
+and a lookup that failed is tried again after 6 hours, so each person and company is asked about
+rarely. Every request is https to a public name, with no cookies or redirects, 8 seconds and 200 KB
+at most (64 KB for SVG), and what comes back has to be a picture by its own bytes. PNG and JPEG are
+drawn again, smaller, by Chromium's decoder in the main process, so nothing but pixels is kept;
+an SVG is only ever shown as an `<img>`, where it can neither run nor fetch anything. Pictures in
+messages are as before: blocked until you ask.
+
+A face proves nothing: anyone can publish one for their own address or domain. Mail with a sender
+warning shows initials, whatever pictures there are.
+
+Your own accounts: Google has no way to get a Google account's profile photo without signing in
+with OAuth. The People API needs it, and the old Picasa address that answered by email was shut down
+in 2019. These accounts sign in with app passwords, so your photo is your Gravatar, or one you choose
+in Settings, Accounts, which stays on this laptop and is sent nowhere.
+
 ## Where it differs from Edison Mail
 
-Kept from xrnmail, where Edison has nothing: batches and straight-through senders, the delivery line
-over the list, Snoozed and Attachments in the sidebar, the quick reply box under a thread, search
-without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time layout.
+Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
+which is how Edison always works, is one switch away), the delivery line
+over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
+warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
 
@@ -142,6 +220,11 @@ Done differently:
   hides what's inside it. An account's All Mail, Sent and the rest stay where they are. Making a label
   or folder goes to the server there and then, so it needs a connection, where other changes wait.
 - A changed key is one key for its action, in place of all the set's keys for it.
+- Edison's Focused Inbox is one switch for everything, and in its pictures All Inboxes is split too,
+  with All Other beside it. Here the switch (Settings, General) is the same one, but it splits only
+  each account's own inbox: All Inboxes shows every account's mail together, Other included.
+- Edison finds faces on servers of its own. Here they come from Gravatar, BIMI and DuckDuckGo's icons,
+  asked from this laptop, and a sender with a warning keeps their initials.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
@@ -152,8 +235,6 @@ Done differently:
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
 - No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
-- Senders show as coloured initials, never photos or company logos, because fetching one would tell
-  someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
   will miss things: a wrong entry is worse than a missing one.
 - Search covers the mail kept on this laptop (90 days by default, up to three years in Settings).
