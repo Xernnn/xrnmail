@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Eraser, Flag, History, Inbox, Mail, MailOpen, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
-  AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
+  AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
 } from '@shared/types'
 import { cleanQuote, Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
@@ -13,11 +13,13 @@ import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
-import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
+import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
-import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
+import { landedWords, LatestSummary, ScheduleDialog, SummaryBar, SummaryNotice } from './Summary'
+import { NewFolderDialog } from './Labels'
+import { ASSISTANT, labelsOf, Sidebar, THREADS, type View } from './Sidebar'
 
 const TAKES_AWAY = ['archive', 'trash', 'spam', 'forever', 'move']
 
@@ -60,7 +62,8 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 
 const TITLES: Record<string, string> = {
   today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
-  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
+  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search', recent: 'Recently Seen',
+  summary: 'Summary'
 }
 /** With several accounts, these gather every account's. */
 const GATHERED = ['drafts', 'sent', 'archive']
@@ -73,7 +76,7 @@ export function titleOf(view: View, many: boolean): string {
   return many && GATHERED.includes(view.kind) && !('account' in view && view.account) ? `All ${title}` : title
 }
 
-function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
+function Help({ close, set, changes }: { close(): void; set: KeySet; changes?: KeyChanges }): ReactNode {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => dialog.current?.showModal(), [])
   return (
@@ -83,7 +86,7 @@ function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
         <button className="quiet" onClick={close}>Done</button>
       </header>
       <dl className="keys">
-        {KEY_LISTS[set].map(([key, what]) => (
+        {keyList(set, changes).map(([key, what]) => (
           <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>
         ))}
       </dl>
@@ -126,6 +129,10 @@ export function App(): ReactNode {
   const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery | null } | null>(null)
   /** The sidebar's entries are being chosen and put in order. */
   const [editingMenu, setEditingMenu] = useState(false)
+  /** Edit Menu's New Label… or New Folder…, for the account it was asked from. */
+  const [newFolder, setNewFolder] = useState<string | null>(null)
+  /** The first sender going into the Summary asks when it should land. */
+  const [scheduling, setScheduling] = useState<{ summary: SummarySettings; done(summary: SummarySettings | null): void } | null>(null)
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
@@ -210,7 +217,8 @@ export function App(): ReactNode {
     if (!open) return setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
-      let found = await window.mail.thread(open.account, open.thread, bins)
+      // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
+      let found = await window.mail.thread(open.account, open.thread, bins, SOLO !== null || active.kind !== 'recent')
       if (SOLO && found.length === 0) {
         // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
         // what sent it there is never out of reach.
@@ -356,6 +364,13 @@ export function App(): ReactNode {
     if (command === 'compose') void compose({ kind: 'new' })
     else if (command === 'settings') setSettings('general')
     else if (command === 'about') setSettings('about')
+    else if (command === 'summary') {
+      // The notice for a Summary that landed leads to it.
+      setView({ kind: 'summary' })
+      setSearch('')
+      setOpen(null)
+      setRows(null)
+    }
     else if (command === 'help') setHelp(true)
     else if (command === 'print') window.print()
     else if (command === 'search') focusSearch()
@@ -480,6 +495,45 @@ export function App(): ReactNode {
       const unread = (await window.mail.list(target, WHOLE_LIST)).filter((r) => r.unread > 0).map((r) => ({ account: r.account, thread: r.thread }))
       if (unread.length === 0) say('Nothing unread there')
       else await run(unread, { kind: 'read' }, 'Marked as read')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  /** Senders into the Summary or out of it. The first one in asks when it should land. */
+  const summarize = async (address: string, on: boolean): Promise<void> => {
+    const who = address.trim().toLowerCase()
+    try {
+      let { summary } = await window.mail.settings()
+      if (on && !summary.chosen) {
+        const current = summary
+        const picked = await new Promise<SummarySettings | null>((resolve) => setScheduling({ summary: current, done: resolve }))
+        setScheduling(null)
+        if (!picked) return
+        summary = picked
+      }
+      const senders = on ? [...summary.senders.filter((s) => s !== who), who] : summary.senders.filter((s) => s !== who)
+      await window.mail.saveSummary({ ...summary, senders })
+      bump()
+      setToast({ text: on ? `${address} goes into your Summary` : `${address} is out of your Summary`, undo: () => summarize(address, !on) })
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  /** All a Summary brought, to Trash at once, as Edison offers. */
+  const clearSummary = async (refs: ThreadRef[], at: number): Promise<void> => {
+    const note = `${refs.length === 1 ? '1 thread goes' : `${refs.length} threads go`} to Trash.`
+    if (!await ask({ title: `Delete the Summary of ${landedWords(at)}?`, note, action: 'Delete all', danger: true })) return
+    await run(refs, { kind: 'trash' }, 'Moved to Trash')
+  }
+
+  /** What was opened is this laptop's own record, so clearing it asks first and can't be undone. */
+  const clearRecent = async (): Promise<void> => {
+    if (!await ask({ title: 'Clear Recently Seen?', note: 'Threads you open from now on are listed again.', action: 'Clear' })) return
+    try {
+      await window.mail.clearRecent()
+      say('Recently Seen cleared')
     } catch (e) {
       say(problem(e))
     }
@@ -647,6 +701,16 @@ export function App(): ReactNode {
         },
         read: () => void run(targets(), { kind: 'read' }),
         unread: () => void run(targets(), { kind: 'unread' }),
+        toggleRead: () => {
+          const unread = picked.size > 0 ? list.some((r) => picked.has(keyOf(r)) && r.unread > 0) : messages.some((m) => !m.seen)
+          void run(targets(), { kind: unread ? 'read' : 'unread' })
+        },
+        pin: () => {
+          if (bins) return
+          const pinned = picked.size > 0 ? list.filter((r) => picked.has(keyOf(r))).every((r) => r.pinned) : messages.some((m) => m.pinned)
+          void pin(targets(), !pinned)
+        },
+        sync: () => void window.mail.syncNow(),
         snooze: () => {
           if (picked.size > 0) setBulkSnooze(true)
           else if (open) setPanel('snooze')
@@ -661,7 +725,8 @@ export function App(): ReactNode {
         undo: () => toast?.undo?.(),
         help: () => setHelp(true)
       }
-      const command = KEYS[profile?.keys ?? 'edison'][keyName(event)]
+      const set = profile?.keys ?? 'edison'
+      const command = keysFor(set, profile?.keyChanges[set])[keyName(event)]
       const handler = command && commands[command]
       if (!handler) return
       event.preventDefault()
@@ -710,6 +775,20 @@ export function App(): ReactNode {
   const many = accounts.length > 1
   const showDrafts = active.kind === 'drafts'
   const showSubscriptions = active.kind === 'subscriptions'
+  const subscriptionSide = active.kind === 'subscriptions' ? active.side ?? 'subscribed' : 'subscribed'
+  const changeSummary = (): void => setSettings('summary')
+  const summaryBar = profile && <SummaryBar summary={profile.summary} overview={overview} change={changeSummary} />
+  /** Over each Summary's threads in the Summary list: when it landed, and Delete all. */
+  const summaryHead = (at: number): ReactNode => {
+    const refs = list.filter((r) => r.summaryAt === at).map((r) => ({ account: r.account, thread: r.thread }))
+    return (
+      <div className="summary-head">
+        <Newspaper size={14} aria-hidden="true" />
+        <span className="grow"><strong>Summary</strong> · {landedWords(at)} · {refs.length === 1 ? '1 thread' : `${refs.length} threads`}</span>
+        <button className="link danger" onClick={() => void clearSummary(refs, at)}>Delete all</button>
+      </div>
+    )
+  }
   const shownDrafts = active.kind === 'drafts' && active.account ? drafts.filter((d) => d.account === active.account) : drafts
   const openAccount = accounts.find((a) => a.email === open?.account)
   const anyPicked = picked.size > 0
@@ -738,13 +817,14 @@ export function App(): ReactNode {
   const reader = (
     <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
       settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
-      labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
+      labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
       reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
-      forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)} />
+      forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}
+      summarize={(address, on) => void summarize(address, on)} />
   )
   /** What's drawn over the page, in any window. */
   const over = (
@@ -767,12 +847,19 @@ export function App(): ReactNode {
           {toast.undo && <button className="link" onClick={() => undoNow(toast.undo)}>Undo</button>}
         </div>
       )}
-      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
+      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} changes={profile?.keyChanges[profile.keys]} />}
       {settings && (
         <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)}
           editMenu={SOLO ? undefined : () => { setSettings(null); setEditingMenu(true) }} />
       )}
       {question && <Confirm question={question} />}
+      {scheduling && <ScheduleDialog summary={scheduling.summary} done={scheduling.done} />}
+      {newFolder && (
+        <NewFolderDialog accounts={accounts} account={newFolder} done={(made) => {
+          if (made) say(`Made the ${made.kind} ${made.path}`)
+          setNewFolder(null)
+        }} />
+      )}
     </>
   )
 
@@ -782,7 +869,7 @@ export function App(): ReactNode {
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
-        menu={(target, x, y) => setSideMenu({ x, y, target })}
+        menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
         choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
         edited={(choice) => {
           setEditingMenu(false)
@@ -813,9 +900,10 @@ export function App(): ReactNode {
               </div>
             )}
             {active.kind === 'subscriptions' && (
-              <div className="tabs" role="group" aria-label="Subscribed and Unsubscribed">
-                <button className={active.left ? 'tab' : 'tab on'} aria-pressed={!active.left} onClick={() => go({ kind: 'subscriptions' })}>Subscribed</button>
-                <button className={active.left ? 'tab on' : 'tab'} aria-pressed={active.left === true} onClick={() => go({ kind: 'subscriptions', left: true })}>Unsubscribed</button>
+              <div className="tabs" role="group" aria-label="Sides of Subscriptions">
+                <button className={subscriptionSide === 'subscribed' ? 'tab on' : 'tab'} aria-pressed={subscriptionSide === 'subscribed'} onClick={() => go({ kind: 'subscriptions' })}>Subscribed</button>
+                <button className={subscriptionSide === 'left' ? 'tab on' : 'tab'} aria-pressed={subscriptionSide === 'left'} onClick={() => go({ kind: 'subscriptions', side: 'left' })}>Unsubscribed</button>
+                <button className={subscriptionSide === 'summary' ? 'tab on' : 'tab'} aria-pressed={subscriptionSide === 'summary'} onClick={() => go({ kind: 'subscriptions', side: 'summary' })}>Summary</button>
               </div>
             )}
             {overview && <BatchStrip overview={overview} />}
@@ -825,6 +913,8 @@ export function App(): ReactNode {
                 <span className="bar"><i style={{ width: `${Math.round((done / total) * 100)}%` }} /></span>
               </div>
             )}
+            {active.kind === 'summary' && summaryBar}
+            {active.kind === 'inbox' && active.focus !== 'other' && overview && <SummaryNotice overview={overview} open={() => go({ kind: 'summary' })} />}
             {active.kind === 'trash' && list.length > 0 && (
               <div className="strip">
                 <span className="muted">{list.length >= limit ? `${list.length}+` : list.length} {list.length === 1 ? 'thread' : 'threads'} in Trash</span>
@@ -841,10 +931,14 @@ export function App(): ReactNode {
                   discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
-                <Subscriptions version={version} left={active.left === true} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)} />
+                <Subscriptions version={version} side={subscriptionSide} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
+                  summarize={(item, on) => void summarize(item.address, on)}
+                  top={subscriptionSide === 'summary' && <>{summaryBar}<LatestSummary overview={overview} open={() => go({ kind: 'summary' })} /></>} />
               )}
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
-                <Row key={keyOf(row)} row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
+                <Fragment key={keyOf(row)}>
+                {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
+                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
                   swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true}
@@ -855,11 +949,14 @@ export function App(): ReactNode {
                   swiped={(action) => swiped(row, action)}
                   menu={(x, y) => setMenu({ x, y, row })}
                   drag={(event) => dragged(event, row)} />
+                </Fragment>
               ))}
               {(rows === null || (firstRead && list.length === 0)) && !showDrafts && !showSubscriptions && <Skeleton />}
               {emptyList && !firstRead && (
                 searching ? <Empty icon={SearchX} title="Nothing found" note="Search covers the mail kept on this laptop." />
                   : active.kind === 'inbox' && active.focus !== 'other' ? <Empty icon={Check} title="Nothing here" note="You're all caught up." />
+                  : active.kind === 'recent' ? <Empty icon={History} title="Nothing seen yet" note="Threads you open are listed here, the last one first." />
+                  : active.kind === 'summary' ? <Empty icon={Newspaper} title="No Summary here" note="Senders you add from Subscriptions wait, and their mail comes here together at the time you choose." />
                   : <Empty icon={Inbox} title="Nothing here" />
               )}
             </div>
@@ -905,6 +1002,7 @@ export function App(): ReactNode {
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
           items={[
             ...(sideMenu.target ? [{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target as ListQuery) }] : []),
+            ...(sideMenu.target?.kind === 'recent' ? [{ label: 'Clear Recently Seen', icon: Eraser, run: () => void clearRecent() }] : []),
             { label: 'Edit Menu', icon: SlidersHorizontal, run: () => setEditingMenu(true) }
           ]} />
       )}

@@ -5,13 +5,14 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, Server, SwipeAction, Template, ThreadRef
+  Rsvp, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
+import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
@@ -126,7 +127,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -153,6 +154,19 @@ function batchSettings(value: unknown): BatchSettings {
     times: b['times'].map((t) => text(t, 8)),
     vip: b['vip'].map((v) => text(v, 320)),
     earlyPerDay: number(b['earlyPerDay'])
+  }
+}
+
+/** The main process decides what's allowed: `saveSummary` cleans the rest. */
+function summarySettings(value: unknown): SummarySettings {
+  const s = (value ?? {}) as Record<string, unknown>
+  if (!Array.isArray(s['senders']) || s['senders'].length > 500) throw new Error('Bad request')
+  return {
+    senders: s['senders'].map((v) => text(v, 320)),
+    every: s['every'] === 'weekly' ? 'weekly' : 'daily',
+    time: text(s['time'], 8),
+    day: number(s['day']),
+    chosen: s['chosen'] === true
   }
 }
 
@@ -266,7 +280,8 @@ function profile(value: unknown): ProfilePatch {
   for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
-  if (p['keys'] === 'edison' || p['keys'] === 'gmail') patch.keys = p['keys']
+  if (isKeySet(p['keys'])) patch.keys = p['keys']
+  if (p['keyChanges'] && typeof p['keyChanges'] === 'object') patch.keyChanges = cleanAllChanges(p['keyChanges'])
   if (Array.isArray(p['quickActions'])) patch.quickActions = p['quickActions'].slice(0, QUICK_SLOTS).map((a) => text(a, 16) as QuickAction)
   for (const key of ['swipeLeft', 'swipeLeftLong', 'swipeRight', 'swipeRightLong'] as const) {
     if (p[key] !== undefined) patch[key] = text(p[key], 16) as SwipeAction
@@ -309,10 +324,14 @@ function register(service: MailService): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown) => service.thread(text(account, 320), text(thread, 64), bins === true))
+  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown) =>
+    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false))
+  handle('clearRecent', () => service.clearRecent())
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))
+  handle('saveSummary', (summary: unknown) => service.saveSummary(summarySettings(summary)))
+  handle('summarySenders', () => service.summarySenders())
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())
@@ -364,6 +383,7 @@ function register(service: MailService): void {
     bringForward(shown)
     return true
   })
+  handle('createFolder', (account: unknown, name: unknown) => service.createFolder(text(account, 320), text(name, 500)))
   handle('startDraft', (start: unknown) => service.startDraft(draftStart(start)))
   handle('saveDraft', (id: unknown, edit: unknown) => service.saveDraft(number(id), draftEdit(edit)))
   handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
@@ -550,9 +570,14 @@ void app.whenReady().then(() => {
     openWatcher: (account, login) => new ImapWatcher(imapConfig(account, login)),
     records: test['XRNMAIL_IMAP'] ? undefined : domainRecords,
     files: new DraftFiles(join(app.getPath('userData'), 'drafts')),
-    now: Date.now,
+    // Read through Date each time, so the UI tests can move the main process's clock on.
+    now: () => Date.now(),
     changed: tellPage,
     landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, showWindow),
+    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
+      showWindow()
+      tellCommand('summary')
+    }),
     earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
   })
   mail = service

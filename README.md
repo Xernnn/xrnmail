@@ -35,11 +35,20 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
   there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
   for what they mean there.
+- **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
+  ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
+  and its right-click menu clears it. Reading from the list itself leaves its order as it is.
 - **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
   side a sender belongs on and it stays there.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message.
-- **Subscriptions:** everyone mailing you in bulk, with Unsubscribe and Delete all next to each.
+- **Subscriptions:** everyone mailing you in bulk, with Unsubscribe, Add to Summary and Delete all next
+  to each, and the ones left behind and the ones in the Summary on sides of their own.
+- **The Subscription Summary:** chosen senders' new mail waits, and lands together, daily or weekly at
+  the time you pick (the first sender added asks; Settings, Summary changes it or turns it off).
+  Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
+  of the inbox has one entry for it until it's read. Its mail is under Summary in the sidebar, each
+  Summary under its own heading with Delete all, and stays out of the inbox and its counts.
 - **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
   going somewhere else. It warns; it never vouches.
 - **Snooze:** a thread comes back when you say, or when someone replies.
@@ -61,7 +70,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
   selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
-  choose which of its entries show and in what order), recipient chips, side-by-side or
+  choose which of its entries show and in what order, each account's own labels or folders among them,
+  with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
@@ -86,8 +96,11 @@ keyring.
 Press `?` for the keys. The set is Edison Mail's, with Command read as Ctrl: `c` or `d` writes, `r` or
 Ctrl+R replies, Backspace takes a thread out of view (archives it), Shift+Backspace deletes, Ctrl+S
 flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
-archives, `#` deletes, `z` undoes), and Settings, Shortcuts has the Gmail set alone, where Delete
-deletes.
+archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets Edison offers: Gmail's
+(xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
+maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
+new key. A key another action has is offered to take over, and a change can go back to the set's own.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
@@ -100,16 +113,10 @@ without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time l
 
 Not here, though Edison has them:
 
-- **Recently Seen.** Nothing to hand says what it lists: it's a name in Edison's sidebar in every
-  picture, and its help pages never describe it.
-- **The Subscription Summary.** Its help pages say what it does (chosen senders are held and delivered
-  together, daily or weekly at a time you pick) and show its schedule in Settings, but not the three
-  things it would add here: the Summary side of Subscriptions, the Summary list in the sidebar, and
-  what a delivered Summary looks like. Batches already hold mail for set times of day, for everyone
-  but the senders let straight through.
-- Changing single shortcuts, and the Apple Mail, Outlook and Inbox sets of keys.
-- Choosing and ordering the accounts' own labels in Edit Menu, and making a label or folder from it.
-  Edit Menu here covers the gathered folders and the Assistant's lists.
+- In Subscriptions, picking several senders at once to add to the Summary, and a page for each sender
+  with how much they send and how much of it gets opened.
+- Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
+  Back up & Sync would need a server of Edison's.
 
 Done differently:
 
@@ -123,14 +130,28 @@ Done differently:
   with Undo still there, and closes when it's marked unread or gone for good.
 - Muted senders are a list of addresses or @domains typed in or added from a message, as blocked
   senders are; Edison picks them from contacts.
+- How the Summary and batches sit together is xrnmail's, since Edison has no batches. A sender in the
+  Summary waits for its time, not the next batch, and does with batches off; Deliver now is for the
+  batch and leaves it waiting. Letting a sender straight through takes them out of it, and adding one
+  to it takes them off that list. Its mail stays in your service's inbox: only this laptop shows it
+  apart.
+- The Inbox set is from Inbox's own Shift+? list, as people who used it wrote it down, since Google's
+  help page only ever said to press Shift+?. Apple's page leaves out deleting, flagging and searching,
+  so those are from Mail's menus. Outlook's is Outlook for Mac's.
+- In Edit Menu a label moves among the ones beside it, taking what's inside it along, and hiding one
+  hides what's inside it. An account's All Mail, Sent and the rest stay where they are. Making a label
+  or folder goes to the server there and then, so it needs a connection, where other changes wait.
+- A changed key is one key for its action, in place of all the set's keys for it.
+- Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
+  and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
 ## What it doesn't do yet
 
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
-- No mail rules, translation, or summaries, no shortcuts of your own choosing, and nothing is built for
-  Windows or macOS or for phones.
+- No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
+  macOS or for phones.
 - Senders show as coloured initials, never photos or company logos, because fetching one would tell
   someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It

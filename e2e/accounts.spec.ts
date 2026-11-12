@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { FakeGmail, rawMail } from '../tests/fake-gmail'
-import { launch, signIn, type Running } from './app'
+import { hhmm, launch, later, signIn, syncAndSettle, type Running } from './app'
 
 /** The real app, with an account on a plain folder server beside a Gmail one where a test needs it. */
 
@@ -29,6 +29,21 @@ test('a plain server: choosing the service, entering its details, and reading fo
   await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible()
   await page.getByRole('button', { name: 'Work', exact: true }).click()
   await expect(page.getByText('Filed under work')).toBeVisible()
+  // A folder of its own, made from Edit Menu, is a folder on the server, read from then on.
+  await page.locator('.sidebar-foot .status').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await page.getByRole('button', { name: 'New Folder on me@mail.example' }).click()
+  const making = page.getByRole('dialog', { name: 'New Folder' })
+  await making.getByLabel('Name').fill('Receipts')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(page.getByText('Made the folder Receipts')).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Mailboxes on me@mail.example' }).getByRole('listitem')).toHaveText(['Receipts', 'Work'])
+  await page.locator('.sidebar').getByRole('button', { name: 'Done' }).click()
+  expect(plain.box('Receipts').mails).toEqual([])
+  plain.add(rawMail({ subject: 'Filed under receipts' }), { box: 'Receipts' })
+  await page.getByRole('button', { name: /^Sync/ }).click()
+  await page.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await expect(page.getByText('Filed under receipts')).toBeVisible()
 })
 
 test('moving, deleting and restoring on a folder server', async () => {
@@ -132,6 +147,87 @@ test('subscriptions list who mails in bulk, and a sender can be cleared with Und
   await expect(page.getByText('No subscriptions')).toBeVisible()
   await page.getByRole('button', { name: 'Undo' }).click()
   await expect(page.getByText('2 messages')).toBeVisible()
+})
+
+test('the Summary: a sender goes in from Subscriptions, its mail waits for the time chosen, and lands together apart from the inbox', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const headers = ['List-Unsubscribe: <https://list.example/u>']
+  gmail.add(rawMail({ subject: 'One', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Two', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveBatch({ times: [], vip: [], earlyPerDay: 1 })) // nothing else waits
+  await page.evaluate(() => window.mail.saveProfile({ focused: false })) // one inbox, bulk mail and all
+  const side = page.locator('.sidebar')
+  const list = page.locator('.threads')
+  await side.getByRole('button', { name: 'Subscriptions' }).click()
+  await page.getByRole('button', { name: 'Add hi@shop.example to Summary' }).click()
+  // The first sender in asks when the Summary should land.
+  const asking = page.getByRole('dialog', { name: 'When your Summary arrives' })
+  await expect(asking.getByRole('radio', { name: /Morning/ })).toBeChecked()
+  await asking.getByRole('button', { name: 'Weekly' }).click()
+  await expect(asking.getByLabel('Summary day')).toHaveValue('1')
+  await asking.getByRole('button', { name: 'Daily' }).click()
+  const at = hhmm(Date.now() + 120_000)
+  await asking.getByRole('radio', { name: 'Pick a time' }).check()
+  await asking.getByLabel('Summary time').fill(at)
+  await asking.getByRole('button', { name: 'Schedule' }).click()
+  await expect(page.getByText('hi@shop.example goes into your Summary')).toBeVisible()
+  await expect(page.getByText('No subscriptions')).toBeVisible() // it has a side of its own now
+  await page.getByRole('group', { name: 'Sides of Subscriptions' }).getByRole('button', { name: 'Summary' }).click()
+  await expect(page.locator('.summary-bar')).toContainText(`Delivered daily at ${at}`)
+  await expect(page.getByRole('button', { name: /Latest Summary/ })).toContainText('Nothing has landed yet')
+  await expect(page.locator('.subscription')).toContainText('2 messages')
+  await expect(page.getByRole('button', { name: 'Remove hi@shop.example from Summary' })).toBeVisible()
+  expect((await page.evaluate(() => window.mail.settings())).summary).toMatchObject({ senders: ['hi@shop.example'], every: 'daily', time: at, chosen: true })
+
+  // What came before stays where it was. What comes now waits for the Summary, whatever the batches say.
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Two', 'One'])
+  gmail.add(rawMail({ subject: 'Three', from: 'Shop <hi@shop.example>', headers }))
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Ada <ada@example.com>' }))
+  await syncAndSettle(page)
+  await expect(list.getByText('Lunch?')).toBeVisible()
+  await expect(list.getByText('Three')).toHaveCount(0)
+  await side.getByRole('button', { name: 'Summary', exact: true }).click()
+  await expect(page.locator('.view-title')).toHaveText('Summary')
+  await expect(page.locator('.summary-bar')).toContainText(`1 waiting for Today, ${at}`)
+  await expect(page.getByText('No Summary here')).toBeVisible()
+
+  // Its time comes: it lands as one, out of the inbox, with a notice at the top of it.
+  await later(run, 180_000)
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  const notice = page.getByRole('button', { name: /Your Summary/ })
+  await expect(notice).toContainText('1 thread from Shop', { timeout: 15_000 })
+  await expect(list.getByText('Three')).toHaveCount(0)
+  await expect(side.getByRole('button', { name: /^Summary/ }).locator('.nav-count')).toHaveText('1')
+  await notice.click()
+  await expect(page.locator('.view-title')).toHaveText('Summary')
+  await expect(page.locator('.summary-head')).toContainText(`Today, ${at} · 1 thread`)
+  await list.getByText('Three').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Three')
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('button', { name: 'Remove sender from Summary' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  await expect(notice).toHaveCount(0) // read, so there's nothing left to tell
+  await side.getByRole('button', { name: 'Summary', exact: true }).click()
+  await page.locator('.summary-head').getByRole('button', { name: 'Delete all' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete all' }).click()
+  await expect(page.getByText('Moved to Trash')).toBeVisible()
+  await expect(page.getByText('No Summary here')).toBeVisible()
+
+  // Turned off in Settings, its sender goes back to Subscribed.
+  await page.locator('.summary-bar').getByRole('button', { name: 'Change' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settings.getByRole('heading', { name: 'Summary' })).toBeVisible()
+  await expect(settings.getByRole('radio', { name: 'Pick a time' })).toBeChecked()
+  await settings.getByRole('button', { name: 'Turn off Summary' }).click()
+  await page.locator('dialog.confirm').getByRole('button', { name: 'Turn off' }).click()
+  await expect(settings.getByText('Nobody is in it yet')).toBeVisible()
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await side.getByRole('button', { name: 'Subscriptions' }).click()
+  await expect(page.getByRole('button', { name: 'Add hi@shop.example to Summary' })).toBeVisible()
 })
 
 test('warnings, and a tracker that never gets to load', async () => {

@@ -61,11 +61,22 @@ export function mailboxesOf(list: ListResponse[], gmail: boolean): MailboxRef[] 
   return boxes.sort((a, b) => Number(b.role === 'inbox' || b.role === 'all') - Number(a.role === 'inbox' || a.role === 'all'))
 }
 
+/** The person's own folders, or on Gmail their own labels, which IMAP lists as folders too: what mail
+ *  can be filed under, including ones with nothing in them. A service's own folders aren't. */
+export function ownFolders(list: ListResponse[], gmail: boolean): string[] {
+  if (!gmail) return mailboxesOf(list, false).filter((box) => box.role === 'folder').map((box) => box.path)
+  return list
+    .filter((box) => !box.specialUse && !box.flags.has('\\Noselect') && box.path.toUpperCase() !== 'INBOX' && !/^\[(Gmail|Google Mail)\]\//.test(box.path))
+    .map((box) => box.path)
+}
+
 export interface MailSource {
   connect(): Promise<void>
   /** Gmail, or something with Gmail's labels and threads. */
   readonly gmail: boolean
   mailboxes(): MailboxRef[]
+  /** What mail can be filed under: [ownFolders]. */
+  folders(): string[]
   open(box: MailboxRef): Promise<MailboxInfo>
   /** Every UID that arrived on or after [since], lowest first. Throws if the server won't say:
    *  sync forgets whatever isn't in the answer. */
@@ -166,6 +177,7 @@ export class ImapSource implements MailSource {
   private client: ImapFlow
   private lock: { release(): void } | null = null
   private boxes: MailboxRef[] = []
+  private own: string[] = []
   gmail = false
 
   constructor(config: ImapConfig) {
@@ -175,7 +187,9 @@ export class ImapSource implements MailSource {
   async connect(): Promise<void> {
     await this.client.connect()
     this.gmail = this.client.capabilities.has('X-GM-EXT-1')
-    this.boxes = mailboxesOf(await this.client.list(), this.gmail)
+    const listed = await this.client.list()
+    this.boxes = mailboxesOf(listed, this.gmail)
+    this.own = ownFolders(listed, this.gmail)
     if (this.gmail && !this.boxes.some((box) => box.role === 'all')) {
       throw new Error('This account has no All Mail folder. In Gmail settings, turn on showing All Mail in IMAP.')
     }
@@ -184,6 +198,10 @@ export class ImapSource implements MailSource {
 
   mailboxes(): MailboxRef[] {
     return this.boxes
+  }
+
+  folders(): string[] {
+    return this.own
   }
 
   async open(box: MailboxRef): Promise<MailboxInfo> {

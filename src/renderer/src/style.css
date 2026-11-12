@@ -231,6 +231,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .nav-edit .icon { width: 22px; height: 22px; color: var(--nav-icon); }
 .nav-edit .icon:disabled { opacity: 0.3; }
 .nav-edit.drop { box-shadow: inset 0 2px 0 var(--accent); }
+.nav-new { display: block; padding: 6px 16px 4px 45px; font-weight: 600; }
+.new-folder form { display: grid; gap: 12px; }
+.new-folder label { display: grid; gap: 5px; font-size: 13px; }
 .nav-grip { flex: none; margin-left: 4px; color: var(--nav-icon); }
 .nav-icon { flex: none; color: var(--nav-icon); }
 .nav-item:hover { background: var(--hover); }
@@ -373,6 +376,31 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .subscription .grow { overflow: hidden; }
 .subscription .note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .subscription-actions { display: grid; gap: 4px; }
+/* Links under a subscription, as Edison sets them: Unsubscribe, Add to Summary. */
+.subscription-links { display: flex; gap: 16px; margin-top: 6px; }
+.subscription-links .link { font-size: 12.5px; font-weight: 600; }
+
+/* The Subscription Summary: Edison's blue bar over it, Latest Summary, its headings, the inbox's notice. */
+.summary-bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 18px 9px 24px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12.5px; }
+.summary-bar-words { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-bar .link { font-size: 12.5px; font-weight: 700; }
+.latest-summary { display: flex; align-items: center; gap: 14px; width: 100%; padding: 15px 20px 15px 22px; border-bottom: 1px solid var(--line-soft); }
+.latest-summary:hover { background: var(--hover); }
+.latest-summary > svg:first-child { color: var(--accent); }
+.latest-summary strong { display: block; font-size: 15px; font-weight: 600; }
+.latest-summary .note { font-size: 12px; }
+.summary-head { display: flex; align-items: center; gap: 7px; padding: 14px 18px 6px 24px; color: var(--muted); font-size: 12px; }
+.summary-head strong { color: var(--text); font-weight: 600; }
+.summary-head svg { flex: none; color: var(--accent); }
+.summary-head .link { font-size: 12px; font-weight: 600; }
+.link.danger { color: var(--danger); }
+.summary-notice { flex: none; display: flex; align-items: center; gap: 12px; margin: 8px 14px 4px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 13px; }
+.summary-notice:hover { filter: brightness(0.98); }
+.summary-notice-mark { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: var(--on-primary); }
+.summary-notice-words { overflow: hidden; }
+.summary-notice-words strong { font-weight: 600; }
+.summary-notice-who { display: block; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.summary-notice .link { font-weight: 700; }
 
 /* The reader */
 
@@ -537,6 +565,33 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .tile:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tile input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
 .tile-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #fff; font-size: 15px; font-weight: 700; }
+
+/* Settings, Shortcuts: each action, its keys, and Change. */
+.settings section.shortcuts { gap: 0; padding-top: 4px; }
+.shortcut { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 1.3fr) auto; align-items: center; gap: 12px; min-height: 40px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
+.shortcut.choosing { background: var(--accent-soft); margin: 0 -10px; padding: 4px 10px; border-radius: 8px; }
+.shortcut-keys { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.shortcut-keys kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); font: 12px/1.5 inherit; white-space: nowrap; }
+.shortcut-press { color: var(--accent-ink); font-size: 13px; font-weight: 600; }
+.shortcut-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.shortcut-actions .quiet { padding: 4px 10px; }
+.shortcuts > .quiet { justify-self: start; margin-top: 14px; }
+
+/* The Summary's schedule, in Settings and on first use: Daily or Weekly, then the time. */
+.schedule { display: grid; gap: 10px; max-width: 380px; }
+.schedule-row { display: flex; align-items: center; gap: 16px; font-size: 14px; }
+.segments { display: inline-flex; padding: 2px; border-radius: 999px; background: var(--field); }
+.segment { padding: 5px 18px; border-radius: 999px; color: var(--muted); font-size: 13px; }
+.segment.on { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+.schedule-times { display: grid; gap: 2px; }
+.schedule label.schedule-time { display: flex; align-items: center; gap: 12px; min-height: 34px; color: var(--text); font-size: 14px; cursor: pointer; }
+.schedule label.schedule-time input[type="radio"] { flex: none; width: 17px; height: 17px; margin: 0; padding: 0; accent-color: var(--primary); }
+.schedule label.schedule-time input[type="time"] { width: auto; padding: 4px 8px; }
+.schedule label.inline { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
+.schedule label.inline select { width: auto; min-width: 150px; padding-block: 6px; }
+.schedule-dialog { width: min(460px, calc(100vw - 32px)); }
+.schedule-dialog .schedule { margin-top: 14px; }
+.outline { justify-self: start; padding: 7px 20px; border: 1px solid currentColor; border-radius: 9px; font-weight: 600; }
 
 /* Floating bits */
 

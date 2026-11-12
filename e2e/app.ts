@@ -85,6 +85,22 @@ export async function signIn(run: Running): Promise<void> {
   await run.page.getByRole('search').or(run.page.getByLabel('Search')).waitFor()
 }
 
+/** Moves the main process's clock on, as a laptop left alone would find it. The page keeps its own. */
+export async function later(run: Running, ms: number): Promise<void> {
+  await run.app.evaluate((_electron, by) => {
+    const clock = globalThis as unknown as { realNow?: () => number; ahead?: number }
+    clock.realNow ??= Date.now.bind(Date)
+    clock.ahead = (clock.ahead ?? 0) + by
+    Date.now = () => (clock.realNow as () => number)() + (clock.ahead ?? 0)
+  }, ms)
+}
+
+/** "HH:MM" for a moment, in this laptop's time. */
+export const hhmm = (at: number): string => {
+  const day = new Date(at)
+  return `${String(day.getHours()).padStart(2, '0')}:${String(day.getMinutes()).padStart(2, '0')}`
+}
+
 export async function syncAndSettle(page: Page): Promise<void> {
   await page.getByRole('button', { name: /^Sync/ }).click()
   await page.getByRole('button', { name: 'Sync', exact: true }).waitFor()

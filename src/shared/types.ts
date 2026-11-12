@@ -1,4 +1,4 @@
-import type { KeySet } from './keys'
+import type { KeyChanges, KeySet } from './keys'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -27,7 +27,7 @@ export interface AccountView {
   providerName: string
   /** Gmail labels can be added and removed; anywhere else, a message lives in one folder. */
   labels: boolean
-  /** Folders and labels to file mail under, including empty ones. */
+  /** Its own folders, or on Gmail its own labels: what mail can be filed under, empty ones too. */
   folders: string[]
   /** Unread in its inbox. */
   unread: number
@@ -45,6 +45,19 @@ export interface NewAccount {
   user?: string
   imap?: Server
   smtp?: Server
+}
+
+/** The Subscription Summary: chosen senders, held and delivered together at a time of their own. */
+export interface SummarySettings {
+  /** Addresses or @domains whose new mail waits for the Summary. None, and there's no Summary. */
+  senders: string[]
+  every: 'daily' | 'weekly'
+  /** "HH:MM". */
+  time: string
+  /** For a weekly Summary, the day: 0 is Sunday. */
+  day: number
+  /** Whether a time has been picked. Until one has, the first sender added asks for it. */
+  chosen: boolean
 }
 
 export interface BatchSettings {
@@ -83,6 +96,7 @@ export const QUICK_SLOTS = 4
 
 export interface Settings {
   batch: BatchSettings
+  summary: SummarySettings
   /** How far back to keep mail on this laptop. */
   backfillDays: number
   /** xrnhub, if used. It gets counts only, never who or what. */
@@ -119,8 +133,11 @@ export interface Settings {
   sidebarIcons: boolean
   /** Times as 17:30, not 5:30 PM. */
   clock24: boolean
-  /** Which set of keys the keyboard answers to: Edison Mail's, or Gmail's as xrnmail had them. */
+  /** Which set of keys the keyboard answers to: Edison Mail's, Gmail's as xrnmail had them, Apple
+   *  Mail's, Outlook's or Inbox's. */
   keys: KeySet
+  /** Keys the person changed, for each set. */
+  keyChanges: Partial<Record<KeySet, KeyChanges>>
   /** Whether rows offer buttons under the pointer, and which, in order. */
   quickOn: boolean
   quickActions: QuickAction[]
@@ -163,6 +180,8 @@ export interface ThreadRow {
   cards: string[]
   /** Kept under Pinned, on this laptop. */
   pinned: boolean
+  /** When the Summary that brought it landed, if one did. */
+  summaryAt: number | null
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -240,11 +259,23 @@ export interface Overview {
   spam: number
   /** Unread, by what the Assistant made of it. */
   assistant: Record<AssistantSection, number>
+  summary: SummaryOverview
+}
+
+export interface SummaryOverview {
+  /** When the next Summary lands, while it has senders. */
+  next: number | null
+  /** Messages waiting for it. */
+  held: number
+  /** Threads in Summary with something unread. */
+  unread: number
+  /** The Summary that landed last, and what of it is still unread in the inbox. */
+  latest: { at: number; unread: number; senders: string[] } | null
 }
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -309,12 +340,12 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 
 /** What the app's menu and the tray can ask the page to do. */
-export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about'
+export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'
 
 export interface Detected {
   provider: string
@@ -335,10 +366,17 @@ export interface MailApi {
   syncNow(): Promise<void>
   overview(): Promise<Overview>
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
-  /** [bins] is for reading what's in Trash or Spam. */
-  thread(account: string, thread: string, bins?: boolean): Promise<MessageView[]>
+  /** [bins] is for reading what's in Trash or Spam. Opening a thread puts it at the top of Recently
+   *  Seen, unless [remember] is false. */
+  thread(account: string, thread: string, bins?: boolean, remember?: boolean): Promise<MessageView[]>
+  /** Recently Seen starts again, empty. */
+  clearRecent(): Promise<void>
   settings(): Promise<Settings>
   saveBatch(batch: BatchSettings): Promise<void>
+  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the batches. */
+  saveSummary(summary: SummarySettings): Promise<void>
+  /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
+  summarySenders(): Promise<Subscription[]>
   saveBackfill(days: number): Promise<void>
   connectHub(url: string, user: string, secret: string): Promise<void>
   disconnectHub(): Promise<void>
@@ -373,6 +411,9 @@ export interface MailApi {
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
   openDraftWindow(id: number): Promise<void>
+  /** Makes a folder, or on Gmail a label, on the server there and then. A slash puts it inside another.
+   *  Returns its path as the server has it. */
+  createFolder(account: string, name: string): Promise<string>
   /** Brings forward the window a draft is being written in, when it has one, and says whether it did. */
   showDraftWindow(id: number): Promise<boolean>
   /** A window of its own is about to close. It closes itself again once it's ready, and that time it does. */

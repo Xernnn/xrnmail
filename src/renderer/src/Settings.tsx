@@ -1,25 +1,30 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
 } from 'lucide-react'
-import { QUICK_SLOTS, type AccountView, type BatchSettings, type Identity, type ProfilePatch, type QuickAction, type Settings, type SwipeAction, type Template } from '@shared/types'
+import {
+  QUICK_SLOTS, type AccountView, type BatchSettings, type Identity, type ProfilePatch, type QuickAction, type Settings, type SummarySettings, type SwipeAction, type Template
+} from '@shared/types'
 import type { Question } from './Common'
 import { problem } from './format'
-import { KEY_LISTS, KEY_SETS } from '@shared/keys'
+import {
+  COMMANDS, FIXED, holder, KEY_SETS, keyName, keysOf, rebound, reset, spell, unbindable, type KeyChanges, type KeyCommand, type KeySet
+} from '@shared/keys'
 import { AddAccount } from './Setup'
+import { SummarySchedule } from './Summary'
 
 const KEEP_DAYS = [30, 90, 365, 1095]
 
 type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 export type Tab =
-  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'blocked' | 'batches' | 'hub' | 'about'
+  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'batches' | 'hub' | 'about'
 
 /** Edison's sections in its order, then what only xrnmail has. */
 const TABS: [Tab, string, LucideIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
-  ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['blocked', 'Blocked Senders', Ban],
+  ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
   ['batches', 'Batches', Clock], ['hub', 'xrnhub', Server], ['about', 'About', Info]
 ]
 
@@ -30,9 +35,10 @@ const TAB_WORDS: Record<Tab, string> = {
   accounts: 'add remove service name alias sends as colour color keep laptop days',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
-  shortcuts: 'keys keyboard set edison gmail',
+  shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
   signatures: 'signature sign',
   templates: 'template ready text',
+  summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
   batches: 'delivery times straight through vip early',
   hub: 'connect counts',
@@ -75,6 +81,111 @@ function Choice<T extends string | number>(props: { label: string; value: T; opt
         {props.options.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
       </select>
     </label>
+  )
+}
+
+/** A key being chosen for a command: waiting for the press, or holding one that another command has. */
+type Choosing = { command: KeyCommand; key?: string; taken?: KeyCommand; problem?: string }
+
+const WORDS = Object.fromEntries(COMMANDS) as Record<KeyCommand, string>
+
+/** Edison's Shortcuts page: a set to start from, then each action with its keys, any of which can
+ *  be changed by pressing the new one. A key another action has is offered to take over, and each
+ *  change can go back to the set's own. */
+function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: ProfilePatch): void; all: Settings['keyChanges'] }): ReactNode {
+  const { set, changes } = props
+  const [choosing, setChoosing] = useState<Choosing | null>(null)
+  const name = KEY_SETS.find(([id]) => id === set)?.[1] ?? 'Edison'
+  const saveChanges = (next: KeyChanges): void => {
+    setChoosing(null)
+    props.save({ keyChanges: { ...props.all, [set]: next } })
+  }
+
+  // While a key is being chosen, the next press is it. Esc calls it off instead of closing Settings.
+  useEffect(() => {
+    if (!choosing || choosing.key) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.key === 'Escape') return setChoosing(null)
+      const pressed = keyName(event)
+      const problem = unbindable(pressed, event.key)
+      if (problem) return setChoosing({ command: choosing.command, problem })
+      const taken = holder(set, changes, pressed, choosing.command)
+      if (taken) return setChoosing({ command: choosing.command, key: pressed, taken })
+      saveChanges(rebound(changes, choosing.command, pressed))
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [choosing, set, changes])
+
+  return (
+    <>
+      <section>
+        <Choice label="Shortcut set" value={set} options={KEY_SETS} set={(keys) => { setChoosing(null); props.save({ keys }) }} />
+        <p className="muted note">Press Change beside an action, then the key you want for it.</p>
+      </section>
+      <section className="shortcuts" aria-label="Shortcuts">
+        {COMMANDS.map(([command, what]) => {
+          const keys = keysOf(set, changes, command)
+          const here = choosing?.command === command
+          return (
+            <div className={here ? 'shortcut choosing' : 'shortcut'} key={command} role="group" aria-label={what}>
+              <span className="shortcut-what">{what}</span>
+              <span className="shortcut-keys">
+                {here && !choosing.key && <span className="shortcut-press">{choosing.problem ?? 'Press the new key…'}</span>}
+                {here && choosing.key && choosing.taken && (
+                  <span className="shortcut-press">{spell(choosing.key)} is {WORDS[choosing.taken]}'s.</span>
+                )}
+                {!here && (keys.length > 0 ? keys.map((key) => <kbd key={key}>{spell(key)}</kbd>) : <span className="muted">None</span>)}
+              </span>
+              <span className="shortcut-actions">
+                {here && choosing.key && (
+                  <button className="quiet" onClick={() => saveChanges(rebound(changes, command, choosing.key ?? ''))}>Use it here</button>
+                )}
+                {here && !choosing.key && keys.length > 0 && <button className="quiet" onClick={() => saveChanges(rebound(changes, command, ''))}>No key</button>}
+                {here
+                  ? <button className="quiet" onClick={() => setChoosing(null)}>Cancel</button>
+                  : <button className="quiet" aria-label={`Change the key for ${what}`} onClick={() => setChoosing({ command })}>Change</button>}
+                {!here && command in changes && (
+                  <button className="link" aria-label={`Reset ${what} to the ${name} set`} onClick={() => saveChanges(reset(changes, command))}>Reset</button>
+                )}
+              </span>
+            </div>
+          )
+        })}
+        {FIXED.map(([key, what]) => (
+          <div className="shortcut fixed" key={key}>
+            <span className="shortcut-what">{what}</span>
+            <span className="shortcut-keys"><kbd>{key}</kbd></span>
+            <span className="shortcut-actions muted note">Always</span>
+          </div>
+        ))}
+        {Object.keys(changes).length > 0 && (
+          <button className="quiet" onClick={() => saveChanges({})}>Reset all to the {name} set</button>
+        )}
+      </section>
+    </>
+  )
+}
+
+/** When the Summary lands, as Edison's page has it: the schedule, and a way to turn it off. */
+function Summary(props: { summary: SummarySettings; save(summary: SummarySettings): void; ask: Ask }): ReactNode {
+  const { summary, save } = props
+  const senders = summary.senders.length
+  const off = async (): Promise<void> => {
+    const note = `${senders === 1 ? 'Its sender goes' : `Its ${senders} senders go`} back to the deliveries, with what's waiting for it.`
+    if (await props.ask({ title: 'Turn off Summary?', note, action: 'Turn off', danger: true })) save({ ...summary, senders: [], chosen: false })
+  }
+  return (
+    <section>
+      <p className="muted note">Senders chosen in Subscriptions are held, and delivered together at a time you pick.</p>
+      <SummarySchedule summary={summary} set={(next) => save({ ...next, chosen: true })} />
+      <p className="muted note">
+        {senders === 0 ? 'Nobody is in it yet. Add senders from Subscriptions.' : `${senders === 1 ? '1 sender is' : `${senders} senders are`} in it. Subscriptions has them, on its Summary side.`}
+      </p>
+      {senders > 0 && <button className="quiet danger outline" onClick={() => void off()}>Turn off Summary</button>}
+    </section>
   )
 }
 
@@ -443,6 +554,7 @@ function Pages(props: {
   save: Save
   editMenu?: () => void
   saveBatch(batch: BatchSettings): void
+  saveSummary(summary: SummarySettings): void
   saveKeep(days: number): void
 }): ReactNode {
   const { page, accounts, settings, save } = props
@@ -455,15 +567,11 @@ function Pages(props: {
       {page === 'appearance' && <Appearance settings={settings} save={save} editMenu={props.editMenu} />}
       {page === 'actions' && <Actions settings={settings} save={save} />}
       {page === 'shortcuts' && (
-        <section>
-          <Choice label="Shortcut set" value={settings.keys} options={KEY_SETS} set={(keys) => save({ keys })} />
-          <dl className="keys">
-            {KEY_LISTS[settings.keys].map(([key, what]) => <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>)}
-          </dl>
-        </section>
+        <Shortcuts set={settings.keys} changes={settings.keyChanges[settings.keys] ?? {}} all={settings.keyChanges} save={save} />
       )}
       {page === 'signatures' && <Signatures accounts={accounts} ids={ids} />}
       {page === 'templates' && <Templates templates={settings.templates} save={(templates) => save({ templates })} />}
+      {page === 'summary' && <Summary summary={settings.summary} save={props.saveSummary} ask={props.ask} />}
       {page === 'blocked' && <Blocked blocked={settings.blocked} save={save} />}
       {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} save={props.saveBatch} />}
       {page === 'hub' && <Hub settings={settings} />}
@@ -492,6 +600,12 @@ export function SettingsDialog(props: {
 
   const saveBatch = async (batch: BatchSettings): Promise<void> => {
     await window.mail.saveBatch(batch)
+    setSettings(await window.mail.settings())
+  }
+
+  const saveSummary = async (summary: SummarySettings): Promise<void> => {
+    setSettings((now) => (now ? { ...now, summary } : now)) // shown at once; the save follows
+    await window.mail.saveSummary(summary)
     setSettings(await window.mail.settings())
   }
 
@@ -529,7 +643,7 @@ export function SettingsDialog(props: {
         </header>
         {settings && (
           <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} save={save} editMenu={props.editMenu}
-            saveBatch={(b) => void saveBatch(b)} saveKeep={(d) => void saveKeep(d)} />
+            saveBatch={(b) => void saveBatch(b)} saveSummary={(s) => void saveSummary(s)} saveKeep={(d) => void saveKeep(d)} />
         )}
       </div>
     </dialog>

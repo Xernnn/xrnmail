@@ -30,12 +30,13 @@ let secrets: MemorySecrets
 let clock: number
 let changed: Mock<() => void>
 let landed: Mock<(count: number, preview?: { from: string; subject: string }) => void>
+let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
 
 const make = (): MailService =>
   new MailService({
-    store, secrets, changed, landed,
+    store, secrets, changed, landed, summarized,
     post: post as unknown as typeof fetch,
     now: () => clock,
     files: new DraftFiles(folder),
@@ -67,6 +68,7 @@ beforeEach(async () => {
   clock = at(10)
   changed = vi.fn()
   landed = vi.fn()
+  summarized = vi.fn()
   post = vi.fn(async (_url: string, _init: { body: string; redirect: string }) => ({ ok: true }))
   service = make()
 })
@@ -269,6 +271,141 @@ describe('delivering early', () => {
     clock += 30_000
     expect(await service.finishEarly()).toBe(0)
     expect(service.overview().earlyLeft).toBe(1)
+  })
+})
+
+describe('the Summary', () => {
+  beforeEach(signedIn)
+
+  const NEWS = 'Shop News <news@shop.example>'
+  const SUMMARY = { senders: ['news@shop.example'], every: 'daily' as const, time: '08:00', day: 1, chosen: true }
+  const arrive = async (subject: string, hour: number, minute: number, from?: string, day = 6): Promise<void> => {
+    gmail.add(rawMail({ subject, from, headers: from === NEWS ? ['List-Unsubscribe: <https://shop.example/u>'] : [] }), { arrived: new Date(at(hour, minute, day)) })
+    clock = at(hour, minute + 1, day)
+    await service.syncAll()
+  }
+  const subjects = (kind: 'inbox' | 'summary'): string[] => service.list({ kind }).map((row) => row.subject)
+
+  it('holds its senders until its time, not the next batch, then lands them together and apart from the inbox', async () => {
+    service.saveSummary(SUMMARY)
+    await arrive('Weekend deals', 10, 30, NEWS)
+    await arrive('Lunch?', 10, 40, 'Ada <ada@example.com>')
+    expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(13), summary: { held: 1, next: at(8, 0, 7), unread: 0, latest: null } })
+    clock = at(13, 0) + 20_000
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1)
+    expect(summarized).not.toHaveBeenCalled()
+    expect(subjects('inbox')).toEqual(['Lunch?'])
+    expect(subjects('summary')).toEqual([])
+    expect(service.list({ kind: 'search', text: 'weekend' })).toEqual([]) // waiting is waiting, as for a batch
+    landed.mockClear()
+    clock = at(8, 0, 7) + 20_000
+    await service.tick()
+    expect(summarized).toHaveBeenCalledWith(1, ['Shop News'])
+    expect(landed).not.toHaveBeenCalled()
+    expect(subjects('inbox')).toEqual(['Lunch?']) // kept apart from the inbox
+    expect(service.list({ kind: 'summary' }).map((row) => [row.subject, row.summaryAt])).toEqual([['Weekend deals', at(8, 0, 7)]])
+    expect(service.list({ kind: 'search', text: 'weekend' }).map((row) => row.subject)).toEqual(['Weekend deals'])
+    expect(service.accounts()[0]?.unread).toBe(1) // Lunch? alone: the inbox's count leaves the Summary out
+    expect(service.overview().summary).toMatchObject({ held: 0, unread: 1, latest: { at: at(8, 0, 7), unread: 1, senders: ['Shop News'] } })
+    service.thread(ME, ref('Weekend deals', { kind: 'summary' }).thread)
+    expect(service.overview().summary).toMatchObject({ unread: 0, latest: { at: at(8, 0, 7), unread: 0 } })
+    await service.act([ref('Weekend deals', { kind: 'summary' })], { kind: 'archive' })
+    expect(subjects('summary')).toEqual([]) // put away like anything else
+    expect(gmail.writes().some((command) => /summary/i.test(command))).toBe(false)
+  })
+
+  it('gathers each Summary together, the last to land first, with a weekly one landing on its day', async () => {
+    service.saveSummary({ ...SUMMARY, every: 'weekly', day: 1 }) // Mondays; the 6th is a Friday
+    await arrive('First letter', 10, 30, NEWS)
+    await arrive('Second letter', 11, 0, NEWS)
+    clock = at(8, 0, 8)
+    await service.tick()
+    expect(subjects('summary')).toEqual([])
+    clock = at(8, 0, 9) + 1000
+    await service.tick()
+    expect(summarized).toHaveBeenCalledWith(2, ['Shop News'])
+    await arrive('Third letter', 9, 0, NEWS, 9)
+    clock = at(8, 0, 16) + 1000
+    await service.tick()
+    expect(service.list({ kind: 'summary' }).map((row) => [row.subject, row.summaryAt])).toEqual([
+      ['Third letter', at(8, 0, 16)], ['Second letter', at(8, 0, 9)], ['First letter', at(8, 0, 9)]
+    ])
+  })
+
+  it('stays waiting when the batch is delivered early or batches are turned off', async () => {
+    service.saveSummary(SUMMARY)
+    await arrive('Weekend deals', 10, 30, NEWS)
+    await arrive('Lunch?', 10, 40, 'Ada <ada@example.com>')
+    service.beginEarly()
+    clock += 30_000
+    expect(await service.finishEarly()).toBe(1)
+    expect(service.overview().summary.held).toBe(1)
+    await arrive('Later', 11, 0, 'Ada <ada@example.com>')
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    expect(service.overview()).toMatchObject({ held: 0, summary: { held: 1 } })
+    expect(subjects('inbox')).toEqual(['Later', 'Lunch?'])
+  })
+
+  it('takes in what a sender has waiting for a batch, gives it back when they leave, and lets go of it all when turned off', async () => {
+    await arrive('Weekend deals', 10, 30, NEWS)
+    expect(service.overview()).toMatchObject({ held: 1, summary: { held: 0, next: null } })
+    service.saveSummary(SUMMARY)
+    expect(service.overview()).toMatchObject({ held: 0, summary: { held: 1, next: at(8, 0, 7) } })
+    service.saveSummary({ ...SUMMARY, senders: [] })
+    expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(13), summary: { held: 0, next: null } })
+    service.saveSummary(SUMMARY)
+    service.saveSummary({ ...SUMMARY, time: '07:30' }) // a new time takes what's waiting with it
+    expect(service.overview().summary).toMatchObject({ held: 1, next: at(7, 30, 7) })
+    clock = at(7, 31, 7)
+    expect(service.list({ kind: 'summary' }).map((row) => row.summaryAt)).toEqual([at(7, 30, 7)])
+    await arrive('Midweek deals', 9, 0, NEWS, 7)
+    service.saveSummary({ ...SUMMARY, senders: [], chosen: false }) // Turn off Summary
+    expect(service.settings().summary).toMatchObject({ senders: [], chosen: false, time: '08:00' })
+    expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(13, 0, 7), summary: { held: 0 } })
+  })
+
+  it('and straight through pull opposite ways, so the newer choice wins', async () => {
+    service.saveBatch({ ...service.settings().batch, vip: ['news@shop.example', '@shop.example'] })
+    service.saveSummary(SUMMARY)
+    expect(service.settings().batch.vip).toEqual(['@shop.example']) // the address itself left; a whole domain is a choice for Settings
+    await arrive('Weekend deals', 10, 30, NEWS)
+    expect(service.overview().summary.held).toBe(1) // the Summary is the narrower choice, and the domain doesn't undo it
+    service.saveBatch({ ...service.settings().batch, vip: ['@shop.example', 'news@shop.example'] })
+    expect(service.settings().summary.senders).toEqual([])
+    expect(subjects('inbox')).toEqual(['Weekend deals'])
+  })
+
+  it('announces nothing from a muted sender, and nothing found already landed as ordinary new mail', async () => {
+    service.saveSummary({ ...SUMMARY, senders: ['news@shop.example', '@letters.example'] })
+    service.saveProfile({ muted: ['news@shop.example'] })
+    await arrive('Weekend deals', 10, 30, NEWS)
+    await arrive('Letter', 10, 40, 'Letters <hi@letters.example>')
+    clock = at(8, 0, 7) + 20_000
+    await service.tick()
+    expect(summarized).toHaveBeenCalledWith(1, ['Letters'])
+    summarized.mockClear()
+    // Found by a sync after its Summary has already landed, as when the laptop was off at the time.
+    gmail.add(rawMail({ subject: 'Overnight letter', from: 'Letters <hi@letters.example>' }), { arrived: new Date(at(9, 0, 7)) })
+    clock = at(9, 0, 8)
+    await service.tick()
+    await service.syncAll()
+    expect(landed).not.toHaveBeenCalled()
+    expect(summarized).toHaveBeenCalledWith(1, ['Letters'])
+    expect(service.list({ kind: 'summary' }).map((row) => [row.subject, row.summaryAt])[0]).toEqual(['Overnight letter', at(8, 0, 8)])
+  })
+
+  it('has a side of Subscriptions to itself', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Deals', 9, 0, NEWS)
+    await arrive('More deals', 9, 10, NEWS)
+    expect(service.subscriptions().map((s) => [s.address, s.count])).toEqual([['news@shop.example', 2]])
+    expect(service.summarySenders()).toEqual([])
+    service.saveSummary({ ...SUMMARY, senders: ['NEWS@shop.example', 'gone@else.example', 'news@shop.example', 'nonsense'] })
+    expect(service.settings().summary.senders).toEqual(['news@shop.example', 'gone@else.example'])
+    expect(service.subscriptions()).toEqual([])
+    expect(service.summarySenders().map((s) => [s.address, s.count])).toEqual([['news@shop.example', 2], ['gone@else.example', 0]])
+    expect(subjects('inbox')).toEqual(['More deals', 'Deals']) // what came before it was in the Summary stays where it was
   })
 })
 
@@ -1043,14 +1180,77 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'pinned' })).toEqual([])
   })
 
+  it('Recently Seen lists what was opened, the last one first, wherever it is now', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('First', 9, 0)
+    await arrive('Second', 9, 5)
+    await arrive('Third', 9, 10)
+    const seen = (): string[] => service.list({ kind: 'recent' }).map((row) => row.subject)
+    expect(seen()).toEqual([])
+    service.thread(ME, ref('First').thread)
+    clock += 1000
+    service.thread(ME, ref('Third').thread)
+    clock += 1000
+    service.thread(ME, ref('Second').thread)
+    expect(seen()).toEqual(['Second', 'Third', 'First'])
+    service.thread(ME, ref('First').thread) // opened again in the same moment still goes to the top
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    service.thread(ME, ref('Third').thread, false, false) // read from Recently Seen itself: the list keeps still
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    await service.act([ref('Second')], { kind: 'archive' })
+    await service.act([ref('First')], { kind: 'unread' })
+    expect(service.list({ kind: 'recent' }).map((row) => [row.subject, row.unread])).toEqual([['First', 1], ['Second', 0], ['Third', 0]]) // archived and unread, as anywhere
+    const thrown = ref('Third')
+    await service.act([thrown], { kind: 'trash' })
+    expect(seen()).toEqual(['First', 'Second']) // what's in Trash is in Trash
+    await service.act([thrown], { kind: 'inbox' })
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    expect(service.list({ kind: 'recent', account: 'someone@else.example' })).toEqual([])
+    service.clearRecent()
+    expect(seen()).toEqual([])
+  })
+
+  it('Recently Seen keeps the last hundred threads opened, never held mail, and forgets an account that goes', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    for (let i = 0; i < 102; i++) gmail.add(rawMail({ subject: `Thread ${i}` }), { arrived: new Date(at(8, 0) + i * 1000), thread: BigInt(500 + i) })
+    clock = at(11)
+    await service.syncAll()
+    for (let i = 0; i < 102; i++) {
+      clock += 1000
+      service.thread(ME, String(500 + i))
+    }
+    const seen = service.list({ kind: 'recent' }, 500).map((row) => row.subject)
+    expect(seen).toHaveLength(100)
+    expect(seen[0]).toBe('Thread 101')
+    expect(seen.at(-1)).toBe('Thread 2') // the two opened first have gone
+    service.saveBatch({ ...service.settings().batch, times: ['13:00'] })
+    gmail.add(rawMail({ subject: 'Held' }), { arrived: new Date(clock), thread: 900n })
+    clock += 60_000
+    await service.syncAll()
+    expect(service.thread(ME, '900')).toEqual([]) // nothing to open yet, so nothing is seen
+    clock = at(13, 1)
+    expect(service.list({ kind: 'recent' }, 500).map((row) => row.subject)).not.toContain('Held')
+    service.removeAccount(ME)
+    await signedIn()
+    expect(service.list({ kind: 'recent' }, 500)).toEqual([])
+  })
+
+  it('forgets how an account arranged its own labels once the account goes', () => {
+    const other = { order: [], hidden: ['Old'] }
+    service.saveProfile({ sidebar: { ...service.settings().sidebar, labels: { [ME]: { order: ['Work'], hidden: ['Work'] }, 'other@example.org': other } } })
+    expect(Object.keys(service.settings().sidebar.labels ?? {})).toEqual([ME, 'other@example.org'])
+    service.removeAccount(ME)
+    expect(service.settings().sidebar.labels).toEqual({ 'other@example.org': other })
+  })
+
   it('keeps which entries the sidebar shows and their order, made whole whatever was saved', () => {
     expect(service.settings().sidebar.hidden).toEqual([])
     expect(service.settings().sidebar.order.slice(0, 4)).toEqual(['today', 'unread', 'starred', 'pinned'])
     service.saveProfile({ sidebar: { order: ['sent', 'today', 'nonsense', 'sent'] as never, hidden: ['spam', 'spam', 'x'] as never } })
     const saved = service.settings().sidebar
-    expect(saved.order.slice(0, 3)).toEqual(['sent', 'today', 'unread'])
+    expect(saved.order.slice(0, 4)).toEqual(['sent', 'recent', 'today', 'unread'])
     expect(saved.hidden).toEqual(['spam'])
-    expect(new Set(saved.order).size).toBe(16)
+    expect(new Set(saved.order).size).toBe(18)
     service.saveProfile({ theme: 'dark' }) // another setting leaves it be
     expect(service.settings().sidebar).toEqual(saved)
     // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.
@@ -1115,6 +1315,18 @@ describe('settings', () => {
     const before = service.settings()
     service.saveProfile({ swipeLeft: 'explode' as never, swipeRight: 'explode' as never })
     expect(service.settings()).toMatchObject({ swipeLeft: before.swipeLeft, swipeRight: before.swipeRight })
+  })
+
+  it('keeps each set\'s own changed keys, made whole, and a set it has never heard of as Edison\'s', () => {
+    expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
+    service.saveProfile({ keys: 'outlook', keyChanges: { outlook: { archive: 'g', reply: 'Ctrl+N', bogus: 'x' } as never, edison: { flag: 'Ctrl+G' } } })
+    expect(service.settings()).toMatchObject({ keys: 'outlook', keyChanges: { outlook: { archive: 'g' }, edison: { flag: 'Ctrl+G' } } })
+    service.saveProfile({ keys: 'nonsense' as never })
+    expect(service.settings().keys).toBe('outlook')
+    service.saveProfile({ theme: 'dark' }) // another setting leaves them be
+    expect(service.settings().keyChanges).toEqual({ outlook: { archive: 'g' }, edison: { flag: 'Ctrl+G' } })
+    store.setMeta('settings', JSON.stringify({ ...service.settings(), keys: 'vim', keyChanges: undefined })) // as an older version would have it
+    expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
   })
 
   it('keeps the list\'s choices within what a row can show', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
+import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty, KIND_ICONS } from './Common'
 import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
@@ -198,26 +198,38 @@ export function DraftRow(props: { draft: Draft; open(): void; discard(): void })
   )
 }
 
-/** Everyone mailing you in bulk, biggest first, with the way out next to each; or, on the other side,
- *  the ones already left, with what's still here from them. */
-export function Subscriptions(props: { version: number; left: boolean; unsubscribe(message: number): void; clear(item: Subscription): void }): ReactNode {
-  const { left } = props
+/** Everyone mailing you in bulk, biggest first, with the way out and the Summary next to each; or, on
+ *  the other sides, the ones already left, and the ones whose mail waits for the Summary. */
+export function Subscriptions(props: {
+  version: number
+  side: 'subscribed' | 'left' | 'summary'
+  unsubscribe(message: number): void
+  clear(item: Subscription): void
+  /** Into the Summary, or out of it. */
+  summarize(item: Subscription, on: boolean): void
+  /** What sits over the list on its side. */
+  top?: ReactNode
+}): ReactNode {
+  const { side } = props
   const [items, setItems] = useState<Subscription[] | null>(null)
   useEffect(() => {
     let current = true
-    void (left ? window.mail.unsubscribed() : window.mail.subscriptions()).then((found) => { if (current) setItems(found) })
+    const asked = side === 'left' ? window.mail.unsubscribed() : side === 'summary' ? window.mail.summarySenders() : window.mail.subscriptions()
+    void asked.then((found) => { if (current) setItems(found) })
     return () => { current = false }
-  }, [props.version, left])
-  if (items === null) return null
-  if (items.length === 0) {
-    return left
-      ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
+  }, [props.version, side])
+  if (items === null) return props.top ?? null
+  const empty = items.length === 0 && (
+    side === 'left' ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
+      : side === 'summary' ? <Empty icon={Newspaper} title="Nobody in your Summary" note="Add senders from Subscribed, and their mail comes together at the time you choose." />
       : <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
-  }
+  )
   const count = (item: Subscription): string =>
     item.count === 0 ? 'Nothing from them is left here' : `${item.count === 1 ? '1 message' : `${item.count} messages`} · ${shortTime(item.latest)}`
   return (
     <>
+      {props.top}
+      {empty}
       {items.map((item) => (
         <div className="subscription" key={`${item.account}/${item.address}`}>
           <Avatar name={item.name} address={item.address} size={44} />
@@ -225,9 +237,13 @@ export function Subscriptions(props: { version: number; left: boolean; unsubscri
             <strong>{item.name || item.address}</strong>
             <div className="muted note">{item.address}</div>
             <div className="muted note">{count(item)}</div>
+            <div className="subscription-links">
+              {side === 'subscribed' && <button className="link" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
+              {side === 'subscribed' && <button className="link" aria-label={`Add ${item.address} to Summary`} onClick={() => props.summarize(item, true)}>Add to Summary</button>}
+              {side === 'summary' && <button className="link" aria-label={`Remove ${item.address} from Summary`} onClick={() => props.summarize(item, false)}>Remove from Summary</button>}
+            </div>
           </div>
           <div className="subscription-actions">
-            {!left && <button className="pill soft" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
             {item.count > 0 && <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>}
           </div>
         </div>

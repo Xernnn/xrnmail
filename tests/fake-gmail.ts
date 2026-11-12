@@ -94,6 +94,8 @@ export class FakeGmail {
   bareLabels = false
   /** What the server thinks the time is, for mail it files itself. */
   now: () => Date = () => new Date()
+  /** Gmail's own labels, which it lists as folders with nothing special about them. */
+  labels: string[] = []
   options: FakeOptions
   private nextThread = 1n
   private server: Server | null = null
@@ -308,6 +310,9 @@ export class FakeGmail {
         socket.write(`* ${full} (\\Sent \\HasNoChildren) "/" "[Gmail]/Sent Mail"\r\n`)
         socket.write(`* ${full} (\\Trash \\HasNoChildren) "/" "[Gmail]/Trash"\r\n`)
         socket.write(`* ${full} (\\Junk \\HasNoChildren) "/" "[Gmail]/Spam"\r\n`)
+        socket.write(`* ${full} (\\HasChildren \\Noselect) "/" "[Gmail]"\r\n`)
+        socket.write(`* ${full} (\\Flagged \\HasNoChildren) "/" "[Gmail]/Starred"\r\n`)
+        for (const label of this.labels) socket.write(`* ${full} (\\HasNoChildren) "/" ${quoted(label)}\r\n`)
         return ok()
       case 'STATUS':
         socket.write(`* STATUS "${this.home.path}" (MESSAGES ${this.mails.length} UIDNEXT ${this.home.nextUid})\r\n`)
@@ -331,7 +336,9 @@ export class FakeGmail {
       case 'CREATE': {
         const path = /"?([^"]+)"?$/.exec(rest.slice('CREATE '.length))?.[1] ?? ''
         if (!this.mayWrite(socket, tag)) return undefined
-        this.boxes.push({ path, flag: path === 'Archive' ? '\\Archive' : '', uidValidity: 1, nextUid: 1, mails: [] })
+        if (this.boxes.some((b) => b.path === path) || this.labels.includes(path)) return void socket.write(`${tag} NO [ALREADYEXISTS] Duplicate folder name\r\n`)
+        if (this.options.plain) this.boxes.push({ path, flag: path === 'Archive' ? '\\Archive' : '', uidValidity: 1, nextUid: 1, mails: [] })
+        else this.labels.push(path)
         return ok('CREATE done')
       }
       case 'APPEND': {

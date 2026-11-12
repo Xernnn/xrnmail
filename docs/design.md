@@ -83,6 +83,10 @@ six seconds for Undo before setting off; everything else goes straight away.
 - A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
   means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
   a pinned thread keeps its place in every other list.
+- Recently Seen is this laptop's own as well (`recent`, by thread, with when it was last opened). The
+  page opens a thread through the same call whatever list it's in, and that call notes it, except
+  from Recently Seen itself, so the list doesn't reorder under the pointer or under j and k. The
+  newest hundred stay. It lists threads from everywhere but Trash and Spam, as Pinned does.
 - A muted sender's mail is left out by both things that announce mail: a sync that finds mail
   already due neither counts nor names it, and a delivery counts only what the others sent. It
   lands, and refreshes the list, like any other.
@@ -199,6 +203,30 @@ sender can write what they like there.
 - Changing the times moves waiting mail to the next slot after now, so a change can't deliver
   anything early. Turning batches off, or adding a sender to the straight-through list, does.
 
+### The Subscription Summary
+
+`holdOf` decides a message's moment, in this order: mail that never waits (from before the account,
+not in the inbox, your own) is there at once; a sender in the Summary waits for its next time, daily
+or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch. The
+Summary comes before straight through because it's the narrower choice (an address against a whole
+@domain, say), and the two lists are kept apart for the same address: adding to one takes it off the
+other.
+
+A message held for the Summary is marked (`summary`), and stays marked once it lands, so a Summary is
+simply the marked messages with the same `release_at`. The inbox and its counts leave marked mail out,
+and the Summary list is the marked mail still in the inbox, by when its Summary landed. Nothing about
+this reaches the server, where the mail sits in the inbox as usual.
+
+- The waiting count, the next delivery and Deliver now are the batch's alone, so Deliver now delivers
+  what it says and the Summary keeps its time. The Summary's own count and next time are beside them.
+- Adding a sender moves what they have waiting for a batch to the Summary; taking one out, or turning
+  the Summary off, sends what it holds of theirs back to the batches. A new time moves what's waiting
+  to it. All of these go through the same `retime` as the batch times, measured from now.
+- A tick tells about a batch and a Summary apart (`landed`, `summarized`), so a Summary is one notice
+  for all it brought. A sync that finds a Summary already landed, after the laptop was off at its
+  time, says so the same way instead of announcing its mail as new. Muted senders count in neither.
+- xrnhub hears only about batches.
+
 ## Hostile mail
 
 A stranger writes every email, and the window holds a bridge to all of them. So there are several
@@ -299,7 +327,16 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
   moved, by their arrows or by dragging, each within its own list. The choice is a setting
   (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
-  up after the one it follows, shown, in a choice saved before it existed.
+  up after the one it follows, shown, in a choice saved before it existed. Each account's own labels
+  or folders are switches there too, kept by account in the same setting: an order among siblings,
+  so a label moves with what's inside it, and the ones hidden. What's listed is what the server lists
+  on each pass (`MailSource.folders`: an account's own folders, or on Gmail its labels, which IMAP
+  lists as folders), with any label found on mail that it doesn't. So an empty label shows, one made
+  elsewhere turns up after the ones arranged, and one taken away goes. New Label and New Folder send
+  CREATE on the account's writer connection, in its lane, there and then: it needs the server's yes
+  before there's anything to show, and there's nothing to undo. A slash in the name nests it, joined
+  with the server's own separator. The service's own names (INBOX, `[Gmail]`) and what IMAP can't
+  name are turned down before anything is sent.
 - `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
   floats under a selection, and what every key and button does.
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
@@ -327,8 +364,19 @@ Rows saved as "compact" by an older version read as one line of preview.
 Keys live in `shared/keys.ts`, apart from the page so they can be tested without one. `keyName` gives a
 press a name ("e", "Shift+Backspace", "Ctrl+Shift+R"), and each set maps names to commands. The Edison
 set is Edison Mail's own keys with Command read as Ctrl, plus the keys xrnmail already had where they
-don't collide; the Gmail set is those older keys alone. Keys pressed inside a message's frame are passed
-on with their modifiers, so they reach the same table.
+don't collide; the Gmail set is those older keys alone. Apple Mail's, Outlook's and Inbox's come from
+their makers' lists. Command is read as Ctrl and Option as Alt; Control held with Command becomes Alt,
+since Ctrl is taken by then, and Control alone stays Ctrl. Every set has the arrows, Esc and `?`. Keys
+pressed inside a message's frame are passed on with their modifiers, so they reach the same table.
+
+What a person changes is kept for each set apart (`keyChanges`), as one key for an action in place of
+the set's keys for it, or none. `keysFor` lays the changes over the set, and a changed key wins: an
+action that had it in the set loses it. That's what taking a key over from another action is, so the
+conflict is settled by asking and then saving the change, with nothing else to keep in step. The keys
+of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for itself (Tab, Enter,
+Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
+named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
+off the choosing instead of closing Settings.
 
 "Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
 Sent label. All Mail is still everything.

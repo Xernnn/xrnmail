@@ -343,6 +343,57 @@ describe('changes on a server with folders', () => {
   }
 })
 
+describe('making a folder or a label', () => {
+  it('makes a folder on a folder server, lists it at once, and reads it from then on', async () => {
+    await add(Y, yahoo)
+    expect(service.accounts().find((a) => a.email === Y)?.folders).toEqual(['Work'])
+    expect(await service.createFolder(Y, ' Receipts ')).toBe('Receipts')
+    expect(yahoo.commands.filter((c) => c.startsWith('CREATE'))).toEqual(['CREATE Receipts'])
+    expect(service.accounts().find((a) => a.email === Y)?.folders).toEqual(['Work', 'Receipts'])
+    yahoo.add(rawMail({ subject: 'Filed there' }), { box: 'Receipts', arrived: new Date(at(9)) })
+    await service.syncAll()
+    expect(subjects(service.list({ kind: 'label', account: Y, label: 'Receipts' }))).toEqual(['Filed there'])
+    expect(await service.createFolder(Y, 'Work/Plans')).toBe('Work/Plans') // inside another, with the server's own separator
+    await expect(service.createFolder(Y, 'receipts')).rejects.toThrow("There's a folder called that already.")
+  })
+
+  it('makes a Gmail label, empty, and keeps it listed from what Gmail says', async () => {
+    gmail.labels = ['Travel']
+    await add(G, gmail)
+    expect(service.accounts().find((a) => a.email === G)?.folders).toEqual(['Travel']) // the service's own folders aren't labels
+    expect(await service.createFolder(G, 'Work/Plans')).toBe('Work/Plans')
+    expect(gmail.labels).toEqual(['Travel', 'Work/Plans'])
+    expect(service.accounts().find((a) => a.email === G)?.folders).toEqual(['Travel', 'Work/Plans'])
+    const ref = { account: G, thread: (gmail.add(rawMail({ subject: 'Plans' }), { arrived: new Date(at(9)) }), '') }
+    await service.syncAll()
+    const [row] = service.list({ kind: 'inbox', account: G })
+    service.act([{ ...ref, thread: row?.thread ?? '' }], { kind: 'label', label: 'Work/Plans', add: true })
+    await flushed()
+    expect(gmail.mails.at(-1)?.labels).toContain('Work/Plans')
+    gmail.labels = ['Work/Plans'] // Travel taken away elsewhere
+    await service.syncAll()
+    expect(service.accounts().find((a) => a.email === G)?.folders).toEqual(['Work/Plans'])
+  })
+
+  it('turns down a name that can\'t be one, or the service\'s own, before asking the server', async () => {
+    await add(G, gmail)
+    await expect(service.createFolder(G, '  ')).rejects.toThrow('Give the label a name.')
+    await expect(service.createFolder(G, 'Work//Plans')).rejects.toThrow('Leave no part of the name empty')
+    await expect(service.createFolder(G, 'Deals*')).rejects.toThrow('Leave out')
+    await expect(service.createFolder(G, 'INBOX/Mine')).rejects.toThrow("INBOX is the service's own.")
+    await expect(service.createFolder(G, '[Gmail]/Mine')).rejects.toThrow("[Gmail] is the service's own.")
+    await expect(service.createFolder('nobody@example.com', 'Mine')).rejects.toThrow('That account is gone.')
+    expect(gmail.commands.filter((c) => c.startsWith('CREATE'))).toEqual([])
+  })
+
+  it('says so when the server refuses, and keeps nothing', async () => {
+    await add(Y, yahoo)
+    yahoo.refuseWrites = true
+    await expect(service.createFolder(Y, 'Receipts')).rejects.toThrow("wouldn't make that folder.")
+    expect(service.accounts().find((a) => a.email === Y)?.folders).toEqual(['Work'])
+  })
+})
+
 describe('servers that lack the convenient parts', () => {
   it('copes without UIDPLUS: the message is found again on the next sync', async () => {
     const plain = await serve(Y, { plain: true, uidplus: false })

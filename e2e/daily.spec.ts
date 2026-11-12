@@ -202,7 +202,7 @@ test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen i
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByRole('button', { name: 'Shortcuts' }).click()
   await page.getByLabel('Shortcut set').selectOption('gmail')
-  await expect(page.getByText('Remove from view')).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Remove from view' }).getByText('None')).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
   // The window hears of a changed setting a moment after it's saved. Its own list of keys says when.
   await page.keyboard.press('?')
@@ -216,6 +216,90 @@ test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen i
   await expect(page.locator('.thread-subject')).toHaveText('Second')
   await page.keyboard.press('Delete')
   await expect(row('Second')).toHaveCount(0)
+})
+
+test('keys of your own choosing: changed in Settings, taken over from another action, reset, and the Apple Mail, Outlook and Inbox sets', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['First', 'Second', 'Third', 'Fourth', 'Fifth'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(8 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const row = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject })
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const shortcut = (what: string): ReturnType<Page['locator']> => settings.getByRole('group', { name: what, exact: true })
+  const openShortcuts = async (): Promise<void> => {
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await settings.getByRole('button', { name: 'Shortcuts' }).click()
+  }
+  // The window hears of a changed setting a moment after it's saved. Its own list of keys says when.
+  const knows = async (what: string, keys: string): Promise<void> => {
+    await page.keyboard.press('?')
+    await expect(page.locator('.keys > div').filter({ has: page.getByText(what, { exact: true }) }).locator('kbd')).toHaveText(keys)
+    await page.getByRole('button', { name: 'Done' }).click()
+  }
+  await openShortcuts()
+  await settings.getByLabel('Shortcut set').selectOption('apple')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['Ctrl+Alt+A'])
+  await expect(shortcut('Mark read or unread').locator('kbd')).toHaveText(['Ctrl+Shift+U'])
+  await expect(shortcut('New message').getByText('None')).toBeVisible() // Command-N is the menu's, listed at the foot
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Mark read or unread', 'Ctrl+Shift+U')
+  await list.getByText('Fifth').click()
+  await page.keyboard.press('e') // Apple Mail has no letters of its own
+  await page.keyboard.press('Control+Alt+a')
+  await expect(page.getByText('Archived')).toBeVisible()
+  await expect(row('Fifth')).toHaveCount(0)
+  await expect(row('Fourth')).toBeVisible() // e archived nothing, or the reader would have moved on to Fourth for this
+
+  await openShortcuts()
+  await shortcut('Archive').getByRole('button', { name: 'Change the key for Archive' }).click()
+  await expect(shortcut('Archive')).toContainText('Press the new key')
+  await page.keyboard.press('g')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['g'])
+  await shortcut('Flag').getByRole('button', { name: 'Change the key for Flag' }).click()
+  await page.keyboard.press('Control+r')
+  await expect(shortcut('Flag')).toContainText("Ctrl+R is Reply's.")
+  await shortcut('Flag').getByRole('button', { name: 'Use it here' }).click()
+  await expect(shortcut('Flag').locator('kbd')).toHaveText(['Ctrl+R'])
+  await expect(shortcut('Reply').getByText('None')).toBeVisible()
+  await shortcut('Delete').getByRole('button', { name: 'Change the key for Delete' }).click()
+  await page.keyboard.press('Control+n')
+  await expect(shortcut('Delete')).toContainText('Ctrl+N is for New Message in the menu.')
+  await page.keyboard.press('Escape') // calls off the choosing, and leaves Settings open
+  await expect(shortcut('Delete').locator('kbd')).toHaveText(['Backspace', 'Del'])
+  await expect(settings).toBeVisible()
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Flag', 'Ctrl+R')
+  await list.getByText('Fourth').click()
+  await page.keyboard.press('Control+r')
+  await expect(row('Fourth').getByLabel('Flagged')).toBeVisible()
+  await page.keyboard.press('g')
+  await expect(row('Fourth')).toHaveCount(0)
+  expect((await page.evaluate(() => window.mail.settings())).keyChanges).toEqual({ apple: { archive: 'g', flag: 'Ctrl+R' } })
+
+  await openShortcuts()
+  await shortcut('Archive').getByRole('button', { name: 'Reset Archive to the Apple Mail set' }).click()
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['Ctrl+Alt+A'])
+  await settings.getByRole('button', { name: 'Reset all to the Apple Mail set' }).click()
+  await expect(shortcut('Reply').locator('kbd')).toHaveText(['Ctrl+R'])
+  await settings.getByLabel('Shortcut set').selectOption('outlook')
+  await expect(shortcut('Forward').locator('kbd')).toHaveText(['Ctrl+J'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Forward', 'Ctrl+J')
+  await list.getByText('Third').click()
+  await page.keyboard.press('Control+e')
+  await expect(row('Third')).toHaveCount(0)
+  await openShortcuts()
+  await settings.getByLabel('Shortcut set').selectOption('inbox')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['e', 'y', '[', ']'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Pin', 'Shift+P')
+  await list.getByText('Second').click()
+  await page.keyboard.press('y') // Done
+  await expect(row('Second')).toHaveCount(0)
+  await list.getByText('First').click()
+  await page.keyboard.press('Shift+P')
+  await expect(row('First').getByLabel('Pinned')).toBeVisible()
 })
 
 test('nothing refreshes once quitting has closed the store', async () => {
@@ -267,7 +351,7 @@ test('the window: a title and search over list and reader, and the sidebar in it
     (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
   expect(await names(0)).toEqual(['Inbox'])
   expect(await names(1)).toEqual([ME, 'All Mail'])
-  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
+  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: `Folders of ${ME}` }).click()
   await expect(side.getByRole('button', { name: 'All Mail' })).toHaveCount(0)
@@ -656,19 +740,19 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('menuitem', { name: 'Mark all as read' })).toBeVisible() // a place keeps its own entry
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await expect(side.getByRole('button', { name: 'Compose' })).toHaveCount(0)
-  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   await expect(folders.getByRole('button', { name: 'Move Today up' })).toBeDisabled()
-  await expect(folders.getByRole('button', { name: 'Move Sent down' })).toBeDisabled()
+  await expect(folders.getByRole('button', { name: 'Move Recently Seen down' })).toBeDisabled()
   await folders.getByLabel('Show Snoozed').uncheck()
   await folders.getByRole('button', { name: 'Move Pinned up' }).click()
   await folders.getByRole('button', { name: 'Move Today down' }).click()
   await folders.getByRole('listitem').filter({ hasText: 'Sent' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Unread' }))
-  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await assistant.getByLabel('Show Events').uncheck()
   await assistant.getByRole('listitem').filter({ hasText: 'Packages' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Trash' })) // not into the other list
   await expect(assistant.getByRole('listitem')).toHaveText(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
   await side.getByRole('button', { name: 'Pinned', exact: true }).click() // and they still go where they went
   await expect(page.locator('.view-title')).toHaveText('Pinned')
@@ -680,13 +764,13 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(folders.getByLabel('Show Snoozed')).not.toBeChecked()
   await folders.getByLabel('Show Unread').uncheck()
   await side.getByRole('button', { name: 'Cancel' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await side.getByRole('button', { name: 'Drafts', exact: true }).click({ button: 'right' })
   await expect(page.getByRole('menuitem')).toHaveText(['Edit Menu'])
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await folders.getByLabel('Show Unread').uncheck()
   await page.keyboard.press('Escape')
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
 
   // Settings leads to the same place, and what was hidden comes back where it was put.
   await page.getByRole('button', { name: 'Settings' }).click()
@@ -695,14 +779,60 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
   await folders.getByLabel('Show Snoozed').check()
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   const saved = await page.evaluate(async () => (await window.mail.settings()).sidebar)
   expect(saved.hidden).toEqual(['events'])
   expect(saved.order.slice(0, 5)).toEqual(['sent', 'unread', 'today', 'pinned', 'starred'])
   await page.reload()
   await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
+})
+
+test('Edit Menu: an account\'s own labels are hidden and moved there, and New Label makes one on the server', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.labels = ['Travel', 'Receipts', 'Work', 'Work/Plans']
+  gmail.add(rawMail({ subject: 'Paid' }), { arrived: earlier(5), labels: ['\\Inbox', 'Receipts'] })
+  await signIn(run)
+  const side = page.locator('.sidebar')
+  const shown = async (): Promise<string[]> => (await side.locator('.nav-folders .nav-item .grow').allInnerTexts()).map((name) => name.trim())
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Travel', 'Work', 'Plans']) // empty ones too, each inside its own
+  await side.locator('.sidebar-foot .status').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  const labels = side.getByRole('list', { name: `Labels on ${ME}` })
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Travel', 'Work', 'Plans'])
+  await labels.getByLabel('Show Travel').uncheck()
+  await labels.getByRole('button', { name: 'Move Work up' }).click()
+  await labels.getByRole('button', { name: 'Move Work up' }).click()
+  await expect(labels.getByRole('listitem')).toHaveText(['Work', 'Plans', 'Receipts', 'Travel']) // Plans goes with Work
+  await expect(labels.getByRole('button', { name: 'Move Work/Plans up' })).toBeDisabled() // alone inside Work
+  await labels.getByRole('listitem').filter({ hasText: 'Receipts' }).dragTo(labels.getByRole('listitem').filter({ hasText: 'Work' }).first())
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Work', 'Plans', 'Travel'])
+
+  await side.getByRole('button', { name: `New Label on ${ME}` }).click()
+  const making = page.getByRole('dialog', { name: 'New Label' })
+  await making.getByLabel('Name').fill('INBOX/Mine')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(making.getByRole('alert')).toHaveText("INBOX is the service's own.")
+  await making.getByLabel('Name').fill('Ideas')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(page.getByText('Made the label Ideas')).toBeVisible()
+  await expect(making).toHaveCount(0)
+  expect(gmail.labels).toContain('Ideas')
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Work', 'Plans', 'Travel', 'Ideas']) // still editing, with the new one
+  await side.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Work', 'Plans', 'Ideas'])
+
+  // An empty label can be given to mail at once, and the choice lasts.
+  await page.locator('.threads').getByText('Paid').click()
+  await page.getByRole('button', { name: 'Labels' }).click()
+  await page.locator('.popover').getByLabel('Ideas').click()
+  await expect.poll(() => gmail.mails[0]?.labels ?? [], LONG).toContain('Ideas')
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Work', 'Plans', 'Ideas'])
+  expect((await page.evaluate(() => window.mail.settings())).sidebar.labels).toEqual({ [ME]: { order: ['Receipts', 'Work', 'Travel', 'Work/Plans'], hidden: ['Travel'] } })
 })
 
 test('muting a sender from the reader, and the muted senders in Settings', async () => {
@@ -774,6 +904,50 @@ test('pinning a thread from the reader, a row\'s menu and by dragging, and Pinne
   await expect(row('Ledger').getByLabel('Pinned')).toBeVisible()
   await expect(threads.getByText('Lease')).toHaveCount(0)
   expect(gmail.mails.some((m) => m.flags.includes('\\Flagged'))).toBe(false) // a pin is not a flag
+})
+
+test('Recently Seen lists the threads opened, the last first, keeps still while read, and its menu clears it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Alpha', 'Bravo', 'Charlie'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const side = page.locator('.sidebar')
+  const reading = page.locator('.thread-subject')
+  const rows = list.locator('.thread .subject')
+  for (const subject of ['Alpha', 'Charlie', 'Bravo']) {
+    await list.getByText(subject).click()
+    await expect(reading).toHaveText(subject)
+  }
+  await page.keyboard.press('e') // archived, and the reader moves on to Alpha, which is seen again
+  await expect(page.getByText('Archived')).toBeVisible()
+  await expect(reading).toHaveText('Alpha')
+  await side.getByRole('button', { name: 'Recently Seen', exact: true }).click()
+  await expect(page.locator('.view-title')).toHaveText('Recently Seen')
+  await expect(rows).toHaveText(['Alpha', 'Bravo', 'Charlie']) // Bravo is archived, and still here
+  // Read from here, a thread keeps its place, so j goes on down the list.
+  await list.getByText('Bravo').click()
+  await expect(reading).toHaveText('Bravo')
+  await page.keyboard.press('j')
+  await expect(reading).toHaveText('Charlie')
+  await expect(rows).toHaveText(['Alpha', 'Bravo', 'Charlie'])
+  await page.keyboard.press('U')
+  await expect(list.locator('.thread', { hasText: 'Charlie' }).locator('.unread-dot')).toBeVisible()
+  await page.reload()
+  await side.getByRole('button', { name: 'Recently Seen', exact: true }).click()
+  await expect(rows).toHaveText(['Alpha', 'Bravo', 'Charlie'])
+
+  await side.getByRole('button', { name: 'Recently Seen', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menuitem')).toHaveText(['Mark all as read', 'Clear Recently Seen', 'Edit Menu'])
+  await page.getByRole('menuitem', { name: 'Clear Recently Seen' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(page.getByText('Nothing seen yet')).toBeVisible()
+  await expect(rows).toHaveCount(0)
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  await list.getByText('Charlie').click()
+  await expect(reading).toHaveText('Charlie')
+  await side.getByRole('button', { name: 'Recently Seen', exact: true }).click()
+  await expect(rows).toHaveText(['Charlie'])
 })
 
 test('a thread\'s files show as cards under its row, and Appearance can take them away', async () => {
@@ -1005,8 +1179,8 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   const settings = page.getByRole('button', { name: 'Settings' })
   await settings.click()
   await expect(page.getByRole('navigation', { name: 'Settings' }).getByRole('button')).toHaveText([
-    'General', 'Notifications', 'Accounts', 'Appearance', 'Customize Actions', 'Shortcuts', 'Signatures', 'Templates', 'Blocked Senders',
-    'Batches', 'xrnhub', 'About'
+    'General', 'Notifications', 'Accounts', 'Appearance', 'Customize Actions', 'Shortcuts', 'Signatures', 'Templates', 'Summary',
+    'Blocked Senders', 'Batches', 'xrnhub', 'About'
   ])
   await page.getByRole('button', { name: 'Appearance' }).click()
   await expect(page.getByRole('heading', { name: 'Appearance', level: 2 })).toBeVisible()
