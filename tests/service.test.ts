@@ -6,7 +6,7 @@ import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
-import { cleanBatch, describeFailure, MailService, UNDO_MS } from '@main/service'
+import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
 import { ImapSource, ImapWatcher } from '@main/source'
 import { Store } from '@main/store'
@@ -34,15 +34,16 @@ let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
 
-const make = (): MailService =>
+const make = (over: Partial<ServiceDeps> = {}): MailService =>
   new MailService({
+    ...over,
     store, secrets, changed, landed, summarized,
     post: post as unknown as typeof fetch,
     now: () => clock,
     files: new DraftFiles(folder),
     openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
     openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
-    openWatcher: (account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
+    openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
   })
 
@@ -207,7 +208,7 @@ describe('a day of batches', () => {
   it('changing the times never delivers early', async () => {
     await arrive('News', 10, 30)
     clock = at(11)
-    service.saveBatch({ ...service.settings().batch, times: ['10:45', '15:00'] }) // 10:45 has passed
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['10:45', '15:00'] }) // 10:45 has passed
     expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(15) })
   })
 
@@ -225,6 +226,57 @@ describe('a day of batches', () => {
     service.thread(ME, '3')
     expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(0)
     expect(gmail.writes()).toEqual([])
+  })
+})
+
+describe('as it arrives', () => {
+  beforeEach(signedIn)
+
+  /** The app ticks every few seconds, so one has gone by when a sync finds the message. */
+  const arrive = async (subject: string, hour: number, minute = 0, from?: string): Promise<void> => {
+    gmail.add(rawMail({ subject, from }), { arrived: new Date(at(hour, minute)) })
+    clock = at(hour, minute + 1)
+    await service.tick()
+    await service.syncAll()
+  }
+  const live = (on: boolean): void => service.saveBatch({ ...service.settings().batch, live: on })
+
+  it('settings saved before there was a switch keep behaving as they did', () => {
+    const saved = (batch: object): void => store.setMeta('settings', JSON.stringify({ ...service.settings(), batch }))
+    saved({ times: ['09:00', '17:00'], vip: [], earlyPerDay: 1 })
+    expect(service.settings().batch).toEqual({ live: false, times: ['09:00', '17:00'], vip: [], earlyPerDay: 1 })
+    saved({ times: [], vip: [], earlyPerDay: 1 })
+    expect(service.settings().batch.live).toBe(true)
+    store.deleteMeta('settings')
+    expect(service.settings().batch).toMatchObject({ live: false, times: ['09:00', '13:00', '17:00'] })
+  })
+
+  it('going live lets what was waiting through, keeps the times, and leaves no delivery to show', async () => {
+    await arrive('News', 10, 30)
+    expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(13) })
+    live(true)
+    expect(service.overview()).toMatchObject({ held: 0, nextBatch: null })
+    expect(service.list({ kind: 'inbox' }).map((r) => r.subject)).toEqual(['News'])
+    expect(service.settings().batch).toMatchObject({ live: true, times: ['09:00', '13:00', '17:00'] })
+  })
+
+  it('live, new mail lands as it comes, while the Summary still waits for its time', async () => {
+    live(true)
+    service.saveSummary({ senders: ['news@shop.example'], every: 'daily', time: '18:00', day: 1, chosen: true })
+    await arrive('Hello', 10, 30, 'Ada <ada@example.com>')
+    await arrive('Deals', 10, 40, 'Shop News <news@shop.example>')
+    expect(service.list({ kind: 'inbox' }).map((r) => r.subject)).toEqual(['Hello'])
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello' })
+    expect(service.overview()).toMatchObject({ held: 0, nextBatch: null, summary: { held: 1, next: at(18) } })
+  })
+
+  it('back in batches, only what comes next waits, at the times kept', async () => {
+    live(true)
+    await arrive('Early', 10, 30)
+    live(false)
+    await arrive('Later', 10, 40)
+    expect(service.list({ kind: 'inbox' }).map((r) => r.subject)).toEqual(['Early'])
+    expect(service.overview()).toMatchObject({ held: 1, nextBatch: at(13) })
   })
 })
 
@@ -446,6 +498,22 @@ describe('xrnhub', () => {
     expect(sent()[0]?.detail.held).toBe(0)
   })
 
+  it('going live says nothing waits and no batch is due, and live mail is no batch', async () => {
+    gmail.add(rawMail({ subject: 'A' }), { arrived: new Date(at(10, 30)) })
+    clock = at(10, 31)
+    await service.syncAll()
+    post.mockClear()
+    service.saveBatch({ ...service.settings().batch, live: true })
+    await eventually(() => expect(sent()).toEqual([expect.objectContaining({ kind: 'state.held', value: 0, detail: { held: 0, nextBatch: null } })]))
+    await service.tick() // what was waiting landed when the switch was made
+    post.mockClear()
+    gmail.add(rawMail({ subject: 'B' }), { arrived: new Date(at(10, 35)) })
+    clock = at(10, 36)
+    await service.syncAll()
+    await service.tick()
+    expect(sent().filter((event) => event.kind === 'batch' || event.value !== 0)).toEqual([])
+  })
+
   it('says nothing when the count has not moved', async () => {
     await service.syncAll()
     await service.syncAll()
@@ -478,13 +546,15 @@ describe('xrnhub', () => {
 
 describe('settings', () => {
   it('cleans what it is given', () => {
-    expect(cleanBatch({ times: ['17:00', '09:00', '09:00', 'noon'], vip: [' Boss@Work.com ', 'nonsense', ''], earlyPerDay: 99 }))
-      .toEqual({ times: ['09:00', '17:00'], vip: ['boss@work.com'], earlyPerDay: 5 })
+    expect(cleanBatch({ live: false, times: ['17:00', '09:00', '09:00', 'noon'], vip: [' Boss@Work.com ', 'nonsense', ''], earlyPerDay: 99 }))
+      .toEqual({ live: false, times: ['09:00', '17:00'], vip: ['boss@work.com'], earlyPerDay: 5 })
+    // Batches need a time to land at.
+    expect(cleanBatch({ live: false, times: ['noon'], vip: [], earlyPerDay: 1 })).toMatchObject({ live: true, times: [] })
   })
 
   it('survives a restart', () => {
-    service.saveBatch({ times: ['08:00'], vip: [], earlyPerDay: 2 })
-    expect(make().settings().batch).toEqual({ times: ['08:00'], vip: [], earlyPerDay: 2 })
+    service.saveBatch({ live: false, times: ['08:00'], vip: [], earlyPerDay: 2 })
+    expect(make().settings().batch).toEqual({ live: false, times: ['08:00'], vip: [], earlyPerDay: 2 })
   })
 })
 
@@ -1223,7 +1293,7 @@ describe('the sidebar', () => {
     expect(seen).toHaveLength(100)
     expect(seen[0]).toBe('Thread 101')
     expect(seen.at(-1)).toBe('Thread 2') // the two opened first have gone
-    service.saveBatch({ ...service.settings().batch, times: ['13:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['13:00'] })
     gmail.add(rawMail({ subject: 'Held' }), { arrived: new Date(clock), thread: 900n })
     clock += 60_000
     await service.syncAll()
@@ -1288,7 +1358,7 @@ describe('the sidebar', () => {
     gmail.add(rawMail({ subject: 'Trip', from: 'Linh <linh@example.com>', attachment: { name: 'map.pdf', type: 'application/pdf', body: 'x' } }), { arrived: new Date(at(8, 10)), thread: 5n })
     service.saveBatch({ ...service.settings().batch, times: [] })
     await service.syncAll()
-    service.saveBatch({ ...service.settings().batch, times: ['13:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['13:00'] })
     await arrive('Trip', 10, 30, { from: 'Hidden <hidden@example.com>' })
     const row = service.list({ kind: 'inbox' }).find((one) => one.subject === 'Trip')
     expect(row?.people.map((who) => who.address)).toEqual(expect.arrayContaining(['mai@example.com', 'linh@example.com']))
@@ -1394,6 +1464,55 @@ describe('new mail as it lands', () => {
     await eventually(() => expect(service.list({ kind: 'inbox' }).map((row) => row.subject)).toEqual(['Right now']))
     service.stopWatching()
     expect(gmail.writes()).toEqual([])
+  })
+
+  it('shows mail read, flagged, archived or deleted on another device, and keeps watching after each', async () => {
+    gmail.add(rawMail({ subject: 'On the phone' }), { arrived: new Date(at(9)), thread: 41n })
+    gmail.add(rawMail({ subject: 'Thrown away' }), { arrived: new Date(at(9)), thread: 42n })
+    await signedIn()
+    service.watchAll()
+    await eventually(() => expect(gmail.idling).toBe(1))
+    const row = (thread: string): { unread: number; starred: boolean } | undefined => service.list({ kind: 'inbox' }).find((r) => r.thread === thread)
+    const [phone, thrown] = gmail.mails
+    gmail.change(phone?.uid ?? 0, ['\\Inbox'], ['\\Seen'])
+    await eventually(() => expect(row('41')?.unread).toBe(0))
+    await eventually(() => expect(gmail.idling).toBe(1))
+    gmail.change(phone?.uid ?? 0, ['\\Inbox'], ['\\Seen', '\\Flagged'])
+    await eventually(() => expect(row('41')?.starred).toBe(true))
+    gmail.change(phone?.uid ?? 0, [], ['\\Seen', '\\Flagged']) // archived: Gmail takes the label away
+    await eventually(() => expect(row('41')).toBeUndefined())
+    gmail.remove(thrown?.uid ?? 0)
+    await eventually(() => expect(service.list({ kind: 'inbox' })).toEqual([]))
+    await eventually(() => expect(gmail.idling).toBe(1))
+    service.stopWatching()
+    expect(gmail.writes()).toEqual([])
+  })
+
+  it('a burst of news from the server is one sync', async () => {
+    await signedIn()
+    let tell: (() => void) | null = null
+    service = make({
+      openWatcher: () => ({
+        watch: (changed) => {
+          tell = changed
+          return new Promise<void>(() => undefined)
+        },
+        close: async () => undefined
+      })
+    })
+    service.watchAll()
+    await eventually(() => expect(tell).not.toBeNull())
+    const told = (): void => tell?.()
+    const passes = (): number => gmail.commands.filter((line) => line.startsWith('LIST')).length
+    const before = passes()
+    for (let i = 0; i < 30; i++) told()
+    await new Promise((resolve) => setTimeout(resolve, WATCH_SETTLE_MS + 400))
+    await eventually(() => expect(service.accounts()[0]?.syncing).toBe(false))
+    expect(passes() - before).toBe(1)
+    told()
+    await new Promise((resolve) => setTimeout(resolve, WATCH_SETTLE_MS + 400))
+    await eventually(() => expect(passes() - before).toBe(2))
+    service.stopWatching()
   })
 
   it('keeps one watch per account however often the laptop wakes, and stopping ends it', async () => {

@@ -40,7 +40,7 @@ const TAB_WORDS: Record<Tab, string> = {
   templates: 'template ready text',
   summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
-  batches: 'delivery times straight through vip early',
+  batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
   hub: 'connect counts',
   about: 'version'
 }
@@ -189,6 +189,15 @@ function Summary(props: { summary: SummarySettings; save(summary: SummarySetting
   )
 }
 
+/** The times batches start from when there were none to go back to. */
+const FIRST_TIMES = ['09:00', '13:00', '17:00']
+
+const MODES: [boolean, string, string][] = [
+  [true, 'As it arrives', 'New mail shows the moment your mail service has it.'],
+  [false, 'In batches', 'New mail waits for the times you set, apart from the people let straight through.']
+]
+
+/** How mail arrives: live, or in batches at set times. Switching keeps the times for coming back. */
 function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void }): ReactNode {
   const { batch, save } = props
   const [time, setTime] = useState('')
@@ -199,34 +208,61 @@ function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void
     save({ ...batch, times: [...batch.times, time] })
     setTime('')
   }
+  const choose = (live: boolean): void => {
+    if (live === batch.live) return
+    save({ ...batch, live, times: !live && batch.times.length === 0 ? FIRST_TIMES : batch.times })
+  }
 
   return (
-    <section>
-      <h3>Delivery times</h3>
-      <div className="chips">
-        {batch.times.map((t) => (
-          <button key={t} className="chip" aria-label={`Remove ${t}`}
-            onClick={() => save({ ...batch, times: batch.times.filter((x) => x !== t) })}>
-            {t} <span aria-hidden="true">×</span>
-          </button>
-        ))}
-        <input type="time" aria-label="New time" value={time} onChange={(e) => setTime(e.target.value)} />
-        <button className="quiet" onClick={add} disabled={!time}>Add</button>
-      </div>
-      {batch.times.length === 0 && <p className="muted note">No times: mail arrives as it comes.</p>}
-      <label>
-        Straight through
-        <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
-          onChange={(e) => setVip(e.target.value)}
-          onBlur={() => save({ ...batch, vip: vip.split(/\s+/).filter(Boolean) })} />
-      </label>
-      <label className="inline">
-        Early deliveries a day
-        <select value={batch.earlyPerDay} onChange={(e) => save({ ...batch, earlyPerDay: Number(e.target.value) })}>
-          {[0, 1, 2, 3, 5].map((n) => <option key={n}>{n}</option>)}
-        </select>
-      </label>
-    </section>
+    <>
+      <section>
+        <h3>New mail</h3>
+        <div className="tiles modes" role="radiogroup" aria-label="How new mail arrives">
+          {MODES.map(([live, name, note]) => (
+            <label key={name} className={batch.live === live ? 'tile mode on' : 'tile mode'}>
+              <input type="radio" name="delivery" checked={batch.live === live} onChange={() => choose(live)} />
+              <span className="mode-name">{name}</span>
+              <span className="muted mode-note">{note}</span>
+            </label>
+          ))}
+        </div>
+        {batch.live && (
+          <p className="muted note">
+            Your inbox is watched, so mail and changes made on your other devices show within seconds.
+            {batch.times.length > 0 && ` Your times (${batch.times.join(', ')}) are kept for switching back.`}
+            {' '}Senders in your Summary still wait for its time.
+          </p>
+        )}
+      </section>
+      {!batch.live && (
+        <section>
+          <h3>Delivery times</h3>
+          <div className="chips">
+            {batch.times.map((t) => (
+              <button key={t} className="chip" aria-label={`Remove ${t}`}
+                onClick={() => save({ ...batch, times: batch.times.filter((x) => x !== t) })}>
+                {t} <span aria-hidden="true">×</span>
+              </button>
+            ))}
+            <input type="time" aria-label="New time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <button className="quiet" onClick={add} disabled={!time}>Add</button>
+          </div>
+          {batch.times.length === 1 && <p className="muted note">Taking the last time away makes mail arrive as it comes.</p>}
+          <label>
+            Straight through
+            <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
+              onChange={(e) => setVip(e.target.value)}
+              onBlur={() => save({ ...batch, vip: vip.split(/\s+/).filter(Boolean) })} />
+          </label>
+          <label className="inline">
+            Early deliveries a day
+            <select value={batch.earlyPerDay} onChange={(e) => save({ ...batch, earlyPerDay: Number(e.target.value) })}>
+              {[0, 1, 2, 3, 5].map((n) => <option key={n}>{n}</option>)}
+            </select>
+          </label>
+        </section>
+      )}
+    </>
   )
 }
 
@@ -599,6 +635,7 @@ export function SettingsDialog(props: {
   }, [])
 
   const saveBatch = async (batch: BatchSettings): Promise<void> => {
+    setSettings((now) => (now ? { ...now, batch } : now)) // shown at once; the save follows
     await window.mail.saveBatch(batch)
     setSettings(await window.mail.settings())
   }

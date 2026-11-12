@@ -145,10 +145,21 @@ stopping the rest.
 ### Watching the inbox
 
 One more connection per account sits on `INBOX`, opened read-only, and waits in IDLE. It reads nothing:
-when the server says something landed, it asks for an ordinary sync, so there's still one way into the
-store and the batches apply as usual. If the sync is already running it's asked to go again afterwards,
-because what landed may have missed it. A lost connection is retried after a minute, and the
-three-minute passes carry on regardless, so watching can fail without anything being missed.
+when the server says something landed (`exists`), left (`expunge`: archived or deleted on another
+device), or had its flags changed (`flags`: read or flagged elsewhere), it asks for an ordinary sync,
+so there's still one way into the store and the batches apply as usual. It waits until the server has
+been quiet for 750 ms first, so a burst of news is one sync. If the sync is already running it's asked
+to go again afterwards, because what changed may have missed it. The watch has its own connection, so
+a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
+it again, as it does after anything else on that connection. A lost connection is retried after a
+minute, and the three-minute passes carry on regardless, so watching can fail without anything being
+missed.
+
+Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
+no batch times, so nothing waits for a batch and the next delivery is none, which hides the delivery
+line and Deliver now; the Summary keeps its own time. The batch times stay saved for switching back.
+Settings saved before the switch existed are live exactly when they have no times, which is how they
+behaved; batches always have a time, so taking the last one away is going live.
 
 There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
 them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
@@ -201,7 +212,8 @@ sender can write what they like there.
   "waiting" figure, in search, or in contacts.
 - Mail that arrived while the laptop was off is measured from when it arrived, so it's simply there.
 - Changing the times moves waiting mail to the next slot after now, so a change can't deliver
-  anything early. Turning batches off, or adding a sender to the straight-through list, does.
+  anything early. Going live, or adding a sender to the straight-through list, does, and the hub
+  hears at once that nothing is waiting.
 
 ### The Subscription Summary
 

@@ -43,7 +43,7 @@ const TOKEN_MARGIN_MS = 60_000
 const NOTE_MS = 10 * 60_000
 
 const DEFAULT_SETTINGS: Settings = {
-  batch: { times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
+  batch: { live: false, times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
   summary: { senders: [], every: 'daily', time: '08:00', day: 1, chosen: false },
   backfillDays: 90,
   hub: { url: '', user: '', connected: false },
@@ -150,9 +150,13 @@ export function cleanSummary(summary: Partial<SummarySettings>): SummarySettings
   }
 }
 
+/** Batches need a time to land at, so without one mail is live. Live keeps its times, for
+ *  switching back. */
 export function cleanBatch(batch: BatchSettings): BatchSettings {
+  const times = unique(batch.times.filter(isTime)).sort().slice(0, 12)
   return {
-    times: unique(batch.times.filter(isTime)).sort().slice(0, 12),
+    live: batch.live === true || times.length === 0,
+    times,
     vip: cleanSenders(batch.vip),
     earlyPerDay: clamp(batch.earlyPerDay, 0, 5)
   }
@@ -212,11 +216,16 @@ const WORTH_SHOWING = 40
 const WATCH_RETRY_MS = 60_000
 /** How many previews are remade at a time, so the app stays quick while it happens. */
 const SNIPPET_STEP = 50
+/** How long a watch waits after the server's last word before syncing, so a burst of them (a
+ *  phone marking thirty messages read) is one sync. */
+export const WATCH_SETTLE_MS = 750
 
 /** One account's watch on its inbox, from the moment it starts signing in. */
 interface Watch {
   stopped: boolean
   watcher: MailWatcher | null
+  /** A sync is due once the server has been quiet a moment. */
+  settle: NodeJS.Timeout | null
 }
 
 export class MailService {
@@ -562,23 +571,33 @@ export class MailService {
 
   private endWatch(watch: Watch): void {
     watch.stopped = true
+    if (watch.settle) clearTimeout(watch.settle)
+    watch.settle = null
     if (watch.watcher) background(watch.watcher.close())
   }
 
   private watch(email: string): void {
     const open = this.deps.openWatcher
     if (!open || !this.watching || this.watchers.has(email)) return
-    const mine: Watch = { stopped: false, watcher: null }
+    const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
-    const arrived = (): void => {
-      if (this.statusOf(email).syncing) this.syncAgain.add(email)
-      else background(this.syncOne(email))
+    // Mail landing, leaving the inbox, or read or flagged elsewhere: each is a reason to look, and
+    // what's said in one burst is one look.
+    const changed = (): void => {
+      if (mine.stopped || mine.settle) return
+      mine.settle = setTimeout(() => {
+        mine.settle = null
+        if (mine.stopped) return
+        if (this.statusOf(email).syncing) this.syncAgain.add(email)
+        else background(this.syncOne(email))
+      }, WATCH_SETTLE_MS)
+      mine.settle.unref?.()
     }
     const run = async (): Promise<void> => {
       const login = await this.login(email)
       if (mine.stopped || !this.emails().includes(email)) return
       mine.watcher = open(this.config(email), login)
-      await mine.watcher.watch(arrived)
+      await mine.watcher.watch(changed)
     }
     const lost = (): void => {
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
@@ -669,9 +688,11 @@ export class MailService {
     if (summed.length > 0) this.deps.summarized?.(summed.length, unique(summed))
   }
 
-  /** What decides when mail lands: the batches, who comes straight through, and the Summary. */
+  /** What decides when mail lands: the batches, who comes straight through, and the Summary. Live,
+   *  there are no batch times to wait for, and the Summary keeps its own. */
   private rules(settings = this.settings()): BatchRules {
-    return { ...settings.batch, summary: settings.summary }
+    const { batch, summary } = settings
+    return { times: batch.live ? [] : batch.times, vip: batch.vip, summary }
   }
 
   /** Mail a sync finds that's already due never passes through a tick's window, which only sees
@@ -873,7 +894,9 @@ export class MailService {
   }
 
   private nextBatch(now: number): number | null {
-    return this.store.nextRelease(now) ?? nextBatchAfter(now, this.settings().batch.times)
+    const { batch } = this.settings()
+    if (batch.live) return null
+    return this.store.nextRelease(now) ?? nextBatchAfter(now, batch.times)
   }
 
   list(query: ListQuery, limit?: number): ThreadRow[] {
@@ -1296,7 +1319,10 @@ export class MailService {
       const saved = JSON.parse(this.store.meta('settings') ?? '{}') as Partial<Settings>
       // "Compact" rows, from before the list counted lines, were rows with one line of the message.
       const lines = saved.previewLines ?? ((saved as { density?: string }).density === 'compact' ? 1 : DEFAULT_SETTINGS.previewLines)
-      const merged = { ...DEFAULT_SETTINGS, ...saved, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
+      const batch = { ...DEFAULT_SETTINGS.batch, ...saved.batch }
+      // Saved before there was a switch: no times meant mail came as it arrived, and still does.
+      batch.live = saved.batch?.live === true || batch.times.length === 0
+      const merged = { ...DEFAULT_SETTINGS, ...saved, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
@@ -1322,8 +1348,11 @@ export class MailService {
     // through leaves the Summary.
     const added = clean.vip.filter((v) => !settings.batch.vip.includes(v))
     const summary = { ...settings.summary, senders: settings.summary.senders.filter((s) => !added.includes(s)) }
-    this.saveSettings({ ...settings, batch: clean, summary })
-    this.retime({ ...clean, summary })
+    const next = { ...settings, batch: clean, summary }
+    this.saveSettings(next)
+    // Going live releases what was waiting; going back to batches holds only what comes next.
+    this.retime(this.rules(next))
+    background(this.reportHeld())
   }
 
   /** A sender added to the Summary waits for it from now on, and what it's sent that's waiting for a
@@ -1334,8 +1363,9 @@ export class MailService {
     const clean = cleanSummary(summary)
     const added = clean.senders.filter((s) => !settings.summary.senders.includes(s))
     const batch = { ...settings.batch, vip: settings.batch.vip.filter((v) => !added.includes(v)) }
-    this.saveSettings({ ...settings, batch, summary: clean })
-    this.retime({ ...batch, summary: clean })
+    const next = { ...settings, batch, summary: clean }
+    this.saveSettings(next)
+    this.retime(this.rules(next))
   }
 
   /** Waiting mail moves to its next moment under [rules], measured from now, not from when it

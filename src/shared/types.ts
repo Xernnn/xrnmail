@@ -63,7 +63,10 @@ export interface SummarySettings {
 }
 
 export interface BatchSettings {
-  /** "HH:MM", when held mail lands. Empty turns batching off. */
+  /** New mail shows as it arrives, and nothing waits for a batch. The times are kept for switching
+   *  back. Saved settings from before there was a switch are live when they have no times. */
+  live: boolean
+  /** "HH:MM", when held mail lands. Batches always have one: with none, mail is live. */
   times: string[]
   /** Addresses or @domains that skip the wait. */
   vip: string[]

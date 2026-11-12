@@ -151,6 +151,7 @@ function batchSettings(value: unknown): BatchSettings {
   const b = (value ?? {}) as Record<string, unknown>
   if (!Array.isArray(b['times']) || !Array.isArray(b['vip'])) throw new Error('Bad request')
   return {
+    live: b['live'] === true,
     times: b['times'].map((t) => text(t, 8)),
     vip: b['vip'].map((v) => text(v, 320)),
     earlyPerDay: number(b['earlyPerDay'])

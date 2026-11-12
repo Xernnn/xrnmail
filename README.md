@@ -6,7 +6,8 @@
 
 All your mail accounts in one place, delivered in batches. Gmail, Outlook, Yahoo, iCloud or any IMAP
 server sit side by side, and mail lands a few times a day instead of whenever someone sends it, with
-the people who matter coming straight through.
+the people who matter coming straight through. Or, with one switch, it all shows the moment it
+arrives.
 
 It's a full mail client: write, reply, archive, delete, snooze. Your mail stays on your laptop and with
 your mail service, with no server of ours in between. Everything clever happens on your laptop.
@@ -22,8 +23,11 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   shown as a broad bar beside every row of a list they share and beside the subject of an open thread.
   Gmail keeps its labels and threads; other services get their folders, and threads worked out from
   the messages. Aliases work too, and a reply goes out from the address the mail came to.
-- **Batches:** new inbox mail waits for the next slot (09:00, 13:00, 17:00 by default). Waiting mail
-  stays out of the list, threads and search until then.
+- **As it arrives, or in batches:** one switch in Settings, Batches. As it arrives, new mail shows within
+  seconds of your mail service having it, and so does what you do on your phone. In batches, new inbox
+  mail waits for the next slot (09:00, 13:00, 17:00 by default), and waiting mail stays out of the
+  list, threads and search until then. Switching keeps your times for coming back to. See
+  [Live mail](#live-mail).
 - **Straight through:** addresses or whole @domains that skip the wait, set in Settings or from a
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
@@ -76,8 +80,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   choose which of its entries show and in what order, each account's own labels or folders among them,
   with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
-- **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
-  keeps it running. Spell check knows your language, plus English and Vietnamese.
+- **Stays with you:** new mail is announced as it lands, the tray shows what's unread, and closing the
+  window keeps it running. Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
 - **xrnhub:** optional, and gets counts only.
 
@@ -108,9 +112,33 @@ Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
 
+## Live mail
+
+With Settings, Batches set to **As it arrives**, mail is live: there's no button to press and nothing
+to wait for.
+
+- **How:** each account keeps one connection open on its inbox, read-only, in IMAP IDLE
+  ([RFC 2177](https://www.rfc-editor.org/rfc/rfc2177)). The server speaks up the moment a message
+  lands there, leaves it (archived or deleted on your phone or the web), or is read or flagged
+  elsewhere. Within a second xrnmail runs its ordinary sync for that account, so what you see is
+  what the server has. A burst of changes, like a phone marking thirty messages read, is one sync.
+- **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
+  sleep, and when the window comes back after a minute away. A watch that drops is opened again
+  after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
+- **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
+  go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
+  project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,
+  which Gmail supports. Outlook's push
+  ([Microsoft Graph change notifications](https://learn.microsoft.com/en-us/graph/change-notifications-overview))
+  needs a public web address for Microsoft to call, and Graph permissions beyond the IMAP and SMTP
+  ones xrnmail asks for, so Outlook is watched over IMAP IDLE too.
+- **In batches** mail is watched the same way, and then waits for its time. The Subscription Summary
+  waits for its own time either way.
+
 ## Where it differs from Edison Mail
 
-Kept from xrnmail, where Edison has nothing: batches and straight-through senders, the delivery line
+Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
+which is how Edison always works, is one switch away), the delivery line
 over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
 warnings, xrnhub, and the one-thing-at-a-time layout.
 

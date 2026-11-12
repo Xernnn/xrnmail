@@ -238,7 +238,7 @@ test('the Summary: a sender goes in from Subscriptions, its mail waits for the t
   gmail.add(rawMail({ subject: 'One', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Two', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(2) })
   await signIn(run)
-  await page.evaluate(() => window.mail.saveBatch({ times: [], vip: [], earlyPerDay: 1 })) // nothing else waits
+  await page.evaluate(() => window.mail.saveBatch({ live: true, times: [], vip: [], earlyPerDay: 1 })) // nothing else waits
   await page.evaluate(() => window.mail.saveProfile({ focused: false })) // one inbox, bulk mail and all
   const side = page.locator('.sidebar')
   const list = page.locator('.threads')

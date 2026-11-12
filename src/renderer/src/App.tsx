@@ -781,7 +781,8 @@ export function App(): ReactNode {
   const splitAccount = active.kind === 'inbox' ? accounts.find((a) => a.email === active.account) ?? (many ? undefined : accounts[0]) : undefined
   const otherCount = splitAccount?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
-  const batching = (profile?.batch.times.length ?? 0) > 0
+  // Live, nothing waits for a delivery, so there's nobody to let straight through.
+  const batching = profile ? !profile.batch.live && profile.batch.times.length > 0 : false
 
   const popOut = (): void => {
     if (!open) return

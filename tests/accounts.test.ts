@@ -474,7 +474,7 @@ describe('Gmail: Trash and Spam', () => {
   })
 
   it('spam does not count as mail waiting', async () => {
-    service.saveBatch({ ...service.settings().batch, times: ['17:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['17:00'] })
     gmail.add(rawMail({ subject: 'More junk' }), { box: '[Gmail]/Spam', arrived: new Date(at(10, 1)) })
     clock = at(10, 2)
     await service.syncAll()
@@ -765,7 +765,7 @@ describe('held mail in everything the Assistant added', () => {
 
   beforeEach(async () => {
     await add(G, gmail)
-    service.saveBatch({ ...service.settings().batch, times: ['17:00'] })
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['17:00'] })
     gmail.now = () => new Date(at(10, 1))
     clock = at(10, 2)
     gmail.add(held({ subject: 'Your order has shipped', text: '1Z999AA10123456784' }))
