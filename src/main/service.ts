@@ -764,6 +764,12 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Only this laptop ever knew what was opened, so this is all there is to forget. */
+  clearRecent(): void {
+    this.store.forgetSeen()
+    this.deps.changed()
+  }
+
   /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
   pin(targets: ThreadRef[], on: boolean): void {
     const now = this.deps.now()
@@ -792,10 +798,12 @@ export class MailService {
     return this.store.list(query, this.deps.now(), limit)
   }
 
-  /** Opening a thread reads it, here and on the server. Only what could be seen counts. */
-  thread(account: string, thread: string, bins = false): MessageView[] {
+  /** Opening a thread reads it, here and on the server. Only what could be seen counts. It goes to the
+   *  top of Recently Seen too, unless it was opened from there: that list keeps still while it's read. */
+  thread(account: string, thread: string, bins = false, remember = true): MessageView[] {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
+    if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
     this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
     for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages

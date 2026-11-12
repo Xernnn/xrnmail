@@ -215,6 +215,13 @@ export const MIGRATIONS = [
   CREATE TABLE pins(
     account TEXT NOT NULL, thread TEXT NOT NULL, at INTEGER NOT NULL,
     PRIMARY KEY(account, thread));
+  `,
+  // Recently Seen: the threads opened here, when each was last opened. Nothing on a server knows.
+  `
+  CREATE TABLE recent(
+    account TEXT NOT NULL, thread TEXT NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY(account, thread));
+  CREATE INDEX recent_at ON recent(at);
   `
 ]
 
@@ -259,6 +266,13 @@ const PINNED = 'EXISTS (SELECT 1 FROM pins p WHERE p.account = messages.account 
 
 /** How many of a thread's files a row of the list names. */
 export const ROW_CARDS = 3
+
+/** How many threads Recently Seen remembers. Opening another lets the oldest go. */
+export const RECENT_KEPT = 100
+
+/** Recently Seen's order: last opened first. Opened within the same millisecond, the later write wins. */
+const RECENT_ORDER = `(SELECT r.at FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC,
+  (SELECT r.rowid FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC`
 
 const SEARCH_FLAGS: Record<string, string> = {
   'has:attachment': 'has_attachment = 1',
@@ -488,6 +502,7 @@ export class Store {
     this.db.prepare('DELETE FROM drafts WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM snoozes WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM pins WHERE account = ?').run(account)
+    this.db.prepare('DELETE FROM recent WHERE account = ?').run(account)
     return drafts
   }
 
@@ -592,6 +607,8 @@ export class Store {
         return this.threadRows(by('flagged = 1'), params, now, limit)
       case 'pinned':
         return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM pins)'), params, now, limit)
+      case 'recent':
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM recent)'), params, now, limit, { order: RECENT_ORDER })
       case 'sent':
         return this.threadRows(by(`EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')`), params, now, limit)
       case 'all':
@@ -854,6 +871,20 @@ export class Store {
 
   unpin(ref: ThreadRef): void {
     this.db.prepare('DELETE FROM pins WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
+  }
+
+  /** A thread was opened: it goes to the top of Recently Seen, and only the newest [RECENT_KEPT] stay. */
+  saw(ref: ThreadRef, at: number): void {
+    this.inTransaction(() => {
+      // Replacing gives the row a new rowid, which is what orders two opened within one millisecond.
+      this.db.prepare('INSERT OR REPLACE INTO recent(account, thread, at) VALUES(?,?,?)').run(ref.account, ref.thread, at)
+      this.db.prepare('DELETE FROM recent WHERE rowid NOT IN (SELECT rowid FROM recent ORDER BY at DESC, rowid DESC LIMIT ?)').run(RECENT_KEPT)
+    })
+  }
+
+  /** Recently Seen starts again, empty. */
+  forgetSeen(): void {
+    this.db.exec('DELETE FROM recent')
   }
 
   /** How many snoozed threads came back in (after, upto]. */

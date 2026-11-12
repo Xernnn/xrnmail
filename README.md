@@ -35,6 +35,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
   there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
   for what they mean there.
+- **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
+  ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
+  and its right-click menu clears it. Reading from the list itself leaves its order as it is.
 - **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
   side a sender belongs on and it stays there.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
@@ -100,8 +103,6 @@ without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time l
 
 Not here, though Edison has them:
 
-- **Recently Seen.** Nothing to hand says what it lists: it's a name in Edison's sidebar in every
-  picture, and its help pages never describe it.
 - **The Subscription Summary.** Its help pages say what it does (chosen senders are held and delivered
   together, daily or weekly at a time you pick) and show its schedule in Settings, but not the three
   things it would add here: the Summary side of Subscriptions, the Summary list in the sidebar, and
@@ -123,6 +124,8 @@ Done differently:
   with Undo still there, and closes when it's marked unread or gone for good.
 - Muted senders are a list of addresses or @domains typed in or added from a message, as blocked
   senders are; Edison picks them from contacts.
+- Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
+  and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
 ## What it doesn't do yet
 

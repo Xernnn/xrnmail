@@ -244,7 +244,7 @@ export interface Overview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today' | 'recent'; account?: string }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -335,8 +335,11 @@ export interface MailApi {
   syncNow(): Promise<void>
   overview(): Promise<Overview>
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
-  /** [bins] is for reading what's in Trash or Spam. */
-  thread(account: string, thread: string, bins?: boolean): Promise<MessageView[]>
+  /** [bins] is for reading what's in Trash or Spam. Opening a thread puts it at the top of Recently
+   *  Seen, unless [remember] is false. */
+  thread(account: string, thread: string, bins?: boolean, remember?: boolean): Promise<MessageView[]>
+  /** Recently Seen starts again, empty. */
+  clearRecent(): Promise<void>
   settings(): Promise<Settings>
   saveBatch(batch: BatchSettings): Promise<void>
   saveBackfill(days: number): Promise<void>

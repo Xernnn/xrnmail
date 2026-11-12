@@ -190,6 +190,28 @@ describe('an older file', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('from before Recently Seen gains it, empty, and keeps its pins', () => {
+    const dir = folder()
+    const path = join(dir, 'mail.sqlite')
+    const old = new DatabaseSync(path)
+    MIGRATIONS.slice(0, 6).forEach((sql) => old.exec(sql))
+    old.exec('PRAGMA user_version = 6')
+    old.exec("INSERT INTO messages(account, uid, thread, subject, arrived, release_at, in_inbox) VALUES('me@example.com', 8, 'u', 'Kept', 100, 100, 1)")
+    old.exec("INSERT INTO pins(account, thread, at) VALUES('me@example.com', 'u', 100)")
+    old.close()
+    let store = new Store(path)
+    expect(store.list({ kind: 'recent' }, 1000)).toEqual([])
+    expect(store.list({ kind: 'pinned' }, 1000).map((r) => r.subject)).toEqual(['Kept'])
+    store.saw({ account: 'me@example.com', thread: 'u' }, 1000)
+    store.close()
+    store = new Store(path)
+    expect(store.list({ kind: 'recent' }, 1000).map((r) => r.subject)).toEqual(['Kept'])
+    store.forgetAccount('me@example.com')
+    expect(store.list({ kind: 'recent' }, 1000)).toEqual([])
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('the first file of all can pin too', () => {
     const dir = folder()
     const path = join(dir, 'mail.sqlite')

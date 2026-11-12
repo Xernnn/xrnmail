@@ -126,7 +126,7 @@ const number = (value: unknown): number => {
   return value
 }
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -309,7 +309,9 @@ function register(service: MailService): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown) => service.thread(text(account, 320), text(thread, 64), bins === true))
+  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown) =>
+    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false))
+  handle('clearRecent', () => service.clearRecent())
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))

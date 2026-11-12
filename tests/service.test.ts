@@ -1043,14 +1043,69 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'pinned' })).toEqual([])
   })
 
+  it('Recently Seen lists what was opened, the last one first, wherever it is now', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('First', 9, 0)
+    await arrive('Second', 9, 5)
+    await arrive('Third', 9, 10)
+    const seen = (): string[] => service.list({ kind: 'recent' }).map((row) => row.subject)
+    expect(seen()).toEqual([])
+    service.thread(ME, ref('First').thread)
+    clock += 1000
+    service.thread(ME, ref('Third').thread)
+    clock += 1000
+    service.thread(ME, ref('Second').thread)
+    expect(seen()).toEqual(['Second', 'Third', 'First'])
+    service.thread(ME, ref('First').thread) // opened again in the same moment still goes to the top
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    service.thread(ME, ref('Third').thread, false, false) // read from Recently Seen itself: the list keeps still
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    await service.act([ref('Second')], { kind: 'archive' })
+    await service.act([ref('First')], { kind: 'unread' })
+    expect(service.list({ kind: 'recent' }).map((row) => [row.subject, row.unread])).toEqual([['First', 1], ['Second', 0], ['Third', 0]]) // archived and unread, as anywhere
+    const thrown = ref('Third')
+    await service.act([thrown], { kind: 'trash' })
+    expect(seen()).toEqual(['First', 'Second']) // what's in Trash is in Trash
+    await service.act([thrown], { kind: 'inbox' })
+    expect(seen()).toEqual(['First', 'Second', 'Third'])
+    expect(service.list({ kind: 'recent', account: 'someone@else.example' })).toEqual([])
+    service.clearRecent()
+    expect(seen()).toEqual([])
+  })
+
+  it('Recently Seen keeps the last hundred threads opened, never held mail, and forgets an account that goes', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    for (let i = 0; i < 102; i++) gmail.add(rawMail({ subject: `Thread ${i}` }), { arrived: new Date(at(8, 0) + i * 1000), thread: BigInt(500 + i) })
+    clock = at(11)
+    await service.syncAll()
+    for (let i = 0; i < 102; i++) {
+      clock += 1000
+      service.thread(ME, String(500 + i))
+    }
+    const seen = service.list({ kind: 'recent' }, 500).map((row) => row.subject)
+    expect(seen).toHaveLength(100)
+    expect(seen[0]).toBe('Thread 101')
+    expect(seen.at(-1)).toBe('Thread 2') // the two opened first have gone
+    service.saveBatch({ ...service.settings().batch, times: ['13:00'] })
+    gmail.add(rawMail({ subject: 'Held' }), { arrived: new Date(clock), thread: 900n })
+    clock += 60_000
+    await service.syncAll()
+    expect(service.thread(ME, '900')).toEqual([]) // nothing to open yet, so nothing is seen
+    clock = at(13, 1)
+    expect(service.list({ kind: 'recent' }, 500).map((row) => row.subject)).not.toContain('Held')
+    service.removeAccount(ME)
+    await signedIn()
+    expect(service.list({ kind: 'recent' }, 500)).toEqual([])
+  })
+
   it('keeps which entries the sidebar shows and their order, made whole whatever was saved', () => {
     expect(service.settings().sidebar.hidden).toEqual([])
     expect(service.settings().sidebar.order.slice(0, 4)).toEqual(['today', 'unread', 'starred', 'pinned'])
     service.saveProfile({ sidebar: { order: ['sent', 'today', 'nonsense', 'sent'] as never, hidden: ['spam', 'spam', 'x'] as never } })
     const saved = service.settings().sidebar
-    expect(saved.order.slice(0, 3)).toEqual(['sent', 'today', 'unread'])
+    expect(saved.order.slice(0, 4)).toEqual(['sent', 'recent', 'today', 'unread'])
     expect(saved.hidden).toEqual(['spam'])
-    expect(new Set(saved.order).size).toBe(16)
+    expect(new Set(saved.order).size).toBe(17)
     service.saveProfile({ theme: 'dark' }) // another setting leaves it be
     expect(service.settings().sidebar).toEqual(saved)
     // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.

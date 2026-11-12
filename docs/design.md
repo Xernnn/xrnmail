@@ -83,6 +83,10 @@ six seconds for Undo before setting off; everything else goes straight away.
 - A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
   means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
   a pinned thread keeps its place in every other list.
+- Recently Seen is this laptop's own as well (`recent`, by thread, with when it was last opened). The
+  page opens a thread through the same call whatever list it's in, and that call notes it, except
+  from Recently Seen itself, so the list doesn't reorder under the pointer or under j and k. The
+  newest hundred stay. It lists threads from everywhere but Trash and Spam, as Pinned does.
 - A muted sender's mail is left out by both things that announce mail: a sync that finds mail
   already due neither counts nor names it, and a delivery counts only what the others sent. It
   lands, and refreshes the list, like any other.

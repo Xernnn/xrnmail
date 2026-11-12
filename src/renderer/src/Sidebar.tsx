@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, ListChecks, Mail, Mails, OctagonAlert,
+  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
 import { arranged, cleanSidebar, moved, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
@@ -35,6 +35,7 @@ const ENTRIES: Record<SidebarEntry, { label: string; icon: LucideIcon; target: V
   trash: { label: 'Trash', icon: Trash2, target: { kind: 'trash' } },
   archive: { label: 'Archive', icon: Check, target: { kind: 'archive' }, gathered: true },
   sent: { label: 'Sent', icon: Send, target: { kind: 'sent' }, gathered: true },
+  recent: { label: 'Recently Seen', icon: History, target: { kind: 'recent' } },
   subscriptions: { label: 'Subscriptions', icon: ListChecks, target: { kind: 'subscriptions' } },
   ...Object.fromEntries(ASSISTANT.map(([section, label, icon]) => [section, { label, icon, target: { kind: 'assistant', section } }])) as
     Record<AssistantSection, { label: string; icon: LucideIcon; target: View }>

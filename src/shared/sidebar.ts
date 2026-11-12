@@ -2,7 +2,7 @@
  *  The inbox, the accounts and their labels above them stay as they are. */
 
 /** The gathered folders, as they start out. */
-export const SIDEBAR_FOLDERS = ['today', 'unread', 'starred', 'pinned', 'snoozed', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent'] as const
+export const SIDEBAR_FOLDERS = ['today', 'unread', 'starred', 'pinned', 'snoozed', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'recent'] as const
 /** What the Assistant found, as it starts out. */
 export const SIDEBAR_ASSISTANT = ['subscriptions', 'travel', 'packages', 'money', 'events'] as const
 export const SIDEBAR_GROUPS = [SIDEBAR_FOLDERS, SIDEBAR_ASSISTANT] as const

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Flag, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Eraser, Flag, History, Inbox, Mail, MailOpen, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftEdit, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SwipeAction, ThreadRef, ThreadRow
@@ -60,7 +60,7 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 
 const TITLES: Record<string, string> = {
   today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
-  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search'
+  drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search', recent: 'Recently Seen'
 }
 /** With several accounts, these gather every account's. */
 const GATHERED = ['drafts', 'sent', 'archive']
@@ -210,7 +210,8 @@ export function App(): ReactNode {
     if (!open) return setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
-      let found = await window.mail.thread(open.account, open.thread, bins)
+      // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
+      let found = await window.mail.thread(open.account, open.thread, bins, SOLO !== null || active.kind !== 'recent')
       if (SOLO && found.length === 0) {
         // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
         // what sent it there is never out of reach.
@@ -480,6 +481,17 @@ export function App(): ReactNode {
       const unread = (await window.mail.list(target, WHOLE_LIST)).filter((r) => r.unread > 0).map((r) => ({ account: r.account, thread: r.thread }))
       if (unread.length === 0) say('Nothing unread there')
       else await run(unread, { kind: 'read' }, 'Marked as read')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  /** What was opened is this laptop's own record, so clearing it asks first and can't be undone. */
+  const clearRecent = async (): Promise<void> => {
+    if (!await ask({ title: 'Clear Recently Seen?', note: 'Threads you open from now on are listed again.', action: 'Clear' })) return
+    try {
+      await window.mail.clearRecent()
+      say('Recently Seen cleared')
     } catch (e) {
       say(problem(e))
     }
@@ -860,6 +872,7 @@ export function App(): ReactNode {
               {emptyList && !firstRead && (
                 searching ? <Empty icon={SearchX} title="Nothing found" note="Search covers the mail kept on this laptop." />
                   : active.kind === 'inbox' && active.focus !== 'other' ? <Empty icon={Check} title="Nothing here" note="You're all caught up." />
+                  : active.kind === 'recent' ? <Empty icon={History} title="Nothing seen yet" note="Threads you open are listed here, the last one first." />
                   : <Empty icon={Inbox} title="Nothing here" />
               )}
             </div>
@@ -905,6 +918,7 @@ export function App(): ReactNode {
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
           items={[
             ...(sideMenu.target ? [{ label: 'Mark all as read', icon: MailOpen, run: () => void markAllRead(sideMenu.target as ListQuery) }] : []),
+            ...(sideMenu.target?.kind === 'recent' ? [{ label: 'Clear Recently Seen', icon: Eraser, run: () => void clearRecent() }] : []),
             { label: 'Edit Menu', icon: SlidersHorizontal, run: () => setEditingMenu(true) }
           ]} />
       )}
