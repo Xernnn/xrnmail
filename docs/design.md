@@ -376,7 +376,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   labels), the gathered folders in Edison's order, then the Assistant's lists. Right-clicking a place
   offers to mark all of it read, which asks the store for the whole list, not the rows on screen.
   Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
-  moved, by their arrows or by dragging, each within its own list. The choice is a setting
+  moved, by their arrows or by dragging, each within its own list. The arrows sit one over the
+  other so a name keeps its room: side by side, with the scrollbar a list with labels has, they cut
+  "Recently Seen" and "Bills & Receipts" short at the sidebar's own width. The choice is a setting
   (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
   up after the one it follows, shown, in a choice saved before it existed. Each account's own labels
   or folders are switches there too, kept by account in the same setting: an order among siblings,
@@ -398,7 +400,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   edge, six pixels wide so it reads at a glance; the reader puts the same bar beside the subject. A swipe is a short one or a long one each way: `swipeAction` decides from
   how far the row went.
 - `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
-  the foot.
+  the foot. A message's details float under its header, as tall as what's visible of the thread
+  allows and scrolling inside themselves past that; a message near the foot of a short window
+  scrolls up first, with room added at the thread's end for it, so there's space to read them.
 - A thread or a draft can have a window of its own (`showSolo` in the main process, `shared/solo.ts`
   for what its address says). It's `App` again, drawing only the reader or only the composer. The
   main window lets the thread go when it's opened there: two readers would each mark it read

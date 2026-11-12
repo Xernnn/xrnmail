@@ -561,6 +561,46 @@ test('the details under "To: me": who, when, where, what the receiving server fo
   expect(gmail.writes().filter((c) => !c.startsWith('SELECT') && !/\\Seen/.test(c))).toEqual([])
 })
 
+test('the details stay inside the reader on a short window, scrolling inside themselves', async () => {
+  run = await launch({ size: [1180, 480] })
+  const { page, gmail } = run
+  const headers = ['Cc: Linh Pham <linh@example.com>', 'Reply-To: Help <help@shop.example>', 'List-Id: "Shop News" <news.shop.example>', 'List-Unsubscribe: <mailto:leave@shop.example>']
+  // Everything the panel can say, so it's taller than what a short window shows of the thread.
+  const top = [
+    'Delivered-To: me+shop@example.com',
+    'Received: from mail.shop.example (mail.shop.example [192.0.2.1]) by mx.google.com with ESMTPS id 1 (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)',
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@shop.example; spf=pass smtp.mailfrom=bounce@mail.shop.example; dmarc=pass header.from=shop.example'
+  ].join('\n')
+  const thread = 7_100_000_000_000_000_000n
+  for (let i = 1; i <= 6; i++) {
+    const from = 'Shop support@bank.example <news@shop.example>'
+    gmail.add(`${top}\n${rawMail({ subject: 'Plans', from, text: `Message ${i}`, date: earlier(30 - i), headers })}`, { arrived: earlier(10 - i), thread, flags: ['\\Seen'] })
+  }
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.locator('.threads').getByText('Plans').click()
+  const open = page.locator('.message.open').last()
+  await expect(open).toContainText('Message 6')
+  await open.getByRole('button', { name: /^To:/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Message details' })
+  await expect(panel).toContainText('Written to')
+  const inside = async (): Promise<{ top: number; bottom: number; visibleTop: number; visibleBottom: number; scrolls: boolean }> =>
+    panel.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const seen = (el.closest('.messages') as HTMLElement).getBoundingClientRect()
+      return { top: box.top, bottom: box.bottom, visibleTop: seen.top, visibleBottom: Math.min(seen.bottom, window.innerHeight), scrolls: el.scrollHeight > el.clientHeight }
+    })
+  await expect.poll(async () => { const at = await inside(); return at.bottom <= at.visibleBottom }).toBe(true)
+  const at = await inside()
+  expect(at.top).toBeGreaterThanOrEqual(at.visibleTop)
+  if (at.scrolls) {
+    // What doesn't fit is in reach by scrolling the panel, not the window.
+    await panel.evaluate((el) => { el.scrollTop = el.scrollHeight })
+    const last = await panel.locator('dd').last().boundingBox()
+    expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(at.bottom + 1)
+  }
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -880,6 +920,32 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
   expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
+})
+
+test('Edit Menu: every entry\'s whole name fits beside its switch and arrows, in both themes', async () => {
+  // A window short enough for the list to scroll, as most are once an account has labels: the
+  // scrollbar takes its width from the names.
+  run = await launch({ size: [1280, 640] })
+  const { page, gmail } = run
+  gmail.labels = ['Receipts', 'Travel plans', 'Work', 'Family', 'School']
+  gmail.add(rawMail({ subject: 'One' }), { arrived: earlier(5) })
+  await signIn(run)
+  const side = page.locator('.sidebar')
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate((chosen) => window.mail.saveProfile({ theme: chosen }), theme)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await side.locator('.sidebar-foot .status').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+    await expect(side.getByRole('button', { name: 'Done' })).toBeVisible()
+    expect((await side.boundingBox())?.width).toBe(250) // the width it starts at
+    expect(await side.locator('.sidebar-scroll').evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true)
+    // A name that's cut is wider than the room it has: "Recently Seen" came out as "Recently S…".
+    const cut = await side.locator('.nav-edit > label .grow').evaluateAll((names) =>
+      names.filter((name) => name.scrollWidth > name.clientWidth).map((name) => name.textContent))
+    expect(cut).toEqual([])
+    await expect(side.getByRole('button', { name: 'Move Recently Seen up' })).toBeVisible()
+    await side.getByRole('button', { name: 'Cancel' }).click()
+  }
 })
 
 test('Edit Menu: an account\'s own labels are hidden and moved there, and New Label makes one on the server', async () => {

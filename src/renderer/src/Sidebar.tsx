@@ -79,6 +79,18 @@ export function AccountFace({ account, size = 18 }: { account: AccountView; size
   )
 }
 
+/** Up and down for an entry being arranged, one over the other, so they take the room of one
+ *  button and leave the rest to its name. Side by side, with the scrollbar a long list has, they
+ *  cut "Recently Seen" and "Bills & Receipts" short at the sidebar's own width. */
+function MoveButtons(props: { name: string; first: boolean; last: boolean; up(): void; down(): void }): ReactNode {
+  return (
+    <span className="nav-move">
+      <button className="icon" aria-label={`Move ${props.name} up`} disabled={props.first} onClick={props.up}><ChevronUp size={13} aria-hidden="true" /></button>
+      <button className="icon" aria-label={`Move ${props.name} down`} disabled={props.last} onClick={props.down}><ChevronDown size={13} aria-hidden="true" /></button>
+    </span>
+  )
+}
+
 export function Sidebar(props: {
   accounts: AccountView[]
   overview: Overview | null
@@ -268,15 +280,14 @@ export function Sidebar(props: {
                           const [account, path] = JSON.parse(e.dataTransfer.getData(LABEL) || '[]') as [string?, string?]
                           if (account === a.email && path) setMine(movedLabel(names, mine, path, row.path))
                         }}>
-                        <label className="grow">
+                        <label className="grow" title={row.path}>
                           <input type="checkbox" checked={row.shown} onChange={() => setMine(shownLabel(mine, row.path, !row.shown))} aria-label={`Show ${row.path}`} />
                           <Icon className="nav-icon" size={16} aria-hidden="true" />
                           <span className={row.hidden && row.shown ? 'grow muted' : 'grow'}>{row.name}</span>
                         </label>
-                        <button className="icon" aria-label={`Move ${row.path} up`} disabled={at <= 0}
-                          onClick={() => setMine(movedLabel(names, mine, row.path, siblings[at - 1] ?? row.path))}><ChevronUp size={14} aria-hidden="true" /></button>
-                        <button className="icon" aria-label={`Move ${row.path} down`} disabled={at === siblings.length - 1}
-                          onClick={() => setMine(movedLabel(names, mine, row.path, siblings[at + 1] ?? row.path))}><ChevronDown size={14} aria-hidden="true" /></button>
+                        <MoveButtons name={row.path} first={at <= 0} last={at === siblings.length - 1}
+                          up={() => setMine(movedLabel(names, mine, row.path, siblings[at - 1] ?? row.path))}
+                          down={() => setMine(movedLabel(names, mine, row.path, siblings[at + 1] ?? row.path))} />
                         <GripHorizontal className="nav-grip" size={15} aria-hidden="true" />
                       </li>
                     )
@@ -316,10 +327,9 @@ export function Sidebar(props: {
                           <Icon className="nav-icon" size={16} aria-hidden="true" />
                           <span className="grow">{label}</span>
                         </label>
-                        <button className="icon" aria-label={`Move ${label} up`} disabled={at === 0}
-                          onClick={() => setDraft(moved(draft, entry, list[at - 1] ?? entry))}><ChevronUp size={14} aria-hidden="true" /></button>
-                        <button className="icon" aria-label={`Move ${label} down`} disabled={at === list.length - 1}
-                          onClick={() => setDraft(moved(draft, entry, list[at + 1] ?? entry))}><ChevronDown size={14} aria-hidden="true" /></button>
+                        <MoveButtons name={label} first={at === 0} last={at === list.length - 1}
+                          up={() => setDraft(moved(draft, entry, list[at - 1] ?? entry))}
+                          down={() => setDraft(moved(draft, entry, list[at + 1] ?? entry))} />
                         <GripHorizontal className="nav-grip" size={15} aria-hidden="true" />
                       </li>
                     )

@@ -217,18 +217,19 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 }
 .compose:hover { box-shadow: 0 0 0 0.5px rgb(16 24 40 / 0.08), 0 2px 5px rgb(16 24 40 / 0.18), 0 6px 16px rgb(16 24 40 / 0.1); }
 .compose:active { transform: translateY(1px); }
-.sidebar-scroll { flex: 1; min-height: 0; padding: 4px 0 12px; overflow-y: auto; }
+.sidebar-scroll { flex: 1; min-height: 0; padding: 4px 0 12px; overflow-y: auto; scrollbar-width: thin; }
 .nav-group, .nav-folders { display: grid; grid-template-columns: minmax(0, 1fr); }
 .nav-item { display: flex; align-items: center; gap: 13px; width: 100%; height: 34px; padding: 0 16px 0 20px; color: var(--nav); overflow: hidden; white-space: nowrap; }
 .nav-item .grow { overflow: hidden; text-overflow: ellipsis; }
 .nav-editing { margin: 0; padding: 0; list-style: none; }
-.nav-edit { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px 0 16px; color: var(--nav); white-space: nowrap; cursor: grab; }
-.nav-edit > label { flex: 1; display: flex; align-items: center; gap: 11px; min-width: 0; height: 100%; margin: 0; color: inherit; font-size: inherit; cursor: inherit; }
+.nav-edit { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 8px 0 16px; color: var(--nav); white-space: nowrap; cursor: grab; }
+.nav-edit > label { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 0; height: 100%; margin: 0; color: inherit; font-size: inherit; cursor: inherit; }
 .nav-edit > label .grow { overflow: hidden; text-overflow: ellipsis; }
 .nav-edit input { appearance: none; flex: none; position: relative; width: 18px; height: 18px; margin: 0; padding: 0; border: 1.5px solid var(--outline); border-radius: 50%; background: var(--bg); cursor: pointer; }
 .nav-edit input:checked { border-color: var(--accent); background: var(--accent); }
 .nav-edit input:checked::before { content: ""; position: absolute; inset: 0; background: #fff; -webkit-mask: var(--tick) center / 10px no-repeat; mask: var(--tick) center / 10px no-repeat; }
-.nav-edit .icon { width: 22px; height: 22px; color: var(--nav-icon); }
+.nav-move { flex: none; display: grid; grid-template-rows: 16px 16px; }
+.nav-edit .icon { width: 20px; height: 16px; border-radius: 4px; color: var(--nav-icon); }
 .nav-edit .icon:disabled { opacity: 0.3; }
 .nav-edit.drop { box-shadow: inset 0 2px 0 var(--accent); }
 .nav-new { display: block; padding: 6px 16px 4px 45px; font-weight: 600; }
@@ -437,7 +438,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .icon.on svg { fill: currentColor; }
 .anchor { position: relative; }
 .back { display: none; }
-.messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px 28px; overflow-y: auto; }
+.messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px calc(28px + var(--details-room, 0px)); overflow-y: auto; }
 .thread-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }
 .thread-head.marked { padding-left: 18px; }
 .account-bar { position: absolute; left: 0; top: 6px; bottom: 14px; width: 6px; border-radius: 3px; }

@@ -37,6 +37,35 @@ const word = (result: string): string => WORDS[result] ?? result
 
 /** A sender's dates more than this far from the server's are worth showing beside them. */
 const DATE_GAP_MS = 10 * 60_000
+/** What's kept clear under the panel, inside the reader. */
+const PANEL_MARGIN = 12
+/** Less room than this under the message, and the thread scrolls to make it. */
+const PANEL_LEAST = 240
+/** As tall as it gets, however much room there is. */
+const PANEL_MOST = 620
+
+/** Makes the panel as tall as it may be: down to the foot of what's visible of the thread, and no
+ *  further. A message near the bottom of a short window is scrolled up first, so there's room to
+ *  read it in; past that, the panel scrolls inside itself. Its height is let go of while this is
+ *  worked out, since the thread can only scroll as far as the panel reaches. */
+function fitPanel(panel: HTMLElement): void {
+  const scroller = panel.closest<HTMLElement>('.messages')
+  panel.style.maxHeight = ''
+  const foot = (): number => Math.min(scroller?.getBoundingClientRect().bottom ?? window.innerHeight, window.innerHeight) - PANEL_MARGIN
+  const wanted = Math.min(panel.scrollHeight, PANEL_LEAST)
+  const short = wanted - (foot() - panel.getBoundingClientRect().top)
+  if (scroller && short > 0) {
+    // The panel floats over the thread, and once it's fitted it no longer reaches past its foot, so
+    // a thread too short to scroll that far is given the room at its end while the panel is open.
+    const had = parseFloat(scroller.style.getPropertyValue('--details-room')) || 0
+    const padding = parseFloat(getComputedStyle(scroller).paddingBottom) - had
+    const end = (scroller.lastElementChild?.getBoundingClientRect().bottom ?? 0) - scroller.getBoundingClientRect().top + scroller.scrollTop
+    const target = scroller.scrollTop + short
+    scroller.style.setProperty('--details-room', `${Math.max(0, target - (end + padding - scroller.clientHeight))}px`)
+    scroller.scrollTop = target
+  }
+  panel.style.maxHeight = `${Math.max(120, Math.min(PANEL_MOST, foot() - panel.getBoundingClientRect().top))}px`
+}
 
 /** One address: its name and address to select or copy, and a menu of what can be done with it. */
 function Person(props: {
@@ -123,8 +152,25 @@ export function Details(props: {
   }, [m.id])
 
   useLayoutEffect(() => {
-    box.current?.focus()
+    box.current?.focus({ preventScroll: true })
   }, [])
+
+  // Measured again whenever what it says grows, as it does once how it was delivered has been
+  // read, and whenever the window changes.
+  useLayoutEffect(() => {
+    const panel = box.current
+    if (!panel) return undefined
+    const fit = (): void => fitPanel(panel)
+    fit()
+    const growing = new ResizeObserver(fit)
+    for (const part of panel.children) growing.observe(part)
+    window.addEventListener('resize', fit)
+    return () => {
+      growing.disconnect()
+      window.removeEventListener('resize', fit)
+      panel.closest<HTMLElement>('.messages')?.style.removeProperty('--details-room')
+    }
+  }, [facts])
 
   useEffect(() => {
     const away = (event: MouseEvent): void => {
