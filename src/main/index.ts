@@ -1,7 +1,7 @@
-import { app, BrowserWindow, clipboard, dialog, Menu, nativeTheme, powerMonitor, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, powerMonitor, screen, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
@@ -15,6 +15,7 @@ import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
+import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
@@ -91,6 +92,56 @@ const domainRecords: DomainRecords = {
       return null
     }
   }
+}
+
+/** A domain's TXT records, each joined from its parts. A name with none answers none. */
+async function txt(name: string): Promise<string[]> {
+  try {
+    return (await dns.resolveTxt(name)).map((parts) => parts.join(''))
+  } catch (e) {
+    if (['ENOTFOUND', 'ENODATA', 'NXDOMAIN'].includes((e as { code?: string }).code ?? '')) return []
+    throw e
+  }
+}
+
+/** The UI tests' faces, from the files XRNMAIL_PICTURES names, so no test reaches the network. Each
+ *  lookup is noted where a test can read it. */
+function testSources(spec: string): PictureSources {
+  const files = JSON.parse(spec) as Record<string, string>
+  const asked: string[] = []
+  Object.assign(globalThis, { pictureLookups: asked, faceAsks: [] })
+  const read = async (key: string): Promise<Picture | null> => {
+    asked.push(key)
+    const file = files[key]
+    if (!file) return null
+    const bytes = readFileSync(file)
+    const type = sniff(bytes, true)
+    return type ? { type, bytes } : null
+  }
+  return { photo: (address) => read(`photo:${address}`), logo: (domain) => read(`logo:${domain}`) }
+}
+
+/** PNG and JPEG are drawn again here, by Chromium's own decoder: smaller, and with nothing in them
+ *  but pixels. One it can't read is no picture. The other kinds are left for the page's <img>. */
+function redraw(picture: Picture, side = 128, square = false): Picture | null {
+  if (picture.type !== 'image/png' && picture.type !== 'image/jpeg') return picture
+  let image = nativeImage.createFromBuffer(picture.bytes)
+  if (image.isEmpty()) return null
+  const { width, height } = image.getSize()
+  if (square && width !== height) {
+    const edge = Math.min(width, height)
+    image = image.crop({ x: Math.floor((width - edge) / 2), y: Math.floor((height - edge) / 2), width: edge, height: edge })
+  }
+  const size = image.getSize()
+  if (size.width > side || size.height > side) image = image.resize(size.width >= size.height ? { width: side, quality: 'best' } : { height: side, quality: 'best' })
+  return { type: 'image/png', bytes: image.toPNG() }
+}
+
+/** A chosen photo can be large, but not this large. */
+const MOST_CHOSEN = 10 * 1024 * 1024
+
+const tellFaces = (): void => {
+  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces')
 }
 
 function bringForward(shown: BrowserWindow | null): void {
@@ -311,7 +362,7 @@ function openedFolder(): string {
   return openedFiles
 }
 
-function register(service: MailService): void {
+function register(service: MailService, avatars: Avatars): void {
   handle('accounts', () => service.accounts())
   handle('addAccount', (account: unknown) => service.addAccount(newAccount(account)))
   handle('startMicrosoft', async (email: unknown, clientId: unknown) => {
@@ -321,7 +372,11 @@ function register(service: MailService): void {
   })
   handle('finishMicrosoft', () => service.finishMicrosoft())
   handle('detectProvider', (email: unknown) => service.detectProvider(text(email, 320)))
-  handle('removeAccount', (email: unknown) => service.removeAccount(text(email, 320)))
+  handle('removeAccount', (email: unknown) => {
+    const account = text(email, 320)
+    service.removeAccount(account)
+    avatars.forget(account)
+  })
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
@@ -382,6 +437,35 @@ function register(service: MailService): void {
     if (!/^[^\s@<>"'`;|&$\\]+@[^\s@<>"'`;|&$\\]+$/.test(value)) throw new Error("That isn't an address.")
     clipboard.writeText(value)
   })
+  handle('faces', (addresses: unknown, lookUp: unknown) => {
+    if (!Array.isArray(addresses) || addresses.length > 500) throw new Error('Bad request')
+    const asked = addresses.map((a) => text(a, 320))
+    // The UI tests check which asks could look something up.
+    if (test['XRNMAIL_PICTURES']) (globalThis as unknown as { faceAsks?: [string[], boolean][] }).faceAsks?.push([asked, lookUp === true])
+    return avatars.faces(asked, lookUp === true)
+  })
+  handle('choosePhoto', async (account: unknown) => {
+    const email = text(account, 320)
+    if (!service.accounts().some((a) => a.email === email)) throw new Error('That account is gone.')
+    const options = { properties: ['openFile'] as 'openFile'[], filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg'] }] }
+    const parent = dialogParent()
+    const choice = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
+    const path = choice.canceled ? undefined : choice.filePaths[0]
+    if (!path) return false
+    if (statSync(path).size > MOST_CHOSEN) throw new Error('Pick a picture under 10 MB.')
+    const bytes = readFileSync(path)
+    const type = sniff(bytes)
+    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true) : null
+    if (!drawn) throw new Error("That picture couldn't be read. Pick a PNG or JPEG.")
+    avatars.choose(email, drawn)
+    tellFaces()
+    return true
+  })
+  handle('removePhoto', (account: unknown) => {
+    avatars.forget(text(account, 320))
+    tellFaces()
+  })
+  handle('photos', () => service.accounts().map((a) => a.email).filter((email) => avatars.chosen(email)))
   handle('drafts', () => service.drafts())
   handle('openThreadWindow', (account: unknown, thread: unknown, bins: unknown) =>
     showSolo({ kind: 'thread', account: text(account, 320), thread: text(thread, 64), bins: bins === true }))
@@ -570,6 +654,16 @@ void app.whenReady().then(() => {
   lockDownNetwork()
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
+  // The UI tests look nothing up unless they hand over pictures of their own.
+  const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt)
+  const avatars = new Avatars({
+    dir: join(app.getPath('userData'), 'faces'),
+    sources,
+    now: () => Date.now(),
+    found: tellFaces,
+    redraw: (picture) => redraw(picture),
+    ownerOf: (address) => mail?.ownerOf(address) ?? null
+  })
   const service = new MailService({
     store,
     secrets,
@@ -582,6 +676,7 @@ void app.whenReady().then(() => {
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),
     changed: tellPage,
+    noticed: (addresses) => avatars.want(addresses),
     landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, showWindow),
     summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
       showWindow()
@@ -590,7 +685,7 @@ void app.whenReady().then(() => {
     earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
   })
   mail = service
-  register(service)
+  register(service, avatars)
   Menu.setApplicationMenu(appMenu({ command: tellCommand, sync: () => background(service.syncAll()) }))
   setUpSpelling()
   // Tests run many at once, and a tray icon per run would only get in the way.

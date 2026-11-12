@@ -1584,6 +1584,40 @@ describe('a message\'s details', () => {
   })
 })
 
+describe('faces', () => {
+  it('names the senders of new mail as it arrives, so their faces are looked up then and not when it\'s read', async () => {
+    const noticed = vi.fn()
+    gmail.add(rawMail({ subject: 'Old', from: 'Old Friend <old@example.com>' }), { arrived: new Date(at(8)) })
+    service = make({ noticed })
+    await signedIn()
+    expect(noticed).not.toHaveBeenCalled() // there before the account was added
+    service.block('pest@example.com')
+    gmail.add(rawMail({ subject: 'Hello', from: 'Ada <Ada@Example.com>' }), { arrived: new Date(at(10, 1)) })
+    gmail.add(rawMail({ subject: 'Again', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(10, 2)) })
+    gmail.add(rawMail({ subject: 'Junk', from: 'Pest <pest@example.com>' }), { arrived: new Date(at(10, 3)) })
+    clock = at(10, 5)
+    await service.syncAll()
+    expect(noticed.mock.calls).toEqual([[['ada@example.com']]])
+    noticed.mockClear()
+    const row = store.list({ kind: 'all' }, clock).find((r) => r.subject === 'Old')
+    service.thread(ME, row?.thread ?? '')
+    expect(noticed).not.toHaveBeenCalled()
+  })
+
+  it('marks a row whose newest message has a sender warning, so it shows initials', async () => {
+    gmail.add(rawMail({ subject: 'Locked', from: 'Bank <x@bank-login.example>', headers: ['Authentication-Results: mx.example; dmarc=fail'] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Fine', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(9)) })
+    await signedIn()
+    expect(Object.fromEntries(service.list({ kind: 'inbox' }).map((r) => [r.subject, r.warned]))).toEqual({ Locked: true, Fine: false })
+  })
+
+  it('knows which of your accounts an address is, aliases too', async () => {
+    await signedIn()
+    service.saveProfile({ identities: { [ME]: { name: '', signature: '', aliases: ['Alias@Example.net'], color: '', notify: true } } })
+    expect([service.ownerOf('ME@example.com'), service.ownerOf('alias@example.net'), service.ownerOf('ada@example.com')]).toEqual([ME, ME, null])
+  })
+})
+
 describe('going back over old previews', () => {
   it('remakes them once for each version', async () => {
     gmail.add(rawMail({ subject: 'Reply', text: 'Fresh words.\n\nOn Tue, Mai <mai@example.com> wrote:\n> Older words' }), { arrived: new Date(at(8)) })

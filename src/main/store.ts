@@ -553,7 +553,7 @@ export class Store {
   private threadRows(where: string, params: SQLInputValue[], now: number, limit: number, options: ThreadOptions = {}): ThreadRow[] {
     const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0 } = options
     const rows = this.all(
-      `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, t.latest AS date,
+      `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, m.warnings, t.latest AS date,
               t.n, t.unread, t.attachment, t.starred, t.delivered, s.until AS snoozed, p.at AS pinned
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
                     SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred,
@@ -584,7 +584,8 @@ export class Store {
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
       facts: factsFrom(r['facts']),
       pinned: r['pinned'] != null,
-      summaryAt: r['delivered'] == null ? null : Number(r['delivered'])
+      summaryAt: r['delivered'] == null ? null : Number(r['delivered']),
+      warned: parseList<SenderWarning>(r['warnings']).length > 0
     }))
   }
 

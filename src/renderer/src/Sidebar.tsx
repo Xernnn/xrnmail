@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import {
   CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
@@ -6,6 +6,7 @@ import {
 import { arranged, arrangedLabels, cleanSidebar, moved, movedLabel, shownLabel, siblingsOf, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
 import { ago, mailbox } from './format'
+import { useFace } from './pictures'
 
 export type View = ListQuery | { kind: 'drafts'; account?: string } | { kind: 'subscriptions'; side?: 'left' | 'summary' }
 
@@ -65,6 +66,17 @@ const savedClosed = (): Set<string> => {
   } catch {
     return new Set()
   }
+}
+
+/** An account's photo, ringed in its colour, or its first letter on its colour. */
+export function AccountFace({ account, size = 18 }: { account: AccountView; size?: number }): ReactNode {
+  const face = useFace(account.email, true)
+  const style = { background: account.color, width: size, height: size, '--ring': account.color } as CSSProperties
+  return (
+    <span className={face ? 'account-face photo' : 'account-face'} style={style} aria-hidden="true">
+      {face ? <img src={face.url} alt="" draggable={false} /> : account.email.slice(0, 1).toUpperCase()}
+    </span>
+  )
 }
 
 export function Sidebar(props: {
@@ -190,7 +202,7 @@ export function Sidebar(props: {
     const id = `account:${a.email}`
     // One account shows its labels from the start; several start folded, or the list would never end.
     const open = closed.has(id) === many
-    const face = <span className="account-face" style={{ background: a.color }} aria-hidden="true">{a.email.slice(0, 1).toUpperCase()}</span>
+    const face = <AccountFace account={a} />
     const arrow = <ChevronRight className="nav-chevron" size={14} aria-hidden="true" />
     return (
       <div className="nav-account" key={a.id}>

@@ -242,6 +242,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .nav-item.on .nav-icon { color: var(--text); }
 .nav-count { flex: none; min-width: 22px; color: var(--nav-icon); font-size: 11.5px; font-weight: 600; text-align: center; }
 .inbox-mark, .account-face { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; margin: 0 -1px; border-radius: 50%; color: #fff; }
+/* A photo keeps the account's colour as a ring, so the sidebar still says which is which. */
+.account-face.photo { overflow: hidden; box-shadow: 0 0 0 2px var(--ring); background: var(--surface-2) !important; }
+.account-face img { width: 100%; height: 100%; object-fit: cover; }
 .inbox-mark { background: var(--accent); }
 .account-face { font-size: 10px; font-weight: 700; line-height: 1; }
 .nav-account-row { position: relative; }
@@ -263,6 +266,11 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 /* Faces, tiles and empty places */
 
 .avatar { position: relative; flex: none; display: inline-grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 600; line-height: 1; letter-spacing: 0.02em; user-select: none; }
+.avatar.picture { overflow: hidden; background: var(--surface-2); }
+.avatar.picture img { width: 100%; height: 100%; object-fit: cover; }
+/* Logos are made for white, in either theme. A site's icon is often small, so it sits inside a margin. */
+.avatar.logo { background: #fff; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.avatar.logo.icon img { width: 62%; height: 62%; object-fit: contain; }
 .fact-tile { flex: none; display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; }
 .fact .fact-tile { width: 38px; height: 38px; }
 .fact-package { background: #c8651f; } .fact-travel { background: #2b7fb0; } .fact-money { background: #16878a; } .fact-event { background: #8150c9; }

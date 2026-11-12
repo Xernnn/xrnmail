@@ -77,6 +77,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
   `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
+- **Faces:** a sender's photo, or their company's logo, where one exists, as in Edison Mail, and
+  coloured initials otherwise. Your own accounts show your photo in the sidebar and Settings, from
+  Gravatar or one you choose there. Who is asked about whom, and when, is under
+  [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
 - **Safe with hostile mail:** no scripts, and no remote images until you ask. See
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
@@ -142,6 +146,42 @@ to wait for.
 - **In batches** mail is watched the same way, and then waits for its time. The Subscription Summary
   waits for its own time either way.
 
+## Faces, and what they tell whom
+
+Finding a picture for someone means asking somebody else, so this is all that's asked, and of whom:
+
+- **Gravatar** (gravatar.com, run by Automattic), for each sender and for your own accounts: the
+  SHA-256 hash of the address, never the address itself, asking for a 96-pixel photo. Gravatar sees
+  your IP address and when you asked, and can tell whose hash it is for an address it already knows.
+- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain: the TXT
+  record `default._bimi.<domain>`, then the same for the company domain above it
+  (`e.shop.example`, then `shop.example`). That's where a company publishes its
+  [BIMI](https://bimigroup.org/) logo.
+- **Whoever hosts that logo**, named in the record, often the company itself or a certificate
+  authority such as DigiCert or Entrust: one fetch of the SVG.
+- **DuckDuckGo's icon service** (`icons.duckduckgo.com`, no account or key; Clearbit's free logo
+  service closed in December 2025), for a company with no BIMI logo: the domain name, for its site's
+  icon. Free mail domains (gmail.com, outlook.com, yahoo.com and the like) never get a logo, so a
+  friend on Gmail doesn't get Gmail's, and nor do your own addresses.
+
+When: as new mail from someone arrives here, or when they're first named in a list (a row of the
+inbox, search, Subscriptions and the rest). Never when a message is opened, so nobody learns when
+you read anything. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
+and a lookup that failed is tried again after 6 hours, so each person and company is asked about
+rarely. Every request is https to a public name, with no cookies or redirects, 8 seconds and 200 KB
+at most (64 KB for SVG), and what comes back has to be a picture by its own bytes. PNG and JPEG are
+drawn again, smaller, by Chromium's decoder in the main process, so nothing but pixels is kept;
+an SVG is only ever shown as an `<img>`, where it can neither run nor fetch anything. Pictures in
+messages are as before: blocked until you ask.
+
+A face proves nothing: anyone can publish one for their own address or domain. Mail with a sender
+warning shows initials, whatever pictures there are.
+
+Your own accounts: Google has no way to get a Google account's profile photo without signing in
+with OAuth. The People API needs it, and the old Picasa address that answered by email was shut down
+in 2019. These accounts sign in with app passwords, so your photo is your Gravatar, or one you choose
+in Settings, Accounts, which stays on this laptop and is sent nowhere.
+
 ## Where it differs from Edison Mail
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
@@ -183,6 +223,8 @@ Done differently:
 - Edison's Focused Inbox is one switch for everything, and in its pictures All Inboxes is split too,
   with All Other beside it. Here the switch (Settings, General) is the same one, but it splits only
   each account's own inbox: All Inboxes shows every account's mail together, Other included.
+- Edison finds faces on servers of its own. Here they come from Gravatar, BIMI and DuckDuckGo's icons,
+  asked from this laptop, and a sender with a warning keeps their initials.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
@@ -193,8 +235,6 @@ Done differently:
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
 - No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
-- Senders show as coloured initials, never photos or company logos, because fetching one would tell
-  someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
   will miss things: a wrong entry is worse than a missing one.
 - Search covers the mail kept on this laptop (90 days by default, up to three years in Settings).

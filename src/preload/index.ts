@@ -43,6 +43,10 @@ const api: MailApi = {
   openAttachment: (message, index) => call('openAttachment', message, index),
   details: (message) => call('details', message),
   copyAddress: (address) => call('copyAddress', address),
+  faces: (addresses, lookUp) => call('faces', addresses, lookUp),
+  choosePhoto: (account) => call('choosePhoto', account),
+  removePhoto: (account) => call('removePhoto', account),
+  photos: () => call('photos'),
   drafts: () => call('drafts'),
   openThreadWindow: (account, thread, bins) => call('openThreadWindow', account, thread, bins),
   openDraftWindow: (id) => call('openDraftWindow', id),
@@ -69,6 +73,11 @@ const api: MailApi = {
     const relay = (_event: IpcRendererEvent): void => listener()
     ipcRenderer.on('changed', relay)
     return () => ipcRenderer.removeListener('changed', relay)
+  },
+  onFaces: (listener) => {
+    const relay = (_event: IpcRendererEvent): void => listener()
+    ipcRenderer.on('faces', relay)
+    return () => ipcRenderer.removeListener('faces', relay)
   },
   onLeaving: (listener) => {
     const relay = (_event: IpcRendererEvent): void => listener()

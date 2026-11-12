@@ -10,7 +10,9 @@ import { problem } from './format'
 import {
   COMMANDS, FIXED, holder, KEY_SETS, keyName, keysOf, rebound, reset, spell, unbindable, type KeyChanges, type KeyCommand, type KeySet
 } from '@shared/keys'
+import { forgetFaces } from './pictures'
 import { AddAccount } from './Setup'
+import { AccountFace } from './Sidebar'
 import { SummarySchedule } from './Summary'
 
 const KEEP_DAYS = [30, 90, 365, 1095]
@@ -32,7 +34,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout undo send pictures images tray background start login',
   notifications: 'new mail tell account mute muted senders unmute quiet',
-  accounts: 'add remove service name alias sends as colour color keep laptop days',
+  accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
@@ -359,20 +361,42 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; muted:
 function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Identities; saveKeep(days: number): void; ask: Ask }): ReactNode {
   const { accounts, settings, saveKeep, ask, ids } = props
   const [adding, setAdding] = useState(false)
+  /** The accounts with a photo chosen here, rather than their Gravatar or none. */
+  const [photos, setPhotos] = useState<string[]>([])
+  const [error, setError] = useState('')
+  useEffect(() => {
+    void window.mail.photos().then(setPhotos)
+  }, [accounts])
+  const photo = async (account: string, choose: boolean): Promise<void> => {
+    setError('')
+    try {
+      if (choose) await window.mail.choosePhoto(account)
+      else await window.mail.removePhoto(account)
+      forgetFaces()
+      setPhotos(await window.mail.photos())
+    } catch (e) {
+      setError(problem(e))
+    }
+  }
   return (
     <>
       <section>
         <h3>Your accounts</h3>
         {accounts.map((a) => (
           <div className="line" key={a.id}>
-            <span className="dot" style={{ background: a.color }} aria-hidden="true" />
+            <AccountFace account={a} size={28} />
             <span className="grow">{a.email} <span className="muted">{a.providerName}</span></span>
+            {photos.includes(a.email)
+              ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
+              : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
             <button className="quiet danger"
               onClick={() => void ask({ title: `Remove ${a.email} from this laptop?`, note: 'The mail stays on the server.', action: 'Remove', danger: true }).then((yes) => { if (yes) void window.mail.removeAccount(a.id) })}>
               Remove
             </button>
           </div>
         ))}
+        {error && <p className="error">{error}</p>}
+        <p className="muted note">Your photo is your Gravatar, or one chosen here, which stays on this laptop.</p>
         {adding ? <AddAccount done={() => setAdding(false)} /> : <button className="quiet" onClick={() => setAdding(true)}>Add account</button>}
       </section>
       {accounts.map((a) => (

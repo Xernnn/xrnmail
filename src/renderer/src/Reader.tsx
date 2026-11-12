@@ -151,7 +151,7 @@ function Message(props: {
     return (
       <article className="message">
         <button className="message-head closed" onClick={toggle} aria-expanded={false}>
-          <Avatar name={m.from.name} address={m.from.address} size={36} />
+          <Avatar name={m.from.name} address={m.from.address} size={36} plain={m.warnings.length > 0} />
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
@@ -165,7 +165,7 @@ function Message(props: {
   return (
     <article className="message open">
       <div className="message-head" onClick={(e) => { if (!(e.target as Element).closest('button, .popover')) toggle() }}>
-        <Avatar name={m.from.name} address={m.from.address} size={44} />
+        <Avatar name={m.from.name} address={m.from.address} size={44} plain={m.warnings.length > 0} />
         <div className="who">
           <div className="who-name">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}

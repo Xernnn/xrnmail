@@ -297,6 +297,33 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **Blocking** matches the `From` address, which a sender writes, so it's a filter for nuisances and not
   a security wall. Mail it catches goes to Trash, where it can still be found.
 
+## Faces
+
+`avatars.ts` finds a picture for an address: the person's Gravatar, then their company's BIMI logo,
+then DuckDuckGo's icon for the company's domain, and keeps what it found, or that it found nothing,
+on disk (`faces/index.json` beside the pictures, readable only by this user): 30 days for a
+picture, 7 for none, 6 hours after a lookup failed. A company is asked about once for all its
+senders. Free mail domains and your own addresses get no logo. An account's chosen photo is kept
+the same way, with no expiry, and wins over its Gravatar on every address of that account.
+
+Each lookup tells someone something, so the rules are about when and how:
+
+- **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
+  mail that arrived after the account was added), and a list's rows, which ask for everyone they
+  name. The reader, the composer's suggestions and the drafts only ask what's already known
+  (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
+  with a sender warning ask nothing for that sender and show initials.
+- **How.** The main process does all of it with Node's own fetch, which the page's network walls
+  don't cover and don't need to. Only https to a public name, GET, no redirects, no cookies, a time
+  limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
+  from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
+- **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again
+  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. An
+  SVG is shown only as an `<img>`, where scripts don't run and nothing loads, never placed in the
+  page. A picture that fails to draw shows initials.
+- **Testing.** The sources are passed in. Unit tests answer from lists, and the UI tests from files
+  named in `XRNMAIL_PICTURES`; without them a test looks nothing up, so no test reaches the network.
+
 ## Secrets
 
 App passwords are encrypted by the system keyring through `safeStorage`. Linux's `basic_text` fallback

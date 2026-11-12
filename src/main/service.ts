@@ -121,6 +121,8 @@ export interface ServiceDeps {
   landed?(count: number, preview?: { from: string; subject: string }): void
   /** A Summary landed: how many messages it brought, and who from. */
   summarized?(count: number, senders: string[]): void
+  /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
+  noticed?(addresses: string[]): void
   post?: typeof fetch
   records?: DomainRecords
   earlyWaitSeconds?: number
@@ -636,6 +638,8 @@ export class MailService {
     let preview = { from: '', subject: '' }
     /** Who sent what a Summary has already brought, found by this pass. */
     const summed: string[] = []
+    /** Who sent new mail, held or not. */
+    const senders: string[] = []
     const blocked: number[] = []
     let source: MailSource | null = null
     try {
@@ -657,8 +661,9 @@ export class MailService {
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
-          if (isVip(mail.from.address, settings.blocked)) blocked.push(id)
-          else if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          if (isVip(mail.from.address, settings.blocked)) return void blocked.push(id)
+          if (mail.from.address) senders.push(mail.from.address)
+          if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
@@ -685,6 +690,7 @@ export class MailService {
     }
     const unwanted = this.store.locate(blocked).map((row) => this.store.visibleState(row.id)).filter((s) => s !== null)
     if (unwanted.length > 0) this.change(email, unwanted, { kind: 'trash' }, this.nextGroup(), 0)
+    if (senders.length > 0) this.deps.noticed?.(unique(senders.map((a) => a.toLowerCase())))
     if (fresh > 0) this.deps.landed?.(fresh, fresh === 1 ? preview : undefined)
     if (summed.length > 0) this.deps.summarized?.(summed.length, unique(summed))
   }
@@ -712,6 +718,12 @@ export class MailService {
 
   private ownAddresses(email: string): string[] {
     return lower([email, ...this.identity(email).aliases])
+  }
+
+  /** The account an address is yours on, if it is one of yours. */
+  ownerOf(address: string): string | null {
+    const who = address.trim().toLowerCase()
+    return this.emails().find((email) => this.ownAddresses(email).includes(who)) ?? null
   }
 
   /** Runs on a timer. Time passing is what delivers a batch and sends what's due, so nothing else

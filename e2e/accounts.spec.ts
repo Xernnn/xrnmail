@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { FakeGmail, rawMail } from '../tests/fake-gmail'
-import { hhmm, launch, later, signIn, syncAndSettle, type Running } from './app'
+import { hhmm, launch, later, ME, signIn, syncAndSettle, type Running } from './app'
+import { png, svgLogo } from './pictures'
 
 /** The real app, with an account on a plain folder server beside a Gmail one where a test needs it. */
 
@@ -190,6 +193,73 @@ test('the account a thread is in shows as a broad bar of its colour, in every li
   await page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Close' }).click()
   await side.getByRole('button', { name: /^All Drafts/ }).click()
   await expect(page.locator('.threads .account-mark')).toHaveCount(1)
+})
+
+test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own photo, and never a lookup for opening a message', async () => {
+  run = await launch({
+    pictures: {
+      'photo:mai@example.com': png(96, [40, 90, 160]),
+      'photo:linh@example.com': png(96, [160, 90, 40]),
+      [`photo:${ME}`]: png(96, [150, 60, 40]),
+      'photo:x@bank-login.example': png(96, [20, 120, 60]),
+      'logo:shop.example': svgLogo('#c2410c', 'S'),
+      'logo:bank-login.example': svgLogo('#1d4ed8', 'B')
+    }
+  })
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Trip', from: 'Linh Pham <linh@example.com>', text: 'Bus at seven?' }), { arrived: earlier(5), thread: 61n })
+  gmail.add(rawMail({ subject: 'Re: Trip', from: 'Mai Tran <mai@example.com>', text: 'Yes!' }), { arrived: earlier(4), thread: 61n })
+  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <news@e.shop.example>' }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Plain', from: 'Bo <bo@example.com>' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'Locked', from: 'Bank <x@bank-login.example>', headers: ['Authentication-Results: mx.example; dmarc=fail'] }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  const face = (subject: string): ReturnType<typeof page.locator> => page.locator('.threads .thread', { hasText: subject }).locator('.avatar')
+  await expect(face('Re: Trip').locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/, { timeout: 15_000 })
+  await expect(face('Re: Trip')).not.toHaveClass(/logo/)
+  await expect(face('Deals').locator('img')).toHaveAttribute('src', /^data:image\/svg\+xml;base64,/)
+  await expect(face('Deals')).toHaveClass(/logo/)
+  await expect(face('Plain')).toHaveText('B') // nobody has a picture for Bo
+  await expect(face('Plain').locator('img')).toHaveCount(0)
+  // A sender with a warning shows initials, whatever pictures there are for their address.
+  await expect(face('Locked')).toHaveText('B')
+  await expect(face('Locked').locator('img')).toHaveCount(0)
+  // Your own account, in the sidebar.
+  await expect(page.locator('.sidebar .account-face img')).toHaveAttribute('src', /^data:image\/png/)
+
+  // Everyone a row names is looked up while it's in the list, so opening the thread shows their faces
+  // and asks for nothing that could be looked up: when it's read is nobody's business.
+  const lookups = (): Promise<string[]> => app.evaluate(() => (globalThis as unknown as { pictureLookups: string[] }).pictureLookups.slice())
+  const asks = (): Promise<[string[], boolean][]> => app.evaluate(() => (globalThis as unknown as { faceAsks: [string[], boolean][] }).faceAsks.slice())
+  await expect.poll(lookups).toContain('photo:linh@example.com')
+  await page.waitForTimeout(500)
+  const [before, askedBefore] = [await lookups(), (await asks()).length]
+  await page.locator('.threads').getByText('Re: Trip').click()
+  await page.locator('.messages').getByText('Bus at seven?').waitFor()
+  await expect(page.locator('.message.open .avatar img')).toHaveCount(2)
+  await page.waitForTimeout(600)
+  expect(await lookups()).toEqual(before)
+  expect((await asks()).slice(askedBefore).filter(([, lookUp]) => lookUp)).toEqual([])
+
+  // A photo of your own, chosen from a file, kept here.
+  const chosen = join(run.savedTo, '..', 'me.png')
+  writeFileSync(chosen, png(400, [200, 160, 20]))
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog
+  }, chosen)
+  const was = await page.locator('.sidebar .account-face img').getAttribute('src')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Accounts' }).click()
+  await page.getByRole('button', { name: `Choose a photo for ${ME}` }).click()
+  await expect(page.getByRole('button', { name: `Remove the photo of ${ME}` })).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(() => page.locator('.sidebar .account-face img').getAttribute('src')).not.toBe(was)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Accounts' }).click()
+  await page.getByRole('button', { name: `Remove the photo of ${ME}` }).click()
+  await expect(page.getByRole('button', { name: `Choose a photo for ${ME}` })).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(() => page.locator('.sidebar .account-face img').getAttribute('src')).toBe(was)
 })
 
 test('the Assistant: parcels, and a Track link that was never in the message', async () => {

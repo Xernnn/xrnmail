@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeGmail } from '../tests/fake-gmail'
 import { FakeSmtp } from '../tests/fake-smtp'
+import { pictures as writePictures } from './pictures'
 
 export const ME = 'me@example.com'
 
@@ -23,13 +24,18 @@ export interface Running {
  *  narrow for three panes, which some tests need. */
 const HEADLESS = process.env['E2E_HEADLESS'] ? ['--ozone-platform=headless', '--ozone-override-screen-size=1920,1080'] : []
 
-/** The app on a throwaway profile, signed in to nothing, with links recorded and not opened. */
-export async function launch(options: { colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number] } = {}): Promise<Running> {
+/** The app on a throwaway profile, signed in to nothing, with links recorded and not opened. With
+ *  [pictures] (`photo:<address>` or `logo:<domain>`), those are the faces it finds; without, it
+ *  finds none. Either way nothing is looked up on the network. */
+export async function launch(options: {
+  colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number]; pictures?: Record<string, Buffer | string>
+} = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
   const port = await gmail.listen()
   const smtp = new FakeSmtp(gmail.secret)
   const smtpPort = await smtp.listen()
   const data = mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
+  const faces: Record<string, string> = options.pictures ? { XRNMAIL_PICTURES: writePictures(mkdtempSync(join(data, 'faces-')), options.pictures) } : {}
   const app = await _electron.launch({
     args: ['.', '--no-sandbox', ...HEADLESS],
     colorScheme: options.colorScheme ?? 'light',
@@ -40,7 +46,8 @@ export async function launch(options: { colorScheme?: 'light' | 'dark'; gmail?: 
       XRNMAIL_IMAP: `127.0.0.1:${port}`,
       XRNMAIL_SMTP: `127.0.0.1:${smtpPort}`,
       XRNMAIL_TEST_SECRETS: '1',
-      XRNMAIL_EARLY_WAIT: '1'
+      XRNMAIL_EARLY_WAIT: '1',
+      ...faces
     }
   })
   await app.evaluate(({ dialog, shell }, savedTo) => {

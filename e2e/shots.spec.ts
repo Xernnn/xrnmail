@@ -1,6 +1,7 @@
 import { test } from '@playwright/test'
 import { rawMail } from '../tests/fake-gmail'
 import { hhmm, launch, later, signIn, syncAndSettle } from './app'
+import { png, svgLogo } from './pictures'
 import type { FakeGmail } from '../tests/fake-gmail'
 
 /** Pictures of the app with made-up mail, for looking at it: SHOTS=<folder> npx playwright test shots */
@@ -57,9 +58,19 @@ function fill(gmail: FakeGmail): void {
   gmail.add(rawMail({ subject: 'Old invoice', text: 'Thrown out.', from: 'Mai Tran <mai@example.com>' }), { box: '[Gmail]/Trash', arrived: ago(40) })
 }
 
+/** Made-up faces: photos for some people, logos for some companies, nothing for the rest. */
+const FACES = {
+  'photo:mai@example.com': png(96, [196, 92, 120]),
+  'photo:linh@example.com': png(96, [52, 120, 170]),
+  'photo:me@example.com': png(96, [70, 140, 90]),
+  'logo:coffee.example': svgLogo('#7c3f1d', 'C'),
+  'logo:smalltools.example': png(48, [30, 30, 30]),
+  'logo:shop.example': svgLogo('#d9480f', 'S')
+}
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`pictures ${colorScheme}`, async () => {
-    const run = await launch({ colorScheme, size: [1280, 840] })
+    const run = await launch({ colorScheme, size: [1280, 840], pictures: FACES })
     const { page, gmail } = run
     await page.screenshot({ path: `${folder}/${colorScheme}-welcome.png` })
     fill(gmail)
@@ -74,6 +85,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByText('2 waiting').waitFor()
     await page.getByText('Trip to Da Lat').first().click()
     await page.locator('.messages').getByText('Bus leaves').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 900)) // faces looked up for the list arrive
     await page.screenshot({ path: `${folder}/${colorScheme}-thread.png` })
     await page.getByLabel('Select Your receipt').check({ force: true })
     await page.getByLabel('Select The week in small tools').check({ force: true })
@@ -141,6 +153,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: `${folder}/${colorScheme}-other.png` })
     await page.getByRole('button', { name: 'Subscriptions' }).click()
     await page.getByText('Nothing here').or(page.locator('.subscription').first()).or(page.getByText('No subscriptions')).first().waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 600))
     await page.screenshot({ path: `${folder}/${colorScheme}-subscriptions.png` })
     await page.getByRole('button', { name: 'Add deals@shop.example to Summary' }).click()
     const asking = page.getByRole('dialog', { name: 'When your Summary arrives' })
@@ -214,6 +227,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Accounts' }).click()
+    await page.getByRole('button', { name: 'Choose a photo for me@example.com' }).waitFor()
+    await page.screenshot({ path: `${folder}/${colorScheme}-settings-accounts.png` })
     await page.getByRole('button', { name: 'Add account' }).click()
     await page.getByRole('radio', { name: 'Other' }).click()
     await page.screenshot({ path: `${folder}/${colorScheme}-add-other.png` })

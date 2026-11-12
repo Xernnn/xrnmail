@@ -161,6 +161,13 @@ export interface Settings {
   imagesFrom: string[]
 }
 
+/** A picture for an address: a person's photo, or a company's logo, as a data: address. */
+export interface Face {
+  url: string
+  /** A logo is drawn whole on white; a photo fills its circle. */
+  logo: boolean
+}
+
 export interface ThreadRow {
   account: string
   thread: string
@@ -187,6 +194,8 @@ export interface ThreadRow {
   pinned: boolean
   /** When the Summary that brought it landed, if one did. */
   summaryAt: number | null
+  /** Its newest message has a sender warning, so it's shown with initials whatever pictures there are. */
+  warned: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -446,6 +455,16 @@ export interface MailApi {
   details(message: number): Promise<MessageDetails>
   /** Puts an email address, and nothing else, on the clipboard. */
   copyAddress(address: string): Promise<void>
+  /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the
+   *  scenes, and `onFaces` says when there are more. Only lists look up; opening a message doesn't. */
+  faces(addresses: string[], lookUp: boolean): Promise<Record<string, Face | null>>
+  onFaces(listener: () => void): () => void
+  /** A photo for one of your accounts, from the system's file picker, kept on this laptop. Says
+   *  whether one was chosen. */
+  choosePhoto(account: string): Promise<boolean>
+  removePhoto(account: string): Promise<void>
+  /** The accounts with a photo chosen here. */
+  photos(): Promise<string[]>
   /** Opens a thread in a window of its own, or brings forward the one it already has. */
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
