@@ -16,7 +16,7 @@ import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogi
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
-import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
+import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
@@ -259,7 +259,8 @@ function quote(value: unknown): Quote | null {
     kind: q['kind'],
     intro: text(q['intro'], 4000),
     html: q['html'] === null ? null : text(q['html'], MAX_BODY),
-    text: text(q['text'], MAX_BODY)
+    text: text(q['text'], MAX_BODY),
+    ...(q['asIs'] === true ? { asIs: true } : {})
   }
 }
 
@@ -490,6 +491,23 @@ function register(service: MailService, avatars: Avatars): void {
   handle('createFolder', (account: unknown, name: unknown) => service.createFolder(text(account, 320), text(name, 500)))
   handle('startDraft', (start: unknown) => service.startDraft(draftStart(start)))
   handle('saveDraft', (id: unknown, edit: unknown) => service.saveDraft(number(id), draftEdit(edit)))
+  // A page that goes, crashed or closed, lets go of the drafts its composers had open.
+  const held = new Map<number, number[]>()
+  handleFrom('holdDraft', (sender: Electron.WebContents, id: unknown, on: unknown) => {
+    const draft = number(id)
+    if (!held.has(sender.id)) {
+      held.set(sender.id, [])
+      sender.once('destroyed', () => {
+        for (const each of held.get(sender.id) ?? []) service.holdDraft(each, false)
+        held.delete(sender.id)
+      })
+    }
+    const mine = held.get(sender.id) ?? []
+    if (on === true) mine.push(draft)
+    else if (mine.includes(draft)) mine.splice(mine.indexOf(draft), 1)
+    else return
+    service.holdDraft(draft, on === true)
+  })
   handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }

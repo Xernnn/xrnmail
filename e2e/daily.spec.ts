@@ -105,6 +105,42 @@ test('a draft survives closing, and a restart of the page', async () => {
   await expect(page.getByText('Half finished')).toHaveCount(0)
 })
 
+test('drafts are kept in Gmail\'s Drafts: one written here goes up, one written on the phone comes in, and either goes when it is sent', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  const subjects = (): string[] => gmail.drafts().map((raw) => /^Subject: (.*)$/m.exec(raw)?.[1]?.trim() ?? '')
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Subject').fill('Half finished')
+  await box.getByLabel('Message').fill('Some words')
+  await box.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByText('Saved to Drafts')).toBeVisible()
+  await expect.poll(subjects, LONG).toEqual(['Half finished'])
+  expect(gmail.drafts()[0]).toContain('Some words')
+
+  // Written on the phone: it's in Drafts here after the next sync, and goes from here.
+  gmail.draft(rawMail({ from: ME, to: 'Bo <bo@example.com>', subject: 'From the phone', text: 'Count me in.\n\nOn Mon, Bo wrote:\n> Friday?' }), { arrived: earlier(1) })
+  await page.getByRole('button', { name: /^Sync/ }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('From the phone').click()
+  await expect(composer(page).getByLabel('Message')).toHaveText('Count me in.')
+  await expect(composer(page).getByRole('button', { name: 'Remove bo@example.com' })).toBeVisible()
+  await composer(page).getByLabel('Message').pressSequentially(' See you.')
+  await composer(page).getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Count me in. See you.')
+  expect(smtp.sent[0]?.raw).toContain('> Friday?')
+  await expect.poll(subjects, LONG).toEqual(['Half finished'])
+
+  // Thrown away here, it's gone from there too.
+  await page.getByText('Half finished').click()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await expect.poll(subjects, LONG).toEqual([])
+})
+
 test('an empty new message leaves nothing behind', async () => {
   run = await launch()
   const { page } = run

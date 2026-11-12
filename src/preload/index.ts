@@ -55,6 +55,7 @@ const api: MailApi = {
   createFolder: (account, name) => call('createFolder', account, name),
   startDraft: (start) => call('startDraft', start),
   saveDraft: (id, edit) => call('saveDraft', id, edit),
+  holdDraft: (id, on) => call('holdDraft', id, on),
   discardDraft: (id) => call('discardDraft', id),
   pickFiles: (id) => call('pickFiles', id),
   addFile: (id, name, type, bytes) => call('addFile', id, name, type, bytes),

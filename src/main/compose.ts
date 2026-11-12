@@ -114,6 +114,7 @@ export function quoteOf(message: MessageDetail, kind: Quote['kind']): Quote {
 const QUOTE_STYLE = 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex'
 
 function quotedHtml(quote: Quote): string {
+  if (quote.asIs) return `<br><div>${quote.html ?? paragraphs(quote.text)}</div>`
   const body = quote.html ?? paragraphs(quote.text)
   const intro = `<div>${paragraphs(quote.intro)}</div>`
   if (quote.kind === 'forward') return `<br>${intro}<br>${body}`
@@ -121,6 +122,7 @@ function quotedHtml(quote: Quote): string {
 }
 
 function quotedText(quote: Quote): string {
+  if (quote.asIs) return `\n\n${quote.text}`
   if (quote.kind === 'forward') return `\n\n${quote.intro}\n\n${quote.text}`
   return `\n\n${quote.intro}\n${quote.text.replace(/^/gm, '> ')}`
 }
@@ -131,13 +133,30 @@ export function outgoing(draft: Draft, email: string, identity: Identity | undef
   const cc = parseRecipients(draft.cc)
   const bcc = parseRecipients(draft.bcc)
   if (to.length + cc.length + bcc.length === 0) throw new Error('Add someone to send this to.')
+  return whole(draft, email, identity, paths, date, { to, cc, bcc })
+}
+
+/** What was typed into To, Cc or Bcc, as far as it's addresses yet: a draft is still being written. */
+function typedRecipients(text: string): Address[] {
+  if (!text.trim()) return []
+  return addressparser(text.replace(/[\r\n]+/g, ' '), { flatten: true })
+    .filter((item) => EMAIL.test(item.address.trim()))
+    .map((item) => ({ name: item.name, address: item.address.trim() }))
+}
+
+/** A draft as its copy on the server has it: the whole message as it would go, so another device can
+ *  carry on with it or send it as it is. Nobody has to be on it yet. */
+export function draftCopy(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number): OutgoingMail {
+  return whole(draft, email, identity, paths, date, { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc) })
+}
+
+function whole(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
+  people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc'>): OutgoingMail {
   const signature = identity?.signature.trim() ?? ''
   return {
     date,
     from: { name: identity?.name.trim() ?? '', address: email },
-    to,
-    cc,
-    bcc,
+    ...people,
     subject: draft.subject.replace(/[\r\n]+/g, ' '),
     html: [
       draft.html,

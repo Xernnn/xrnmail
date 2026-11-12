@@ -9,6 +9,7 @@ server (IMAP) ──> source.ts ──> sync.ts ──> store.ts (SQLite) ──
 
 page ──> service.ts ──> store.ts, at once ──> pending queue ──> writer.ts ──> server (IMAP)
                    └──> drafts ──> sender.ts ──> server (SMTP)
+                          └──> draft copies ──> writer.ts ──> the account's Drafts (IMAP)
 ```
 
 `service.ts` holds everything the app does, with the clock and the network passed in, so whole days
@@ -111,8 +112,73 @@ is all Undo and "send later" are. `tick()` sends what's due.
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
   then, never as it was when the round began.
 
-Drafts stay on this laptop. Attachments are copied into the profile when chosen, so a message scheduled
-for later doesn't depend on where the file was.
+Attachments are copied into the profile when chosen, so a message scheduled for later doesn't depend
+on where the file was.
+
+## Drafts on the server
+
+A draft is kept here first, as before: the composer saves it within a second of typing, offline or
+not, and that copy is the one that's sent. It's also kept in the account's Drafts folder, the one
+marked `\Drafts` (on Gmail, `[Gmail]/Drafts`, which Gmail shows as Drafts on the web and the phone),
+as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what comes down;
+`service.ts` decides when.
+
+- **What goes up** is the whole message as it would go: the words, the signature, what it quotes,
+  its attachments and its Bcc, with `\Draft` and `\Seen`, so another device can carry on with it or
+  send it as it is. Nobody has to be on it yet. A new message with nothing in it isn't kept there.
+- **When.** Once it has been left alone for four seconds, or once it has been changing for a minute,
+  so typing doesn't send every keystroke and a long stretch of it is still kept. Saving what's there
+  already changes nothing, so closing a composer untouched sends nothing up. On the account's own
+  lane, like changes to mail, and only through the writer.
+- **Replacing a copy** is APPEND first, then the old copy deleted by its UID, so there's never a
+  moment with none. The UID comes from the server's APPENDUID, or without UIDPLUS from the newest copy
+  with the Message-ID just given, which is new for each version. Gmail moves what's deleted from
+  Drafts into Trash and keeps it a month, so there the old copy is moved to Trash and deleted from
+  Trash, which is for good; elsewhere it's deleted where it is. A server with no Drafts folder gets one.
+- **A copy that has to go** (the draft was sent, thrown away, moved to another account or emptied)
+  is noted in `draft_copies` and goes as soon as the server can be reached, like the pending queue:
+  offline, or after a restart, nothing is lost. Refused three times, it's let go of and said.
+- **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
+  draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
+  or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
+  scheduled is never on the server as a draft.
+- **Coming down.** Each sync reads the Drafts folder, read-only like the rest (`EXAMINE`,
+  `BODY.PEEK`), after the mail. A copy it doesn't know, saved within the keeping window, comes in as
+  a draft here, with its files. One with more than can be sent from here (about 18 MB of files) stays
+  on the server, as one older than the keeping window does: brought in without its files and changed
+  here, it would go back up without them. Its words go into the composer as text: the copy's HTML is the server's, may hold a
+  stranger's quoted HTML, and never reaches the page. What it quotes is kept apart, as a reply's quote
+  is, and goes out as it was quoted, not quoted again; the account's own signature comes off the end
+  of the words, so a draft that went up from here and came back isn't signed twice.
+- **Each draft here knows its copy**: the UID, the folder's UIDVALIDITY when it was had, its
+  Message-ID, and which version of the draft it was made from (`pushed`). A renumbered folder finds
+  its copies again by Message-ID instead of bringing them in twice.
+
+### A draft changed in two places
+
+There's no safe way to merge two edits of the same words, and choosing by the clock would throw
+away what someone typed, on the word of two devices' clocks. So the rule is that nothing typed is
+lost, and a change made in one place only is taken as it is:
+
+- **Changed here only:** the laptop's version replaces the copy.
+- **Changed on the other device only:** Gmail's phone app saves a draft by replacing its message, so
+  the copy this laptop knew goes and a new one comes. The draft here hasn't changed since its copy
+  went up, so it goes, and the new copy comes in as the draft: the other device's version wins.
+- **Changed in both:** the copy this laptop knew has gone, and the draft here has changed since. It
+  stays, and goes up as a draft of its own; the other device's comes in beside it. The person sees
+  both and throws one away.
+- **Sent or thrown away elsewhere:** the copy goes and nothing replaces it. Unchanged here, the draft
+  goes too. Changed here meanwhile, it stays and goes up again: an edit is never thrown away, even if
+  that leaves a draft of something already sent.
+- **Open in a composer:** what the server says leaves it alone until the composer lets it go
+  (`holdDraft`, released when its page goes, however it goes). A composer would otherwise be editing
+  a draft that had been deleted under it, or write its own words over the other device's.
+
+Draft ids are never given out twice (`AUTOINCREMENT`), since drafts now come and go behind the page's
+back and a page holding an old id would otherwise mean a new draft by it.
+
+On Gmail every draft is in All Mail too, labelled `\Draft`, and kept hidden there, as before. A
+message that loses the label (the phone sending a draft it saved can do that) shows from then on.
 
 ## Sync
 

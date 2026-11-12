@@ -10,17 +10,18 @@ import { configFor, provider, providerFor, type Provider } from '@shared/provide
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
 import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
-import { escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
+import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, type WholeAttachment } from './parse'
-import { gmailThreadUrl, isPublicHttps, isSafeHubUrl } from './safe-url'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, type WholeAttachment } from './parse'
+import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
+import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
-import type { Located, PendingAction, Store } from './store'
+import type { DraftCopy, DraftLink, Located, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
 
@@ -40,6 +41,7 @@ const SIGN_IN_AGAIN = 'Sign in to this account again.'
 /** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
 const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
 const TOKEN_MARGIN_MS = 60_000
+const DAY_MS = 86_400_000
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
 const NOTE_MS = 10 * 60_000
@@ -259,6 +261,18 @@ export class MailService {
   private removals = new Map<string, number>()
   /** Messages whose files are being listed from the whole message right now. */
   private listing = new Set<number>()
+  /** Drafts open in a composer, and how many composers have each. What the server says about one
+   *  waits until it's let go. */
+  private holds = new Map<number, number>()
+  /** When each draft started changing since it last went up, so a long stretch of typing still goes. */
+  private dirtySince = new Map<number, number>()
+  private draftsQueued = new Set<string>()
+  /** An account whose drafts couldn't reach the server waits this long before they try again. */
+  private draftsRetryAt = new Map<string, number>()
+  /** How often each copy that has to go has been refused. */
+  private copyRefusals = new Map<number, number>()
+  /** Drafts on the server too big to bring here, so they aren't fetched again each pass. */
+  private tooBig = new Set<string>()
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
@@ -531,7 +545,11 @@ export class MailService {
     this.tokens.delete(email)
     this.notes.delete(email)
     this.store.wipeAccount(email)
-    for (const draft of this.store.forgetAccount(email)) this.deps.files.clear(draft)
+    for (const draft of this.store.forgetAccount(email)) {
+      this.deps.files.clear(draft)
+      this.dirtySince.delete(draft)
+    }
+    this.draftsRetryAt.delete(email)
     const { identities, ...rest } = this.settings()
     const { [email]: _gone, ...kept } = identities
     const { [email]: _arranged, ...labels } = rest.sidebar.labels ?? {}
@@ -553,6 +571,7 @@ export class MailService {
     await this.inLane(email, async () => {
       await this.flushNow(email)
       await this.pass(email)
+      if (this.draftsDue(email)) await this.pushDraftsNow(email)
     })
     await this.reportHeld()
     if (this.syncAgain.delete(email)) await this.syncOne(email)
@@ -673,6 +692,7 @@ export class MailService {
           }
         }
       })
+      await this.readDrafts(email, source, this.deps.now() - settings.backfillDays * DAY_MS, removed)
       status.syncedAt = this.deps.now()
       status.error = null
     } catch (e) {
@@ -750,6 +770,7 @@ export class MailService {
     if (batch > 0) await this.report('batch', batch)
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
+    await Promise.all(this.emails().map((email) => this.pushDrafts(email)))
   }
 
   private nextGroup(): number {
@@ -1165,20 +1186,233 @@ export class MailService {
     }
   }
 
+  /** Kept here at once, and in the account's Drafts once it has been left alone a moment. Saving
+   *  what's there already changes nothing, so a composer closed untouched sends nothing up. */
   saveDraft(id: number, edit: DraftEdit): void {
     const draft = this.draftOrThrow(id)
     if (draft.state === 'queued' || draft.state === 'sending') throw new Error('This is already on its way.')
     if (!this.emails().includes(edit.account)) throw new Error('That account is gone.')
-    this.store.saveDraft({ ...draft, ...edit, state: 'draft', error: null, updated: this.deps.now() })
+    if (draft.state === 'draft' && draft.error === null && !changes(draft, edit)) return
+    // Moved to another account, its copy leaves the first one's Drafts.
+    if (edit.account !== draft.account) this.letCopyGo(id)
+    const now = this.deps.now()
+    this.store.saveDraft({ ...draft, ...edit, state: 'draft', error: null, updated: now })
+    this.touched(id, now)
     this.deps.changed()
+  }
+
+  private touched(id: number, now: number): void {
+    if (!this.dirtySince.has(id)) this.dirtySince.set(id, now)
+  }
+
+  /** A composer has the draft open, or has let it go. */
+  holdDraft(id: number, on: boolean): void {
+    const holding = (this.holds.get(id) ?? 0) + (on ? 1 : -1)
+    if (holding > 0) this.holds.set(id, holding)
+    else this.holds.delete(id)
   }
 
   discardDraft(id: number): void {
     const draft = this.store.draft(id)
     if (draft?.state === 'sending') throw new Error('This is already on its way.')
+    this.letCopyGo(id)
     this.store.deleteDraft(id)
     this.deps.files.clear(id)
+    this.dirtySince.delete(id)
     this.deps.changed()
+  }
+
+  /** The draft's copy on the server is to go, now or as soon as the server can be reached, and the
+   *  draft goes up afresh if it's a draft again later. */
+  private letCopyGo(id: number): void {
+    const link = this.store.draftLink(id)
+    if (!link?.copy) return
+    this.store.queueDraftCopy(link.account, link.copy)
+    this.store.linkDraft(id, null, 0)
+    background(this.pushDrafts(link.account))
+  }
+
+  /** The drafts of an account that are due to go up: changed since they last did, and left alone
+   *  for a moment or changing for a while. All of them when the app is closing. */
+  private dueDrafts(email: string, all = false): DraftLink[] {
+    const now = this.deps.now()
+    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed &&
+      (all || now - d.updated >= DRAFT_QUIET_MS || now - (this.dirtySince.get(d.id) ?? d.updated) >= DRAFT_MOST_MS))
+  }
+
+  private draftsDue(email: string, all = false): boolean {
+    if (!all && (this.draftsRetryAt.get(email) ?? 0) > this.deps.now()) return false
+    return this.store.draftCopies(email).length > 0 || this.dueDrafts(email, all).length > 0
+  }
+
+  /** At most one waits behind the one running, as with changes to mail. */
+  private async pushDrafts(email: string, all = false): Promise<void> {
+    if (this.draftsQueued.has(email) || !this.draftsDue(email, all)) return
+    this.draftsQueued.add(email)
+    await this.inLane(email, () => {
+      this.draftsQueued.delete(email)
+      return this.pushDraftsNow(email, all)
+    })
+  }
+
+  /** Copies that have to go go first, then drafts that changed go up. Not reaching the server loses
+   *  nothing: it's all still here, and goes in a minute or with the next sync. */
+  private async pushDraftsNow(email: string, all = false): Promise<void> {
+    // Asked for before the last try failed, it waits for the time that try set.
+    if (!this.emails().includes(email) || !this.draftsDue(email, all)) return
+    const copies = this.store.draftCopies(email)
+    const due = this.dueDrafts(email, all)
+    if (copies.length === 0 && due.length === 0) return
+    let writer: MailWriter | null = null
+    try {
+      writer = this.deps.openWriter(this.config(email), await this.login(email))
+      await writer.connect()
+      for (const copy of copies) await this.deleteCopy(writer, email, copy)
+      for (const { id } of due) await this.pushDraft(writer, email, id)
+      this.draftsRetryAt.delete(email)
+    } catch {
+      this.draftsRetryAt.set(email, this.deps.now() + RETRY_MS)
+    } finally {
+      await writer?.close().catch(() => undefined)
+    }
+  }
+
+  /** A copy the server keeps refusing to delete is let go of in the end, and said, rather than
+   *  holding up every draft behind it. */
+  private async deleteCopy(writer: MailWriter, email: string, copy: DraftCopy & { id: number }): Promise<void> {
+    try {
+      await writer.deleteDraft(copy)
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e
+      const refused = (this.copyRefusals.get(copy.id) ?? 0) + 1
+      this.copyRefusals.set(copy.id, refused)
+      if (refused < REFUSALS_ALLOWED) return
+      this.note(email, `${this.serviceName(email)} wouldn't delete an old copy of a draft. It may still be in Drafts there.`)
+    }
+    this.copyRefusals.delete(copy.id)
+    this.store.dropDraftCopy(copy.id)
+  }
+
+  /** The draft as it is now goes up, and then the copy it replaces goes. It's built from a reading
+   *  taken here: what's typed meanwhile leaves it due again, and a draft sent, thrown away or moved
+   *  to another account meanwhile takes the new copy straight back off. */
+  private async pushDraft(writer: MailWriter, email: string, id: number): Promise<void> {
+    const draft = this.store.draft(id)
+    const link = this.store.draftLink(id)
+    if (!draft || !link || draft.state !== 'draft' || draft.account !== email) return
+    const old = link.copy
+    if (isBlank(draft)) {
+      if (old) await writer.deleteDraft(old)
+      this.store.linkDraft(id, null, draft.updated)
+      return
+    }
+    const from = (draft.from || draft.account).toLowerCase()
+    const sender = this.ownAddresses(email).includes(from) ? from : email
+    const messageId = draftMessageId(sender)
+    let raw: Buffer
+    try {
+      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now()), messageId)
+    } catch {
+      // Something of it can't be read here, a file gone from the profile say: trying again won't
+      // help, and it mustn't hold up the drafts after it.
+      this.store.linkDraft(id, old, draft.updated)
+      return
+    }
+    let copy: DraftCopy
+    try {
+      copy = await writer.saveDraft(raw, messageId)
+    } catch (e) {
+      if (!(e instanceof Refused)) throw e
+      // Asking again won't help this version. It stays here, and the next change tries again.
+      this.store.linkDraft(id, old, draft.updated)
+      this.note(email, `${this.serviceName(email)} wouldn't keep a draft in its Drafts. It's still here.`)
+      return
+    }
+    const now = this.store.draft(id)
+    if (!now || now.state !== 'draft' || now.account !== email) {
+      await writer.deleteDraft(copy).catch(() => this.store.queueDraftCopy(email, copy))
+      return
+    }
+    this.store.linkDraft(id, copy, draft.updated)
+    if (now.updated === draft.updated) this.dirtySince.delete(id)
+    if (old && !(old.uid === copy.uid && old.validity === copy.validity)) {
+      await writer.deleteDraft(old).catch(() => this.store.queueDraftCopy(email, old))
+    }
+  }
+
+  /** Drafts from the account's Drafts folder, read-only like the rest of a sync. A draft here whose
+   *  copy has gone was sent or thrown away on another device, or replaced there by a newer version,
+   *  which comes in as a draft of its own: so a draft changed in one place takes the other's place,
+   *  and one changed in both is kept twice, since no one's typing is ever thrown away. A draft open
+   *  in a composer, or changed here since it last went up, stays. Drafts saved before the keeping
+   *  window began are left on the server. */
+  private async readDrafts(email: string, source: MailSource, keepFrom: number, removed: () => boolean): Promise<void> {
+    const box = source.drafts()
+    if (!box) return
+    try {
+      const info = await source.open(box)
+      const all = new Set(await source.uidsSince(new Date(0)))
+      const recent = await source.uidsSince(new Date(keepFrom))
+      const known = new Set<number>()
+      let changed = false
+      for (const link of this.store.draftLinks(email)) {
+        const copy = link.copy
+        if (!copy) continue
+        if (copy.validity !== info.uidValidity) {
+          this.store.loseDraftUid(link.id) // found again below by its Message-ID
+          continue
+        }
+        known.add(copy.uid)
+        if (all.has(copy.uid) || this.holds.has(link.id) || link.state !== 'draft') continue
+        if (link.updated > link.pushed) {
+          this.store.linkDraft(link.id, null, 0) // changed here as well: it goes up as a draft of its own
+          continue
+        }
+        this.store.deleteDraft(link.id)
+        this.deps.files.clear(link.id)
+        this.dirtySince.delete(link.id)
+        changed = true
+      }
+      const going = this.store.draftCopies(email)
+      for (const copy of going) if (copy.validity === info.uidValidity) known.add(copy.uid)
+      const goingIds = new Set(going.map((copy) => copy.messageId).filter(Boolean))
+      const lost = new Map(this.store.draftLinks(email).filter((d) => !d.copy && d.messageId).map((d) => [d.messageId, d]))
+      const unknown = recent.filter((uid) => !known.has(uid) && !this.tooBig.has(`${email}:${info.uidValidity}:${uid}`))
+      const own = this.ownAddresses(email)
+      const { signature } = this.identity(email)
+      for await (const remote of source.fetch(unknown, MAX_DRAFT_SOURCE)) {
+        if (removed()) return
+        const cut = remote.size > MAX_DRAFT_SOURCE
+        const parsed = await parseDraft(remote.source, cut)
+        // Bigger than can be sent from here, it stays where it is: brought in without its files and
+        // changed here, it would go back up without them.
+        if (cut || parsed.files.reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
+          this.tooBig.add(`${email}:${info.uidValidity}:${remote.uid}`)
+          continue
+        }
+        const copy = { uid: remote.uid, validity: info.uidValidity, messageId: parsed.messageId }
+        const again = lost.get(parsed.messageId)
+        if (again) {
+          this.store.linkDraft(again.id, copy, again.pushed)
+          continue
+        }
+        if (goingIds.has(parsed.messageId)) continue
+        this.keepImported(email, parsed, copy, remote.arrived, own, signature)
+        changed = true
+      }
+      if (changed) this.deps.changed()
+    } catch {
+      // A Drafts folder that won't open or be searched is read again next time; the rest of the sync stands.
+    } finally {
+      source.done()
+    }
+  }
+
+  private keepImported(email: string, parsed: Awaited<ReturnType<typeof parseDraft>>, copy: DraftCopy, saved: number,
+    own: string[], signature: string): void {
+    const id = this.store.addDraft({ account: email, ...importedDraft(parsed, email, own, signature), files: [], updated: saved }, copy)
+    const files = parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content))
+    if (files.length > 0) this.store.saveDraft({ ...this.draftOrThrow(id), files })
   }
 
   /** [size] is what the file is expected to add, so one that's too big is refused before it's copied. */
@@ -1232,14 +1466,20 @@ export class MailService {
     if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
     const sendAt = at ?? now + this.settings().undoSeconds * 1000
     this.store.saveDraft({ ...draft, state: 'queued', sendAt, error: null, updated: now })
+    // A message on its way isn't a draft: left in Drafts, another device could send it as well.
+    this.letCopyGo(id)
+    this.dirtySince.delete(id)
     this.deps.changed()
     return sendAt
   }
 
+  /** Back to being a draft, it goes up again as one. */
   unsend(id: number): void {
     const draft = this.draftOrThrow(id)
     if (draft.state !== 'queued') throw new Error('Too late: this one has gone.')
-    this.store.saveDraft({ ...draft, state: 'draft', sendAt: null, updated: this.deps.now() })
+    const now = this.deps.now()
+    this.store.saveDraft({ ...draft, state: 'draft', sendAt: null, updated: now })
+    this.touched(id, now)
     this.deps.changed()
   }
 
@@ -1253,6 +1493,7 @@ export class MailService {
     this.store.hurryActions(now)
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
+    await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))
   }
 
   /** Remakes the previews of mail stored by an older version, in small steps. The tag means it

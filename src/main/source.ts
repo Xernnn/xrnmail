@@ -28,7 +28,7 @@ export interface MailboxInfo {
   modseq: string | null
 }
 
-export type MailboxRole = 'all' | 'inbox' | 'sent' | 'archive' | 'trash' | 'junk' | 'folder'
+export type MailboxRole = 'all' | 'inbox' | 'sent' | 'archive' | 'trash' | 'junk' | 'drafts' | 'folder'
 
 /** A folder on the server, and what it's for. */
 export interface MailboxRef {
@@ -61,6 +61,14 @@ export function mailboxesOf(list: ListResponse[], gmail: boolean): MailboxRef[] 
   return boxes.sort((a, b) => Number(b.role === 'inbox' || b.role === 'all') - Number(a.role === 'inbox' || a.role === 'all'))
 }
 
+/** Where the account keeps its drafts: the folder marked \Drafts (on Gmail, [Gmail]/Drafts), which
+ *  imapflow also finds by its usual names on a server that marks nothing. It isn't read with the
+ *  rest, since a draft isn't mail that came; drafts are read from it on their own. */
+export function draftsOf(list: ListResponse[]): MailboxRef | null {
+  const found = list.find((box) => box.specialUse === '\\Drafts' && !box.flags.has('\\Noselect'))
+  return found ? { id: '@drafts', path: found.path, role: 'drafts' } : null
+}
+
 /** The person's own folders, or on Gmail their own labels, which IMAP lists as folders too: what mail
  *  can be filed under, including ones with nothing in them. A service's own folders aren't. */
 export function ownFolders(list: ListResponse[], gmail: boolean): string[] {
@@ -77,6 +85,8 @@ export interface MailSource {
   mailboxes(): MailboxRef[]
   /** What mail can be filed under: [ownFolders]. */
   folders(): string[]
+  /** The account's Drafts folder, if it has one: [draftsOf]. */
+  drafts(): MailboxRef | null
   open(box: MailboxRef): Promise<MailboxInfo>
   /** Every UID that arrived on or after [since], lowest first. Throws if the server won't say:
    *  sync forgets whatever isn't in the answer. */
@@ -186,6 +196,7 @@ export class ImapSource implements MailSource {
   private lock: { release(): void } | null = null
   private boxes: MailboxRef[] = []
   private own: string[] = []
+  private draftBox: MailboxRef | null = null
   gmail = false
 
   constructor(config: ImapConfig) {
@@ -198,6 +209,7 @@ export class ImapSource implements MailSource {
     const listed = await this.client.list()
     this.boxes = mailboxesOf(listed, this.gmail)
     this.own = ownFolders(listed, this.gmail)
+    this.draftBox = draftsOf(listed)
     if (this.gmail && !this.boxes.some((box) => box.role === 'all')) {
       throw new Error('This account has no All Mail folder. In Gmail settings, turn on showing All Mail in IMAP.')
     }
@@ -210,6 +222,10 @@ export class ImapSource implements MailSource {
 
   folders(): string[] {
     return this.own
+  }
+
+  drafts(): MailboxRef | null {
+    return this.draftBox
   }
 
   async open(box: MailboxRef): Promise<MailboxInfo> {

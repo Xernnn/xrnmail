@@ -93,6 +93,28 @@ export interface PendingAction {
   attempts: number
 }
 
+/** A draft's copy in its account's Drafts folder. The UID only means something while the folder's
+ *  UIDVALIDITY is [validity]; the Message-ID finds it again when that changes. */
+export interface DraftCopy {
+  uid: number
+  validity: string
+  messageId: string
+}
+
+/** How a draft here stands with its copy on the server. */
+export interface DraftLink {
+  id: number
+  account: string
+  state: DraftState
+  updated: number
+  /** The copy that matches it, if one has been made or read. */
+  copy: DraftCopy | null
+  /** The Message-ID of the last copy, kept when its UID no longer means anything. */
+  messageId: string
+  /** The `updated` the copy was made from: older than `updated`, and the draft has changed since. */
+  pushed: number
+}
+
 /** A visible message, with what's needed to answer it. */
 export interface MessageDetail extends MessageView {
   box: string
@@ -253,6 +275,24 @@ export const MIGRATIONS = [
   // this has none, and has its headers read from the server the first time its details are opened.
   `
   ALTER TABLE messages ADD COLUMN details TEXT NOT NULL DEFAULT '';
+  `,
+  // Drafts are kept in the account's Drafts folder too. A draft knows the copy there that matches it
+  // (its UID, the folder's UIDVALIDITY when it was had, and the copy's Message-ID), and which of its
+  // own versions that copy is (`pushed`, the `updated` it was made from; 0 for none, so every draft
+  // already here goes up). A copy that has to go, because the draft was sent, thrown away or
+  // replaced, waits in `draft_copies` until the server has said yes, as a change to mail does.
+  // Drafts now come and go behind the page's back, so an id is never given out twice: the newest
+  // draft thrown away used to leave its id for the next, and a page still holding it meant the other.
+  `
+  CREATE TABLE drafts_next(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'draft', send_at INTEGER, error TEXT,
+    remote_uid INTEGER, remote_validity TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', pushed INTEGER NOT NULL DEFAULT 0);
+  INSERT INTO drafts_next(id, account, data, updated, state, send_at, error) SELECT id, account, data, updated, state, send_at, error FROM drafts;
+  DROP TABLE drafts;
+  ALTER TABLE drafts_next RENAME TO drafts;
+  CREATE TABLE draft_copies(
+    id INTEGER PRIMARY KEY, account TEXT NOT NULL, uid INTEGER NOT NULL, validity TEXT NOT NULL, message_id TEXT NOT NULL DEFAULT '');
   `
 ]
 
@@ -473,12 +513,15 @@ export class Store {
     })
   }
 
-  /** What the server says about a message now. [labels] is null where only flags can change. */
+  /** What the server says about a message now. [labels] is null where only flags can change. On
+   *  Gmail a message that stops being a draft shows from then on: the phone sending one it saved
+   *  takes the label off, and the message would otherwise stay hidden as the draft it was. Mail with
+   *  a change on its way is never passed here, so this can't show what's being deleted for good. */
   applyChange(account: string, box: string, uid: number, labels: string[] | null, seen: boolean, flagged: boolean): boolean {
     const result = labels
       ? this.db
-          .prepare('UPDATE messages SET labels = ?, in_inbox = ?, bin = ?, seen = ?, flagged = ? WHERE account = ? AND box = ? AND uid = ?')
-          .run(JSON.stringify(labels), labels.includes(INBOX) ? 1 : 0, binOf(labels), seen ? 1 : 0, flagged ? 1 : 0, account, box, uid)
+          .prepare('UPDATE messages SET labels = ?, in_inbox = ?, bin = ?, seen = ?, flagged = ?, hidden = ? WHERE account = ? AND box = ? AND uid = ?')
+          .run(JSON.stringify(labels), labels.includes(INBOX) ? 1 : 0, binOf(labels), seen ? 1 : 0, flagged ? 1 : 0, labels.includes(DRAFT) ? 1 : 0, account, box, uid)
       : this.db
           .prepare('UPDATE messages SET seen = ?, flagged = ? WHERE account = ? AND box = ? AND uid = ? AND (seen != ? OR flagged != ?)')
           .run(seen ? 1 : 0, flagged ? 1 : 0, account, box, uid, seen ? 1 : 0, flagged ? 1 : 0)
@@ -528,10 +571,12 @@ export class Store {
     for (const box of known) if (!kept.has(box)) this.wipeBox(account, box)
   }
 
-  /** Everything else kept for an account, once it's removed. Returns the drafts that went. */
+  /** Everything else kept for an account, once it's removed. Returns the drafts that went. Their
+   *  copies on the server stay, as the mail does. */
   forgetAccount(account: string): number[] {
     const drafts = this.all('SELECT id FROM drafts WHERE account = ?', account).map((r) => Number(r['id']))
     this.db.prepare('DELETE FROM drafts WHERE account = ?').run(account)
+    this.db.prepare('DELETE FROM draft_copies WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM snoozes WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM pins WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM recent WHERE account = ?').run(account)
@@ -948,11 +993,69 @@ export class Store {
     return Number(this.one('SELECT COUNT(*) AS n FROM snoozes WHERE until > ? AND until <= ?', after, upto)?.['n'] ?? 0)
   }
 
-  addDraft(draft: Omit<Draft, 'id' | 'state' | 'sendAt' | 'error'>): number {
+  /** With [copy], it's a draft read from the server, which that copy matches as it is. */
+  addDraft(draft: Omit<Draft, 'id' | 'state' | 'sendAt' | 'error'>, copy?: DraftCopy): number {
     const { account, updated, ...data } = draft
     return Number(
-      this.db.prepare('INSERT INTO drafts(account, data, updated) VALUES(?,?,?)').run(account, JSON.stringify(data), updated).lastInsertRowid
+      this.db
+        .prepare('INSERT INTO drafts(account, data, updated, remote_uid, remote_validity, remote_id, pushed) VALUES(?,?,?,?,?,?,?)')
+        .run(account, JSON.stringify(data), updated, copy?.uid ?? null, copy?.validity ?? '', copy?.messageId ?? '', copy ? updated : 0).lastInsertRowid
     )
+  }
+
+  private linkFrom(r: Row): DraftLink {
+    const uid = r['remote_uid']
+    return {
+      id: Number(r['id']),
+      account: String(r['account']),
+      state: String(r['state']) as DraftState,
+      updated: Number(r['updated']),
+      copy: uid == null ? null : { uid: Number(uid), validity: String(r['remote_validity']), messageId: String(r['remote_id']) },
+      messageId: String(r['remote_id']),
+      pushed: Number(r['pushed'])
+    }
+  }
+
+  draftLink(id: number): DraftLink | null {
+    const row = this.one('SELECT id, account, state, updated, remote_uid, remote_validity, remote_id, pushed FROM drafts WHERE id = ?', id)
+    return row ? this.linkFrom(row) : null
+  }
+
+  /** How each of an account's drafts stands with the server. */
+  draftLinks(account: string): DraftLink[] {
+    return this.all('SELECT id, account, state, updated, remote_uid, remote_validity, remote_id, pushed FROM drafts WHERE account = ? ORDER BY id', account)
+      .map((r) => this.linkFrom(r))
+  }
+
+  /** [copy] is on the server now, made from the draft as it was at [pushed], or matching it. Null
+   *  lets go of the copy: the draft goes up afresh when it's next due. */
+  linkDraft(id: number, copy: DraftCopy | null, pushed: number): void {
+    if (copy) {
+      this.db.prepare('UPDATE drafts SET remote_uid = ?, remote_validity = ?, remote_id = ?, pushed = ? WHERE id = ?')
+        .run(copy.uid, copy.validity, copy.messageId, pushed, id)
+    } else {
+      this.db.prepare("UPDATE drafts SET remote_uid = NULL, remote_validity = '', pushed = ? WHERE id = ?").run(pushed, id)
+    }
+  }
+
+  /** The folder was renumbered: the UID means nothing now, and the Message-ID is kept to find it by. */
+  loseDraftUid(id: number): void {
+    this.db.prepare("UPDATE drafts SET remote_uid = NULL, remote_validity = '' WHERE id = ?").run(id)
+  }
+
+  /** A copy on the server that has to go, until it has. */
+  queueDraftCopy(account: string, copy: DraftCopy): void {
+    this.db.prepare('INSERT INTO draft_copies(account, uid, validity, message_id) VALUES(?,?,?,?)').run(account, copy.uid, copy.validity, copy.messageId)
+  }
+
+  draftCopies(account: string): (DraftCopy & { id: number })[] {
+    return this.all('SELECT * FROM draft_copies WHERE account = ? ORDER BY id', account).map((r) => ({
+      id: Number(r['id']), uid: Number(r['uid']), validity: String(r['validity']), messageId: String(r['message_id'])
+    }))
+  }
+
+  dropDraftCopy(id: number): void {
+    this.db.prepare('DELETE FROM draft_copies WHERE id = ?').run(id)
   }
 
   private draftFrom(r: Row): Draft {

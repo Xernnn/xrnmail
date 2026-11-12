@@ -34,6 +34,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
   the foot of a thread, in the composer.
+- **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
+  Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
+  up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
+  catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
@@ -225,6 +229,10 @@ Done differently:
   each account's own inbox: All Inboxes shows every account's mail together, Other included.
 - Edison finds faces on servers of its own. Here they come from Gravatar, BIMI and DuckDuckGo's icons,
   asked from this laptop, and a sender with a warning keeps their initials.
+- A draft from your service's Drafts, written on the phone say, brings its words in as plain text and
+  what it quotes as it was quoted, since its HTML is the service's and can carry a stranger's. A draft
+  changed on two devices before either heard of the other is kept twice, so neither's words are lost.
+  Edison doesn't say what it does then.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
@@ -232,7 +240,6 @@ Done differently:
 
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
-- Drafts stay on this laptop, and don't appear in your service's Drafts.
 - No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It

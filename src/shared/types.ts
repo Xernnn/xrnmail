@@ -343,6 +343,8 @@ export interface Quote {
   intro: string
   html: string | null
   text: string
+  /** Quoted already, by the device that wrote the draft this came in with, so it goes as it is. */
+  asIs?: boolean
 }
 
 export type DraftState = 'draft' | 'queued' | 'sending' | 'failed'
@@ -489,6 +491,9 @@ export interface MailApi {
   onLeaving(listener: () => void): () => void
   startDraft(start: DraftStart): Promise<Draft>
   saveDraft(id: number, edit: DraftEdit): Promise<void>
+  /** A composer has this draft open, or has let it go. While one has, what the server says about the
+   *  draft leaves it as it is here. */
+  holdDraft(id: number, on: boolean): Promise<void>
   discardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
