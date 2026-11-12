@@ -534,6 +534,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .mark.warn { color: var(--caution); margin-right: 6px; vertical-align: -2px; }
 .caution { display: flex; gap: 9px; margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--caution-soft); color: var(--caution); font-size: 13px; }
 .caution svg { flex: none; margin-top: 2px; }
+/* A warning names a stranger's address, which can be as long as they like: it wraps, rather than
+   pushing the whole thread sideways. */
+.caution > div { min-width: 0; overflow-wrap: anywhere; }
 .fact { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 13px; }
 .fact-kind { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .fact-line { font-weight: 500; }

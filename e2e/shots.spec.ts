@@ -72,6 +72,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
   test(`pictures ${colorScheme}`, async () => {
     const run = await launch({ colorScheme, size: [1280, 840], pictures: FACES })
     const { page, gmail } = run
+    await page.getByLabel('Email address').waitFor() // drawn, before there's a picture to take
     await page.screenshot({ path: `${folder}/${colorScheme}-welcome.png` })
     fill(gmail)
     await signIn(run)

@@ -19,7 +19,7 @@ import { attachmentsOf, detailsOf, makeSnippet, parseDraft, type WholeAttachment
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
 import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
-import { describeSendFailure, NeverLeft, type MailSender } from './sender'
+import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
 import type { DraftCopy, DraftLink, Located, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
@@ -623,6 +623,10 @@ export class MailService {
       await mine.watcher.watch(changed)
     }
     const lost = (): void => {
+      // A watch that failed partway, signed in but unable to open the inbox say, still holds its
+      // connection: left open, one more was added at every try, a minute apart, until the service
+      // turned the account away for having too many.
+      if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
       if (!this.watching || !this.emails().includes(email) || this.rewatch) return
@@ -670,7 +674,9 @@ export class MailService {
         account: email,
         email,
         backfillDays: settings.backfillDays,
-        rules: this.rules(settings),
+        // Read for each message as it's stored: a pass can take a while to sign in and fetch, and
+        // mail it stores after a sender went into the Summary, or after going live, must follow that.
+        rules: () => this.rules(),
         now: this.deps.now(),
         progress: (done, total) => {
           status.progress = total >= WORTH_SHOWING && done < total ? { done, total } : null
@@ -681,9 +687,10 @@ export class MailService {
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
-          if (isVip(mail.from.address, settings.blocked)) return void blocked.push(id)
+          const current = this.settings() // a sender blocked or muted meanwhile counts
+          if (isVip(mail.from.address, current.blocked)) return void blocked.push(id)
           if (mail.from.address) senders.push(mail.from.address)
-          if (!isVip(mail.from.address, settings.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
@@ -1573,6 +1580,9 @@ export class MailService {
     } catch (e) {
       if (e instanceof NeverLeft) {
         this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
+      } else if (e instanceof Unmade) {
+        // Nothing was handed over, so it's said plainly, not as "check Sent".
+        this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: "One of its attachments can't be read on this laptop any more, so nothing was sent. Remove it and send again." })
       } else {
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
       }

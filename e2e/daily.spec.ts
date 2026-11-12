@@ -637,6 +637,26 @@ test('the details stay inside the reader on a short window, scrolling inside the
   }
 })
 
+test('a stranger\'s very long name and address wrap, in the warning and the details, and never push the thread sideways', async () => {
+  run = await launch({ size: [1180, 760] })
+  const { page, gmail } = run
+  const name = 'Bartholomew-Maximilian Wolfeschlegelsteinhausenbergerdorff the Extraordinarily Long-Named'
+  const address = `${'x'.repeat(70)}.long@${'sub.'.repeat(12)}example.com`
+  const replies = `${'r'.repeat(90)}@example.org`
+  gmail.add(rawMail({ subject: 'Long', from: `"${name}" <${address}>`, headers: [`Reply-To: ${replies}`] }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.locator('.threads .subject', { hasText: 'Long' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: replies })).toBeVisible()
+  const sideways = (): Promise<number> => page.locator('.messages').evaluate((el) => el.scrollWidth - el.clientWidth)
+  expect(await sideways()).toBe(0) // the warning naming the Reply-To used to run off to the right
+  await page.locator('.message.open').getByRole('button', { name: /^To:/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Message details' })
+  await expect(panel).toContainText(replies)
+  expect(await panel.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
+  expect(await sideways()).toBe(0)
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -889,7 +909,12 @@ test('a composer of its own closed with nothing in it leaves no draft, and Undo 
   await solo.getByRole('button', { name: 'Undo' }).click() // the window waited for this
   await expect(there.getByLabel('Subject')).toHaveValue('Too soon')
   expect(smtp.sent).toHaveLength(0)
-  await solo.keyboard.press('Escape') // closed with words in it: kept in Drafts, and the window goes
+  // Closed with words in it: kept in Drafts, and the window goes. By its Close button: Escape needs
+  // the composer to have the keyboard, which a busy test machine hadn't always given it yet, and the
+  // window can go before the key is let go of, which Playwright takes for a failure.
+  const gone = solo.waitForEvent('close')
+  await there.getByRole('button', { name: 'Close' }).click({ noWaitAfter: true }).catch(() => undefined)
+  await gone
   await expect.poll(() => app.windows().length).toBe(1)
   await expect.poll(() => page.evaluate(async () => (await window.mail.drafts()).map((d) => [d.subject, d.state]))).toEqual([['Too soon', 'draft']])
 })

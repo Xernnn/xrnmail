@@ -22,6 +22,10 @@ export type SmtpConfig = ImapConfig
 /** It failed before anything was handed over, so trying again can't send it twice. */
 export class NeverLeft extends Error {}
 
+/** The message couldn't be put together here, an attachment gone from the profile say, so nothing
+ *  was handed over and nothing will be until it's changed. */
+export class Unmade extends Error {}
+
 export class SmtpSender implements MailSender {
   private transport
 
@@ -64,7 +68,13 @@ export class SmtpSender implements MailSender {
       icalEvent: mail.ical ? { method: 'REPLY', content: mail.ical } : undefined
     }
     const outgoing = new MailComposer(options).compile()
-    await this.transport.sendMail({ envelope: outgoing.getEnvelope(), raw: await outgoing.build() })
+    let raw: Buffer
+    try {
+      raw = await outgoing.build()
+    } catch {
+      throw new Unmade('unmade')
+    }
+    await this.transport.sendMail({ envelope: outgoing.getEnvelope(), raw })
     const copy = new MailComposer(options).compile()
     copy.keepBcc = true // your own copy says who else got it
     return { raw: await copy.build(), messageId }

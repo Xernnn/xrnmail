@@ -160,9 +160,14 @@ export class ImapWatcher implements MailWatcher {
    *  anything else on this connection, so it's asked for once. */
   async watch(changed: () => void): Promise<void> {
     const ended = new Promise<void>((resolve) => this.client.once('close', () => resolve()))
-    await this.client.connect()
-    const opened = await this.client.mailboxOpen('INBOX', { readOnly: true })
-    if (!opened.readOnly) throw new Error('The mailbox did not open read-only, so nothing was fetched.')
+    try {
+      await this.client.connect()
+      const opened = await this.client.mailboxOpen('INBOX', { readOnly: true })
+      if (!opened.readOnly) throw new Error('The mailbox did not open read-only, so nothing was fetched.')
+    } catch (e) {
+      await this.close() // signed in by now, perhaps: not left holding a connection
+      throw e
+    }
     for (const event of ['exists', 'expunge', 'flags']) this.client.on(event, () => changed())
     void this.client.idle().catch(() => undefined)
     await ended

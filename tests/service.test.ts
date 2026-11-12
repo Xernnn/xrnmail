@@ -447,6 +447,27 @@ describe('the Summary', () => {
     expect(service.list({ kind: 'summary' }).map((row) => [row.subject, row.summaryAt])[0]).toEqual(['Overnight letter', at(8, 0, 8)])
   })
 
+  it('holds what a sync stores by the rules as they are by then, not as they were when it began', async () => {
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['09:00', '13:00', '17:00'] })
+    gmail.add(rawMail({ subject: 'Fresh deals', from: NEWS, headers: ['List-Unsubscribe: <https://shop.example/u>'] }), { arrived: new Date(at(10, 30)) })
+    clock = at(10, 31)
+    // The sender goes into the Summary while the sync is signing in, after it has begun.
+    const deps = (service as unknown as { deps: ServiceDeps }).deps
+    const open = deps.openSource
+    deps.openSource = (account, login) => {
+      const source = open(account, login)
+      const connect = source.connect.bind(source)
+      source.connect = async () => {
+        await connect()
+        service.saveSummary(SUMMARY)
+      }
+      return source
+    }
+    await service.syncAll()
+    expect(service.overview().summary.held).toBe(1) // not held for the 13:00 batch
+    expect(service.overview().held).toBe(0)
+  })
+
   it('has a side of Subscriptions to itself', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     await arrive('Deals', 9, 0, NEWS)
@@ -915,6 +936,18 @@ describe('sending', () => {
     await smtp.listen(smtp.port)
     await later(61_000)
     expect(smtp.sent).toHaveLength(1)
+  })
+
+  it('says plainly that nothing went when an attachment has gone from the profile, not to check Sent', async () => {
+    const draft = await write()
+    const withFile = service.addFileBytes(draft.id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    rmSync(join(folder, String(draft.id)), { recursive: true, force: true })
+    service.send(draft.id)
+    await later(11_000)
+    expect(smtp.sent).toEqual([])
+    expect(service.drafts()[0]).toMatchObject({ id: draft.id, state: 'failed' })
+    expect(service.drafts()[0]?.error).toContain('nothing was sent')
+    expect(withFile.files).toHaveLength(1)
   })
 
   it('never retries once the message may have gone', async () => {
@@ -1787,6 +1820,15 @@ describe('new mail as it lands', () => {
     told()
     await new Promise((resolve) => setTimeout(resolve, WATCH_SETTLE_MS + 400))
     await eventually(() => expect(passes() - before).toBe(2))
+    service.stopWatching()
+  })
+
+  it('closes a watch that couldn\'t open the inbox, so failed tries don\'t pile up connections', async () => {
+    await signedIn()
+    gmail.refuseOpen.add('INBOX')
+    service.watchAll()
+    await eventually(() => expect(gmail.commands.filter((c) => c.startsWith('EXAMINE "INBOX"') || c === 'EXAMINE INBOX')).toHaveLength(1))
+    await eventually(() => expect(gmail.connections).toBe(0)) // Gmail allows fifteen, and this tried every minute
     service.stopWatching()
   })
 

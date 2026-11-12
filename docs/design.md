@@ -105,6 +105,8 @@ is all Undo and "send later" are. `tick()` sends what's due.
 - `SmtpSender` connects and signs in as its own step first, since that's the one failure that proves
   nothing left. nodemailer reports a connection lost after the message was handed over the same way as
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
+- A message that can't be put together, an attachment gone from the profile say, fails before
+  anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
 - Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
   attempt, so a crash comes back the same way instead of as a retry.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
@@ -199,6 +201,10 @@ stopping the rest.
   from an account that was no longer there, and nothing would ever take it out.
 - `UIDVALIDITY` changing means every stored UID in that folder now points at the wrong message, so that
   folder starts over, keeping the moment holding began.
+- When a message lands is worked out as it's stored, from the settings as they are then, not as they
+  were when the pass began: signing in and fetching can take seconds, and a sender put into the
+  Summary, let through or blocked meanwhile, or mail going live, must hold what the pass stores
+  after it. `retime` sees only what's already stored.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
@@ -219,7 +225,8 @@ to go again afterwards, because what changed may have missed it. The watch has i
 a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
 it again, as it does after anything else on that connection. A lost connection is retried after a
 minute, and the three-minute passes carry on regardless, so watching can fail without anything being
-missed.
+missed. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
+left open, every minute's try added one, until the service refused the account for having too many.
 
 Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
 no batch times, so nothing waits for a batch and the next delivery is none, which hides the delivery
@@ -296,10 +303,12 @@ sender can write what they like there.
 
 `holdOf` decides a message's moment, in this order: mail that never waits (from before the account,
 not in the inbox, your own) is there at once; a sender in the Summary waits for its next time, daily
-or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch. The
-Summary comes before straight through because it's the narrower choice (an address against a whole
-@domain, say), and the two lists are kept apart for the same address: adding to one takes it off the
-other.
+or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch.
+Named in both lists, the narrower naming wins: an address in one beats its @domain in the other, so
+a newsletter domain can wait for the Summary while one writer there comes straight through, and the
+other way round. The same address can't be in both, since adding to one takes it off the other; from
+settings older than that, the Summary wins. Times are on the clock, so a Summary lands at its time
+on the day after a change of clocks, and one set for an hour that's skipped lands an hour later.
 
 A message held for the Summary is marked (`summary`), and stays marked once it lands, so a Summary is
 simply the marked messages with the same `release_at`. The inbox and its counts leave marked mail out,
@@ -371,6 +380,12 @@ on disk (`faces/index.json` beside the pictures, readable only by this user): 30
 picture, 7 for none, 6 hours after a lookup failed. A company is asked about once for all its
 senders. Free mail domains and your own addresses get no logo. An account's chosen photo is kept
 the same way, with no expiry, and wins over its Gravatar on every address of that account.
+
+The index is only believed as far as it's the cache's own: an entry naming any file but one of the
+cache's own picture names (32 hex characters and a known extension), or a type it doesn't know, is
+left out, so a damaged or planted index can't have a file read from elsewhere or deleted when the
+face is looked up again. A picture gone from the folder is forgotten, and looked up again when next
+wanted, rather than showing initials until its month is out.
 
 Each lookup tells someone something, so the rules are about when and how:
 

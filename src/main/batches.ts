@@ -67,28 +67,39 @@ export function nextSummaryAfter(at: number, summary: SummaryRules): number {
 
 /** An address, or a whole @domain, that skips the wait. */
 export function isVip(address: string, vip: string[]): boolean {
+  return closeness(address, vip) > 0
+}
+
+/** How closely a list names an address: 2 by the address itself, 1 by its @domain, 0 not at all. */
+export function closeness(address: string, list: string[]): number {
   const who = address.trim().toLowerCase()
-  if (!who) return false
-  return vip.some((entry) => {
+  if (!who) return 0
+  let found = 0
+  for (const entry of list) {
     const rule = entry.trim().toLowerCase()
-    if (!rule) return false
-    return rule.startsWith('@') ? who.endsWith(rule) : who === rule
-  })
+    if (!rule) continue
+    if (rule === who) return 2
+    if (rule.startsWith('@') && who.endsWith(rule)) found = 1
+  }
+  return found
 }
 
 /**
  * When a message may be seen. Only new incoming inbox mail waits: anything from before the account
  * was added, your own sent mail, and mail filed away by a filter are there at once. A sender in the
- * Summary waits for the Summary, whatever the batches say; then the straight-through senders; then
- * everyone else waits for the next batch.
+ * Summary waits for the Summary, whatever the batches say, and one let straight through doesn't
+ * wait; named in both, by an address in one and its @domain in the other, the address is the
+ * narrower choice and wins. Everyone else waits for the next batch.
  */
 export function holdOf(mail: Arrival, ownAddress: string, holdFrom: number, rules: BatchRules): Hold {
   const now = { at: mail.arrived, summary: false }
   if (mail.arrived <= holdFrom) return now
   if (!mail.labels.includes('\\Inbox')) return now
   if (mail.fromAddress.toLowerCase() === ownAddress.toLowerCase()) return now
-  if (rules.summary && isVip(mail.fromAddress, rules.summary.senders)) return { at: nextSummaryAfter(mail.arrived, rules.summary), summary: true }
-  if (isVip(mail.fromAddress, rules.vip)) return now
+  const summary = rules.summary ? closeness(mail.fromAddress, rules.summary.senders) : 0
+  const straight = closeness(mail.fromAddress, rules.vip)
+  if (rules.summary && summary > 0 && summary >= straight) return { at: nextSummaryAfter(mail.arrived, rules.summary), summary: true }
+  if (straight > 0) return now
   return { at: nextBatchAfter(mail.arrived, rules.times) ?? mail.arrived, summary: false }
 }
 

@@ -214,6 +214,12 @@ export interface AvatarOptions {
 }
 
 const INDEX = 'index.json'
+/** The only names this cache gives its pictures. An index that names anything else, written by
+ *  something else or damaged, would have a face read from, or deleted at, a path of its choosing. */
+const PICTURE_FILE = new RegExp(`^[0-9a-f]{32}\\.(${Object.values(EXTENSIONS).join('|')})$`)
+const sound = (entry: Entry | undefined): entry is Entry =>
+  Boolean(entry) && typeof entry?.at === 'number' && typeof entry.until === 'number' &&
+  (entry.file === null || (typeof entry.file === 'string' && PICTURE_FILE.test(entry.file) && typeof entry.type === 'string' && entry.type in EXTENSIONS))
 
 export class Avatars {
   private entries = new Map<string, Entry>()
@@ -234,7 +240,7 @@ export class Avatars {
       const saved = JSON.parse(readFileSync(join(options.dir, INDEX), 'utf8')) as Record<string, Entry>
       const stale = options.now() - FOUND_MS
       for (const [key, entry] of Object.entries(saved)) {
-        if (!entry || typeof entry.at !== 'number' || typeof entry.until !== 'number') continue
+        if (!sound(entry)) continue
         // A "none" long past its time says nothing any more, and the list shouldn't grow for ever.
         if (!entry.file && entry.until < stale) continue
         this.entries.set(key, entry)
@@ -324,7 +330,13 @@ export class Avatars {
     const cached = this.urls.get(entry.file)
     if (cached) return cached
     const bytes = this.read(entry.file)
-    if (!bytes) return null
+    if (!bytes) {
+      // The picture has gone from the folder: what's known of it is forgotten, so it's looked up
+      // again the next time it's wanted instead of showing initials until its month is out.
+      this.entries.delete(key)
+      this.saveIndex()
+      return null
+    }
     const url = `data:${entry.type};base64,${bytes.toString('base64')}`
     if (this.urls.size >= MOST_KEPT_URLS) this.urls.clear()
     this.urls.set(entry.file, url)

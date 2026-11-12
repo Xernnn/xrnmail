@@ -91,6 +91,34 @@ describe('the Summary', () => {
     expect(holdOf(mail('news@shop.example'), 'me@x.com', HOLD_FROM, { times: [], vip: [], summary: DAILY })).toEqual({ at: at(7, 8), summary: true })
     expect(holdOf(mail('news@shop.example'), 'me@x.com', HOLD_FROM, { ...RULES, vip: ['@shop.example'], summary: DAILY })).toEqual({ at: at(7, 8), summary: true })
   })
+  it('lets an address through that its whole @domain would hold, since the address is the narrower choice', () => {
+    // @letters.example is in the Summary, and one writer there is let straight through.
+    const rules = { ...RULES, vip: ['editor@letters.example'], summary: DAILY }
+    expect(holdOf(mail('Editor@letters.example'), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(6, 10), summary: false })
+    expect(holdOf(mail('digest@letters.example'), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: at(7, 8), summary: true })
+  })
+  it('lands once a day at its time on the clock across a change of clocks, and an hour on when its time is skipped', () => {
+    const zone = process.env['TZ']
+    try {
+      for (const [where, month] of [['America/New_York', 2], ['Europe/London', 2], ['Australia/Sydney', 3], ['America/New_York', 10]] as const) {
+        process.env['TZ'] = where
+        for (let day = 1; day <= 28; day++) {
+          const next = new Date(nextSummaryAfter(new Date(2026, month, day, 9).getTime(), DAILY))
+          expect([where, next.getDate(), next.getHours(), next.getMinutes()]).toEqual([where, day + 1, 8, 0])
+        }
+      }
+      // 02:30 doesn't happen in New York on 8 March 2026: that day's lands at 03:30, and the next day's at 02:30.
+      process.env['TZ'] = 'America/New_York'
+      const night = { ...DAILY, time: '02:30' }
+      const skipped = nextSummaryAfter(new Date(2026, 2, 7, 10).getTime(), night)
+      expect([new Date(skipped).getDate(), new Date(skipped).getHours(), new Date(skipped).getMinutes()]).toEqual([8, 3, 30])
+      const after = nextSummaryAfter(skipped, night)
+      expect([new Date(after).getDate(), new Date(after).getHours(), new Date(after).getMinutes()]).toEqual([9, 2, 30])
+    } finally {
+      if (zone === undefined) delete process.env['TZ']
+      else process.env['TZ'] = zone
+    }
+  })
   it('never holds what never waits', () => {
     const rules = { ...RULES, summary: DAILY }
     expect(holdOf(mail('news@shop.example', { arrived: HOLD_FROM - 1 }), 'me@x.com', HOLD_FROM, rules)).toEqual({ at: HOLD_FROM - 1, summary: false })

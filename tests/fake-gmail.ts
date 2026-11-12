@@ -90,6 +90,8 @@ export class FakeGmail {
   refuseWrites = false
   /** Folders whose SEARCH is answered NO, as Gmail does when it's short of time. */
   refuseSearch = new Set<string>()
+  /** Folders, by the name they're asked for by, that won't be opened just now. */
+  refuseOpen = new Set<string>()
   /** What was moved out of All Mail, by the folder it went to. */
   moved: { uid: number; to: string }[] = []
   /** Gmail's documentation shows \\Inbox bare, and real sessions show it quoted. */
@@ -362,6 +364,7 @@ export class FakeGmail {
       case 'SELECT': {
         const name = /"([^"]+)"|(\S+)$/.exec(rest.slice(full.length + 1).replace(/ \(.*\)$/, ''))
         const path = name?.[1] ?? name?.[2] ?? ''
+        if (this.refuseOpen.has(path)) return void socket.write(`${tag} NO [UNAVAILABLE] Try again later\r\n`)
         const box = path === this.allMail || (path === 'INBOX' && !this.options.plain) ? this.home : this.boxes.find((b) => b.path === path)
         if (!box) return void socket.write(`${tag} NO no such mailbox\r\n`)
         const session = socket as Socket & { readOnly?: boolean; selected?: FakeBox }

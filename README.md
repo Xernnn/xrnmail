@@ -217,7 +217,7 @@ Done differently:
 - How the Summary and batches sit together is xrnmail's, since Edison has no batches. A sender in the
   Summary waits for its time, not the next batch, and does with batches off; Deliver now is for the
   batch and leaves it waiting. Letting a sender straight through takes them out of it, and adding one
-  to it takes them off that list. Its mail stays in your service's inbox: only this laptop shows it
+  to it takes them off that list; an address in one beats its @domain in the other. Its mail stays in your service's inbox: only this laptop shows it
   apart.
 - The Inbox set is from Inbox's own Shift+? list, as people who used it wrote it down, since Google's
   help page only ever said to press Shift+?. Apple's page leaves out deleting, flagging and searching,
