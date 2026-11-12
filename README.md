@@ -95,8 +95,11 @@ keyring.
 Press `?` for the keys. The set is Edison Mail's, with Command read as Ctrl: `c` or `d` writes, `r` or
 Ctrl+R replies, Backspace takes a thread out of view (archives it), Shift+Backspace deletes, Ctrl+S
 flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
-archives, `#` deletes, `z` undoes), and Settings, Shortcuts has the Gmail set alone, where Delete
-deletes.
+archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets Edison offers: Gmail's
+(xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
+maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
+new key. A key another action has is offered to take over, and a change can go back to the set's own.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
@@ -109,7 +112,6 @@ without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time l
 
 Not here, though Edison has them:
 
-- Changing single shortcuts, and the Apple Mail, Outlook and Inbox sets of keys.
 - Choosing and ordering the accounts' own labels in Edit Menu, and making a label or folder from it.
   Edit Menu here covers the gathered folders and the Assistant's lists.
 
@@ -130,6 +132,10 @@ Done differently:
   batch and leaves it waiting. Letting a sender straight through takes them out of it, and adding one
   to it takes them off that list. Its mail stays in your service's inbox: only this laptop shows it
   apart. Edison's picking of several senders at once to add, and its page for each sender, aren't here.
+- The Inbox set is from Inbox's own Shift+? list, as people who used it wrote it down, since Google's
+  help page only ever said to press Shift+?. Apple's page leaves out deleting, flagging and searching,
+  so those are from Mail's menus. Outlook's is Outlook for Mac's.
+- A changed key is one key for its action, in place of all the set's keys for it.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
@@ -138,8 +144,8 @@ Done differently:
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
 - Drafts stay on this laptop, and don't appear in your service's Drafts.
-- No mail rules, translation, or summaries, no shortcuts of your own choosing, and nothing is built for
-  Windows or macOS or for phones.
+- No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
+  macOS or for phones.
 - Senders show as coloured initials, never photos or company logos, because fetching one would tell
   someone who writes to you.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It

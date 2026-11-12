@@ -1,4 +1,4 @@
-import type { KeySet } from './keys'
+import type { KeyChanges, KeySet } from './keys'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -133,8 +133,11 @@ export interface Settings {
   sidebarIcons: boolean
   /** Times as 17:30, not 5:30 PM. */
   clock24: boolean
-  /** Which set of keys the keyboard answers to: Edison Mail's, or Gmail's as xrnmail had them. */
+  /** Which set of keys the keyboard answers to: Edison Mail's, Gmail's as xrnmail had them, Apple
+   *  Mail's, Outlook's or Inbox's. */
   keys: KeySet
+  /** Keys the person changed, for each set. */
+  keyChanges: Partial<Record<KeySet, KeyChanges>>
   /** Whether rows offer buttons under the pointer, and which, in order. */
   quickOn: boolean
   quickActions: QuickAction[]
@@ -337,7 +340,7 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 

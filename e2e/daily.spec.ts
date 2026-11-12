@@ -202,7 +202,7 @@ test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen i
   await page.getByRole('button', { name: 'Settings' }).click()
   await page.getByRole('button', { name: 'Shortcuts' }).click()
   await page.getByLabel('Shortcut set').selectOption('gmail')
-  await expect(page.getByText('Remove from view')).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Remove from view' }).getByText('None')).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
   // The window hears of a changed setting a moment after it's saved. Its own list of keys says when.
   await page.keyboard.press('?')
@@ -216,6 +216,90 @@ test('Edison\'s keys work beside the old ones, and the Gmail set can be chosen i
   await expect(page.locator('.thread-subject')).toHaveText('Second')
   await page.keyboard.press('Delete')
   await expect(row('Second')).toHaveCount(0)
+})
+
+test('keys of your own choosing: changed in Settings, taken over from another action, reset, and the Apple Mail, Outlook and Inbox sets', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['First', 'Second', 'Third', 'Fourth', 'Fifth'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(8 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const row = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject })
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const shortcut = (what: string): ReturnType<Page['locator']> => settings.getByRole('group', { name: what, exact: true })
+  const openShortcuts = async (): Promise<void> => {
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await settings.getByRole('button', { name: 'Shortcuts' }).click()
+  }
+  // The window hears of a changed setting a moment after it's saved. Its own list of keys says when.
+  const knows = async (what: string, keys: string): Promise<void> => {
+    await page.keyboard.press('?')
+    await expect(page.locator('.keys > div').filter({ has: page.getByText(what, { exact: true }) }).locator('kbd')).toHaveText(keys)
+    await page.getByRole('button', { name: 'Done' }).click()
+  }
+  await openShortcuts()
+  await settings.getByLabel('Shortcut set').selectOption('apple')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['Ctrl+Alt+A'])
+  await expect(shortcut('Mark read or unread').locator('kbd')).toHaveText(['Ctrl+Shift+U'])
+  await expect(shortcut('New message').getByText('None')).toBeVisible() // Command-N is the menu's, listed at the foot
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Mark read or unread', 'Ctrl+Shift+U')
+  await list.getByText('Fifth').click()
+  await page.keyboard.press('e') // Apple Mail has no letters of its own
+  await page.keyboard.press('Control+Alt+a')
+  await expect(page.getByText('Archived')).toBeVisible()
+  await expect(row('Fifth')).toHaveCount(0)
+  await expect(row('Fourth')).toBeVisible() // e archived nothing, or the reader would have moved on to Fourth for this
+
+  await openShortcuts()
+  await shortcut('Archive').getByRole('button', { name: 'Change the key for Archive' }).click()
+  await expect(shortcut('Archive')).toContainText('Press the new key')
+  await page.keyboard.press('g')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['g'])
+  await shortcut('Flag').getByRole('button', { name: 'Change the key for Flag' }).click()
+  await page.keyboard.press('Control+r')
+  await expect(shortcut('Flag')).toContainText("Ctrl+R is Reply's.")
+  await shortcut('Flag').getByRole('button', { name: 'Use it here' }).click()
+  await expect(shortcut('Flag').locator('kbd')).toHaveText(['Ctrl+R'])
+  await expect(shortcut('Reply').getByText('None')).toBeVisible()
+  await shortcut('Delete').getByRole('button', { name: 'Change the key for Delete' }).click()
+  await page.keyboard.press('Control+n')
+  await expect(shortcut('Delete')).toContainText('Ctrl+N is for New Message in the menu.')
+  await page.keyboard.press('Escape') // calls off the choosing, and leaves Settings open
+  await expect(shortcut('Delete').locator('kbd')).toHaveText(['Backspace', 'Del'])
+  await expect(settings).toBeVisible()
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Flag', 'Ctrl+R')
+  await list.getByText('Fourth').click()
+  await page.keyboard.press('Control+r')
+  await expect(row('Fourth').getByLabel('Flagged')).toBeVisible()
+  await page.keyboard.press('g')
+  await expect(row('Fourth')).toHaveCount(0)
+  expect((await page.evaluate(() => window.mail.settings())).keyChanges).toEqual({ apple: { archive: 'g', flag: 'Ctrl+R' } })
+
+  await openShortcuts()
+  await shortcut('Archive').getByRole('button', { name: 'Reset Archive to the Apple Mail set' }).click()
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['Ctrl+Alt+A'])
+  await settings.getByRole('button', { name: 'Reset all to the Apple Mail set' }).click()
+  await expect(shortcut('Reply').locator('kbd')).toHaveText(['Ctrl+R'])
+  await settings.getByLabel('Shortcut set').selectOption('outlook')
+  await expect(shortcut('Forward').locator('kbd')).toHaveText(['Ctrl+J'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Forward', 'Ctrl+J')
+  await list.getByText('Third').click()
+  await page.keyboard.press('Control+e')
+  await expect(row('Third')).toHaveCount(0)
+  await openShortcuts()
+  await settings.getByLabel('Shortcut set').selectOption('inbox')
+  await expect(shortcut('Archive').locator('kbd')).toHaveText(['e', 'y', '[', ']'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await knows('Pin', 'Shift+P')
+  await list.getByText('Second').click()
+  await page.keyboard.press('y') // Done
+  await expect(row('Second')).toHaveCount(0)
+  await list.getByText('First').click()
+  await page.keyboard.press('Shift+P')
+  await expect(row('First').getByLabel('Pinned')).toBeVisible()
 })
 
 test('nothing refreshes once quitting has closed the store', async () => {

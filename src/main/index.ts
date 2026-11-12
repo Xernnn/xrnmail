@@ -8,6 +8,7 @@ import type {
   Rsvp, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
+import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS } from '@shared/types'
 import { parseMailto } from './compose'
@@ -279,7 +280,8 @@ function profile(value: unknown): ProfilePatch {
   for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
-  if (p['keys'] === 'edison' || p['keys'] === 'gmail') patch.keys = p['keys']
+  if (isKeySet(p['keys'])) patch.keys = p['keys']
+  if (p['keyChanges'] && typeof p['keyChanges'] === 'object') patch.keyChanges = cleanAllChanges(p['keyChanges'])
   if (Array.isArray(p['quickActions'])) patch.quickActions = p['quickActions'].slice(0, QUICK_SLOTS).map((a) => text(a, 16) as QuickAction)
   for (const key of ['swipeLeft', 'swipeLeftLong', 'swipeRight', 'swipeRightLong'] as const) {
     if (p[key] !== undefined) patch[key] = text(p[key], 16) as SwipeAction

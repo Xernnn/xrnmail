@@ -1309,6 +1309,18 @@ describe('settings', () => {
     expect(service.settings()).toMatchObject({ swipeLeft: before.swipeLeft, swipeRight: before.swipeRight })
   })
 
+  it('keeps each set\'s own changed keys, made whole, and a set it has never heard of as Edison\'s', () => {
+    expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
+    service.saveProfile({ keys: 'outlook', keyChanges: { outlook: { archive: 'g', reply: 'Ctrl+N', bogus: 'x' } as never, edison: { flag: 'Ctrl+G' } } })
+    expect(service.settings()).toMatchObject({ keys: 'outlook', keyChanges: { outlook: { archive: 'g' }, edison: { flag: 'Ctrl+G' } } })
+    service.saveProfile({ keys: 'nonsense' as never })
+    expect(service.settings().keys).toBe('outlook')
+    service.saveProfile({ theme: 'dark' }) // another setting leaves them be
+    expect(service.settings().keyChanges).toEqual({ outlook: { archive: 'g' }, edison: { flag: 'Ctrl+G' } })
+    store.setMeta('settings', JSON.stringify({ ...service.settings(), keys: 'vim', keyChanges: undefined })) // as an older version would have it
+    expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
+  })
+
   it('keeps the list\'s choices within what a row can show', () => {
     expect(service.settings()).toMatchObject({
       previewLines: 2, quickOn: true, quickActions: ['archive', 'flag', 'trash', 'read'],

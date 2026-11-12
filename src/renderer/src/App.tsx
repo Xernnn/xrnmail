@@ -13,7 +13,7 @@ import { sanitize } from './MailBody'
 import { IconButton, TimeMenu } from './Menus'
 import { Reader, type Panel, type QuickSend, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
-import { KEY_LISTS, KEYS, keyName, type KeyCommand, type KeySet } from '@shared/keys'
+import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
@@ -75,7 +75,7 @@ export function titleOf(view: View, many: boolean): string {
   return many && GATHERED.includes(view.kind) && !('account' in view && view.account) ? `All ${title}` : title
 }
 
-function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
+function Help({ close, set, changes }: { close(): void; set: KeySet; changes?: KeyChanges }): ReactNode {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => dialog.current?.showModal(), [])
   return (
@@ -85,7 +85,7 @@ function Help({ close, set }: { close(): void; set: KeySet }): ReactNode {
         <button className="quiet" onClick={close}>Done</button>
       </header>
       <dl className="keys">
-        {KEY_LISTS[set].map(([key, what]) => (
+        {keyList(set, changes).map(([key, what]) => (
           <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>
         ))}
       </dl>
@@ -698,6 +698,16 @@ export function App(): ReactNode {
         },
         read: () => void run(targets(), { kind: 'read' }),
         unread: () => void run(targets(), { kind: 'unread' }),
+        toggleRead: () => {
+          const unread = picked.size > 0 ? list.some((r) => picked.has(keyOf(r)) && r.unread > 0) : messages.some((m) => !m.seen)
+          void run(targets(), { kind: unread ? 'read' : 'unread' })
+        },
+        pin: () => {
+          if (bins) return
+          const pinned = picked.size > 0 ? list.filter((r) => picked.has(keyOf(r))).every((r) => r.pinned) : messages.some((m) => m.pinned)
+          void pin(targets(), !pinned)
+        },
+        sync: () => void window.mail.syncNow(),
         snooze: () => {
           if (picked.size > 0) setBulkSnooze(true)
           else if (open) setPanel('snooze')
@@ -712,7 +722,8 @@ export function App(): ReactNode {
         undo: () => toast?.undo?.(),
         help: () => setHelp(true)
       }
-      const command = KEYS[profile?.keys ?? 'edison'][keyName(event)]
+      const set = profile?.keys ?? 'edison'
+      const command = keysFor(set, profile?.keyChanges[set])[keyName(event)]
       const handler = command && commands[command]
       if (!handler) return
       event.preventDefault()
@@ -833,7 +844,7 @@ export function App(): ReactNode {
           {toast.undo && <button className="link" onClick={() => undoNow(toast.undo)}>Undo</button>}
         </div>
       )}
-      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} />}
+      {help && <Help close={() => setHelp(false)} set={profile?.keys ?? 'edison'} changes={profile?.keyChanges[profile.keys]} />}
       {settings && (
         <SettingsDialog accounts={accounts} version={version} tab={settings} ask={ask} close={() => setSettings(null)}
           editMenu={SOLO ? undefined : () => { setSettings(null); setEditingMenu(true) }} />

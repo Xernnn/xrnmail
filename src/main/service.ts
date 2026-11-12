@@ -4,6 +4,7 @@ import type {
 } from '@shared/types'
 import { QUICK_SLOTS } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
+import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
@@ -64,6 +65,7 @@ const DEFAULT_SETTINGS: Settings = {
   sidebarIcons: true,
   clock24: true,
   keys: 'edison',
+  keyChanges: {},
   quickOn: true,
   quickActions: ['archive', 'flag', 'trash', 'read'],
   swipes: true,
@@ -1254,7 +1256,10 @@ export class MailService {
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
-      return { ...merged, sidebar: cleanSidebar(merged.sidebar), identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn)) }
+      return {
+        ...merged, sidebar: cleanSidebar(merged.sidebar), keys: isKeySet(merged.keys) ? merged.keys : 'edison', keyChanges: cleanAllChanges(merged.keyChanges),
+        identities: Object.fromEntries(Object.entries(merged.identities).map(filledIn))
+      }
     } catch {
       return DEFAULT_SETTINGS
     }
@@ -1314,7 +1319,8 @@ export class MailService {
       sidebar: patch.sidebar ? cleanSidebar(patch.sidebar) : settings.sidebar,
       sidebarIcons: patch.sidebarIcons ?? settings.sidebarIcons,
       clock24: patch.clock24 ?? settings.clock24,
-      keys: patch.keys ?? settings.keys,
+      keys: isKeySet(patch.keys) ? patch.keys : settings.keys,
+      keyChanges: patch.keyChanges ? cleanAllChanges(patch.keyChanges) : settings.keyChanges,
       quickOn: patch.quickOn ?? settings.quickOn,
       quickActions: Array.isArray(patch.quickActions) ? cleanQuick(patch.quickActions) : settings.quickActions,
       swipes: patch.swipes ?? settings.swipes,

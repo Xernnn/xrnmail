@@ -355,8 +355,19 @@ Rows saved as "compact" by an older version read as one line of preview.
 Keys live in `shared/keys.ts`, apart from the page so they can be tested without one. `keyName` gives a
 press a name ("e", "Shift+Backspace", "Ctrl+Shift+R"), and each set maps names to commands. The Edison
 set is Edison Mail's own keys with Command read as Ctrl, plus the keys xrnmail already had where they
-don't collide; the Gmail set is those older keys alone. Keys pressed inside a message's frame are passed
-on with their modifiers, so they reach the same table.
+don't collide; the Gmail set is those older keys alone. Apple Mail's, Outlook's and Inbox's come from
+their makers' lists. Command is read as Ctrl and Option as Alt; Control held with Command becomes Alt,
+since Ctrl is taken by then, and Control alone stays Ctrl. Every set has the arrows, Esc and `?`. Keys
+pressed inside a message's frame are passed on with their modifiers, so they reach the same table.
+
+What a person changes is kept for each set apart (`keyChanges`), as one key for an action in place of
+the set's keys for it, or none. `keysFor` lays the changes over the set, and a changed key wins: an
+action that had it in the set loses it. That's what taking a key over from another action is, so the
+conflict is settled by asking and then saving the change, with nothing else to keep in step. The keys
+of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for itself (Tab, Enter,
+Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
+named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
+off the choosing instead of closing Settings.
 
 "Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
 Sent label. All Mail is still everything.

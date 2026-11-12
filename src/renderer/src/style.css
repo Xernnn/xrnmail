@@ -563,6 +563,17 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .tile input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
 .tile-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #fff; font-size: 15px; font-weight: 700; }
 
+/* Settings, Shortcuts: each action, its keys, and Change. */
+.settings section.shortcuts { gap: 0; padding-top: 4px; }
+.shortcut { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 1.3fr) auto; align-items: center; gap: 12px; min-height: 40px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
+.shortcut.choosing { background: var(--accent-soft); margin: 0 -10px; padding: 4px 10px; border-radius: 8px; }
+.shortcut-keys { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.shortcut-keys kbd { padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); font: 12px/1.5 inherit; white-space: nowrap; }
+.shortcut-press { color: var(--accent-ink); font-size: 13px; font-weight: 600; }
+.shortcut-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.shortcut-actions .quiet { padding: 4px 10px; }
+.shortcuts > .quiet { justify-self: start; margin-top: 14px; }
+
 /* The Summary's schedule, in Settings and on first use: Daily or Weekly, then the time. */
 .schedule { display: grid; gap: 10px; max-width: 380px; }
 .schedule-row { display: flex; align-items: center; gap: 16px; font-size: 14px; }
