@@ -1093,9 +1093,10 @@ export class Store {
 
   /** Threads in Summary with something unread. */
   summaryUnread(now: number): number {
+    // Counted as pairs: run together, two accounts' thread names could spell the same thing.
     return Number(this.one(
-      `SELECT COUNT(DISTINCT account || thread) AS n FROM messages
-       WHERE summary = 1 AND release_at <= ? AND hidden = 0 AND bin = 0 AND in_inbox = 1 AND seen = 0`,
+      `SELECT COUNT(*) AS n FROM (SELECT DISTINCT account, thread FROM messages
+       WHERE summary = 1 AND release_at <= ? AND hidden = 0 AND bin = 0 AND in_inbox = 1 AND seen = 0)`,
       now
     )?.['n'] ?? 0)
   }
@@ -1105,12 +1106,13 @@ export class Store {
     const at = this.one('SELECT MAX(release_at) AS t FROM messages WHERE summary = 1 AND release_at <= ? AND hidden = 0', now)?.['t']
     if (at == null) return null
     const rows = this.all(
-      `SELECT account || thread AS thread, from_name, from_address FROM messages
+      `SELECT account, thread, from_name, from_address FROM messages
        WHERE summary = 1 AND release_at = ? AND hidden = 0 AND bin = 0 AND in_inbox = 1 AND seen = 0 ORDER BY arrived DESC`,
       Number(at)
     )
     const senders = [...new Set(rows.map((r) => String(r['from_name'] || r['from_address'])))]
-    return { at: Number(at), unread: new Set(rows.map((r) => String(r['thread']))).size, senders }
+    const threads = new Set(rows.map((r) => JSON.stringify([String(r['account']), String(r['thread'])])))
+    return { at: Number(at), unread: threads.size, senders }
   }
 
   /** Who sent each message a delivery brought in (after, upto], one entry a message, and whether it

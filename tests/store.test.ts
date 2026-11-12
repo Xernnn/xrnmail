@@ -234,6 +234,20 @@ describe('an older file', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('counts a Summary\'s unread threads by account and thread, not by the two run together', () => {
+    const dir = folder()
+    const store = new Store(join(dir, 'mail.sqlite'))
+    const db = (store as unknown as { db: DatabaseSync }).db
+    // "a@b.co" + "m1" and "a@b.com" + "1" spell the same thing run together.
+    db.exec(`INSERT INTO messages(account, uid, thread, subject, from_name, arrived, release_at, in_inbox, labels, summary)
+      VALUES('a@b.co', 1, 'm1', 'One', 'Letters', 100, 500, 1, '["\\\\Inbox"]', 1),
+            ('a@b.com', 2, '1', 'Two', 'Letters', 110, 500, 1, '["\\\\Inbox"]', 1)`)
+    expect(store.summaryUnread(1000)).toBe(2)
+    expect(store.latestSummary(1000)).toEqual({ at: 500, unread: 2, senders: ['Letters'] })
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('the first file of all can pin too', () => {
     const dir = folder()
     const path = join(dir, 'mail.sqlite')
