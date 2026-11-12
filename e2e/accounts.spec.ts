@@ -110,6 +110,45 @@ test('Focused and Other, and keeping a sender on one side', async () => {
   await expect(page.getByText('Weekly deals').first()).toBeVisible()
 })
 
+test('All Inboxes is every inbox, whole: Focused and Other are each account\'s own', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Weekly deals', from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.evaluate((secret) => window.mail.addAccount({ email: 'second@example.com', secret, provider: 'gmail' }), gmail.secret)
+  const side = page.locator('.sidebar')
+  const list = page.locator('.threads')
+  const tabs = page.getByRole('group', { name: 'Focused and Other' })
+  await side.getByRole('button', { name: /^All Inboxes/ }).click()
+  // Both accounts read the same fake server, so each message is there once for each.
+  await expect(list.getByText('Weekly deals')).toHaveCount(2, { timeout: 15_000 })
+  await expect(list.getByText('Lunch?')).toHaveCount(2)
+  await expect(tabs).toHaveCount(0)
+  await expect(page.locator('.view-title')).toHaveText('All Inboxes')
+  await expect(side.getByRole('button', { name: /^All Inboxes/ }).locator('.nav-count')).toHaveText('4')
+
+  // An account's own inbox still splits, and counts only its own Other.
+  await side.getByRole('button', { name: /^second@example\.com/ }).click()
+  await expect(tabs).toBeVisible()
+  await expect(list.getByText('Lunch?')).toHaveCount(1)
+  await expect(list.getByText('Weekly deals')).toHaveCount(0)
+  await expect(tabs.getByRole('button', { name: /^Other/ })).toHaveText('Other (1)')
+  await tabs.getByRole('button', { name: /^Other/ }).click()
+  await expect(list.getByText('Weekly deals')).toHaveCount(1)
+  await page.locator('.threads').getByText('Weekly deals').click()
+  await page.getByRole('button', { name: 'Mark unread' }).waitFor()
+  await side.getByRole('button', { name: /^me@example\.com/ }).click()
+  await expect(tabs.getByRole('button', { name: /^Other/ })).toHaveText('Other (1)')
+  await side.getByRole('button', { name: /^second@example\.com/ }).click()
+  await expect(tabs.getByRole('button', { name: /^Other/ })).toHaveText('Other')
+
+  // One account: its inbox is the only one, and keeps the split.
+  await page.evaluate(() => window.mail.removeAccount('second@example.com'))
+  await side.getByRole('button', { name: /^Inbox/ }).click()
+  await expect(tabs).toBeVisible()
+})
+
 test('the Assistant: parcels, and a Track link that was never in the message', async () => {
   run = await launch()
   const { page, gmail } = run

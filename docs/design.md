@@ -339,7 +339,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   with the server's own separator. The service's own names (INBOX, `[Gmail]`) and what IMAP can't
   name are turned down before anything is sent.
 - `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
-  floats under a selection, and what every key and button does.
+  floats under a selection, and what every key and button does. With several accounts, All Inboxes
+  asks for the inbox with no side, so it's whole; an account's own inbox, or the only account's, asks
+  for Focused or Other, and its Other tab counts that account's alone (`AccountView.otherUnread`).
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick
   actions and its swipes. A swipe is a short one or a long one each way: `swipeAction` decides from
   how far the row went.

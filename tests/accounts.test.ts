@@ -843,6 +843,18 @@ describe('Focused and Other', () => {
     expect(subjects(service.list({ kind: 'inbox', focus: 'other' }))).toEqual(['Lunch?'])
     expect(service.settings()).toMatchObject({ alwaysFocused: ['deals@shop.example'], alwaysOther: ['bo@example.com'] })
   })
+
+  it('each account counts its own Other, for its own inbox\'s tab', async () => {
+    yahoo.add(rawMail({ subject: 'Lunch again', from: 'Bo <bo@example.com>' }), { arrived: new Date(at(9, 30)) })
+    await add(Y, yahoo)
+    const other = (email: string): number | undefined => service.accounts().find((a) => a.email === email)?.otherUnread
+    expect([other(G), other(Y)]).toEqual([1, 0])
+    yahoo.add(rawMail({ subject: 'Flash sale', from: 'Sale <sale@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: new Date(at(9, 40)) })
+    gmail.add(rawMail({ subject: 'Daily digest', from: 'Digest <digest@news.example>', headers: ['List-Id: <digest.news.example>'] }), { arrived: new Date(at(9, 45)) })
+    await service.syncAll()
+    expect([other(G), other(Y)]).toEqual([2, 1])
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Daily digest', 'Flash sale', 'Lunch again', 'Lunch?', 'Weekly deals'])
+  })
 })
 
 describe('subscriptions', () => {

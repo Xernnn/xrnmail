@@ -194,7 +194,10 @@ export function App(): ReactNode {
   }
 
   const searching = search.trim() !== ''
-  const split = profile?.focused ?? false
+  // All Inboxes is every account's inbox whole. Focused and Other belong to each account's own, and
+  // to the inbox of the only account there is.
+  const allInboxes = view.kind === 'inbox' && !view.account && (accounts?.length ?? 0) > 1
+  const split = (profile?.focused ?? false) && view.kind === 'inbox' && !allInboxes
   const active: View = searching
     ? { kind: 'search', text: search.trim() }
     : split && view.kind === 'inbox' ? { ...view, focus: view.focus ?? 'focused' } : view
@@ -775,7 +778,8 @@ export function App(): ReactNode {
     : NO_SWIPES
   const quick = profile?.quickOn ? profile.quickActions : []
   const emptyList = showDrafts ? shownDrafts.length === 0 : !showSubscriptions && rows !== null && rows.length === 0
-  const otherCount = overview?.otherUnread ?? 0
+  const splitAccount = active.kind === 'inbox' ? accounts.find((a) => a.email === active.account) ?? (many ? undefined : accounts[0]) : undefined
+  const otherCount = splitAccount?.otherUnread ?? 0
   const inboxScope = active.kind === 'inbox' && active.account ? { account: active.account } : {}
   const batching = (profile?.batch.times.length ?? 0) > 0
 

@@ -39,8 +39,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
   ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
   and its right-click menu clears it. Reading from the list itself leaves its order as it is.
-- **Focused and Other:** people on one side, and everything sent to everyone on the other. Say which
-  side a sender belongs on and it stays there.
+- **Focused and Other:** people on one side, and everything sent to everyone on the other, in each
+  account's inbox. Say which side a sender belongs on and it stays there. All Inboxes is every
+  account's inbox whole, with nothing set aside, and its count is all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message.
 - **Subscriptions:** everyone mailing you in bulk, with Unsubscribe, Add to Summary and Delete all next
@@ -143,6 +144,9 @@ Done differently:
   hides what's inside it. An account's All Mail, Sent and the rest stay where they are. Making a label
   or folder goes to the server there and then, so it needs a connection, where other changes wait.
 - A changed key is one key for its action, in place of all the set's keys for it.
+- Edison's Focused Inbox is one switch for everything, and in its pictures All Inboxes is split too,
+  with All Other beside it. Here the switch (Settings, General) is the same one, but it splits only
+  each account's own inbox: All Inboxes shows every account's mail together, Other included.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 

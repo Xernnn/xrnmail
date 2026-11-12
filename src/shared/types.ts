@@ -31,6 +31,8 @@ export interface AccountView {
   folders: string[]
   /** Unread in its inbox. */
   unread: number
+  /** Of those, the ones on the Other side, for its inbox's Other tab. */
+  otherUnread: number
   /** How its mail is marked in shared views. */
   color: string
   /** How far it is through reading what's new, while there's a lot to read. */

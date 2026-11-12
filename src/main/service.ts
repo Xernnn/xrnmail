@@ -359,6 +359,7 @@ export class MailService {
         labels: config.gmail,
         folders: this.folders(email),
         unread: this.store.unreadThreads(now, 'm.account = ?', email),
+        otherUnread: this.store.unreadThreads(now, 'm.account = ? AND m.focus = 0', email),
         color: this.identity(email).color
       }
     })
