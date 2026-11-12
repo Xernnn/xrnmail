@@ -223,6 +223,9 @@ test('the Summary: a sender goes in from Subscriptions, its mail waits for the t
   // What came before stays where it was. What comes now waits for the Summary, whatever the batches say.
   await side.getByRole('button', { name: /^Inbox/ }).click()
   await expect(list.locator('.thread .subject')).toHaveText(['Two', 'One'])
+  // Servers date mail to the second, and mail dated within the second the account was first read
+  // counts as from before it, which never waits. All of the above can take less than that.
+  await new Promise((resolve) => setTimeout(resolve, 1200))
   gmail.add(rawMail({ subject: 'Three', from: 'Shop <hi@shop.example>', headers }))
   gmail.add(rawMail({ subject: 'Lunch?', from: 'Ada <ada@example.com>' }))
   await syncAndSettle(page)
