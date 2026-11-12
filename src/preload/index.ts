@@ -20,6 +20,7 @@ const api: MailApi = {
   saveBatch: (batch) => call('saveBatch', batch),
   saveBackfill: (days) => call('saveBackfill', days),
   saveSummary: (summary) => call('saveSummary', summary),
+  editSenders: (list, addresses, on) => call('editSenders', list, addresses, on),
   summarySenders: () => call('summarySenders'),
   connectHub: (url, user, secret) => call('connectHub', url, user, secret),
   disconnectHub: () => call('disconnectHub'),

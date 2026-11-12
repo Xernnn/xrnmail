@@ -28,8 +28,9 @@ export function landedWords(at: number, now = Date.now()): string {
   return `${day}, ${clock(at)}`
 }
 
-/** Daily or weekly, which day, and what time: the same controls in Settings and on first use. */
-export function SummarySchedule(props: { summary: SummarySettings; set(summary: SummarySettings): void }): ReactNode {
+/** Daily or weekly, which day, and what time: the same controls in Settings and on first use. Each
+ *  says only what it changes, so the senders are never sent back as they were when it was drawn. */
+export function SummarySchedule(props: { summary: SummarySettings; set(change: Partial<SummarySettings>): void }): ReactNode {
   const { summary, set } = props
   const suggested = SUGGESTED.some(([time]) => time === summary.time)
   const [picking, setPicking] = useState(!suggested)
@@ -40,14 +41,14 @@ export function SummarySchedule(props: { summary: SummarySettings; set(summary: 
         <span className="segments" role="group" aria-label="How often">
           {(['daily', 'weekly'] as const).map((every) => (
             <button key={every} type="button" className={summary.every === every ? 'segment on' : 'segment'} aria-pressed={summary.every === every}
-              onClick={() => set({ ...summary, every })}>{every === 'daily' ? 'Daily' : 'Weekly'}</button>
+              onClick={() => set({ every })}>{every === 'daily' ? 'Daily' : 'Weekly'}</button>
           ))}
         </span>
       </div>
       {summary.every === 'weekly' && (
         <label className="inline">
           On
-          <select aria-label="Summary day" value={summary.day} onChange={(e) => set({ ...summary, day: Number(e.target.value) })}>
+          <select aria-label="Summary day" value={summary.day} onChange={(e) => set({ day: Number(e.target.value) })}>
             {[1, 2, 3, 4, 5, 6, 0].map((day) => <option key={day} value={day}>{DAYS[day]}</option>)}
           </select>
         </label>
@@ -57,12 +58,12 @@ export function SummarySchedule(props: { summary: SummarySettings; set(summary: 
           <label className="schedule-time" key={time}>
             <span className="grow">{name} {atTime(time)}{time === '08:00' ? ' (default)' : ''}</span>
             <input type="radio" name="summary-time" checked={!picking && summary.time === time}
-              onChange={() => { setPicking(false); set({ ...summary, time }) }} />
+              onChange={() => { setPicking(false); set({ time }) }} />
           </label>
         ))}
         <label className="schedule-time">
           <span className="grow">Pick a time</span>
-          {picking && <input type="time" aria-label="Summary time" value={summary.time} onChange={(e) => { if (e.target.value) set({ ...summary, time: e.target.value }) }} />}
+          {picking && <input type="time" aria-label="Summary time" value={summary.time} onChange={(e) => { if (e.target.value) set({ time: e.target.value }) }} />}
           <input type="radio" name="summary-time" aria-label="Pick a time" checked={picking} onChange={() => setPicking(true)} />
         </label>
       </div>
@@ -79,7 +80,7 @@ export function ScheduleDialog(props: { summary: SummarySettings; done(summary: 
     <dialog ref={dialog} className="confirm schedule-dialog" aria-label="When your Summary arrives" onCancel={() => props.done(null)}>
       <h2>When should your Summary arrive?</h2>
       <p className="muted">Its senders' new mail waits, and comes together at this time.</p>
-      <SummarySchedule summary={summary} set={setSummary} />
+      <SummarySchedule summary={summary} set={(change) => setSummary((now) => ({ ...now, ...change }))} />
       <div className="confirm-end">
         <button className="quiet" onClick={() => props.done(null)}>Cancel</button>
         <button className="primary" autoFocus onClick={() => props.done({ ...summary, chosen: true })}>Schedule</button>

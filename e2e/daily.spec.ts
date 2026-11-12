@@ -1312,6 +1312,49 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   await expect(row.locator('time')).toBeVisible()
 })
 
+test('two settings changed one straight after the other both stick, and so do two senders put into the Summary', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const headers = ['List-Unsubscribe: <https://list.example/u>']
+  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Letter', from: 'Post <news@post.example>', headers }), { arrived: earlier(2) })
+  await signIn(run)
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await settings.getByRole('button', { name: 'Customize Actions' }).click()
+  await expect(settings.getByLabel('Action 4')).toHaveValue('read')
+  // Both in the same moment, before the first could be saved and read back. Each used to be built
+  // from the settings as they were read before either, so the second put the first one back.
+  await page.evaluate(() => {
+    const choose = (label: string, value: string): void => {
+      const select = [...document.querySelectorAll<HTMLSelectElement>('.settings-page select')].find((s) => s.labels[0]?.textContent?.startsWith(label))
+      if (!select) throw new Error(`no ${label}`)
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value)
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    choose('Action 1', 'snooze')
+    choose('Action 4', 'none')
+  })
+  await expect(settings.getByLabel('Action 1')).toHaveValue('snooze')
+  await expect(settings.getByLabel('Action 4')).toHaveValue('none')
+  await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).quickActions).toEqual(['snooze', 'flag', 'trash', 'none'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await settings.getByRole('button', { name: 'Customize Actions' }).click()
+  await expect(settings.getByLabel('Action 1')).toHaveValue('snooze')
+  await expect(settings.getByLabel('Action 4')).toHaveValue('none')
+  await settings.getByRole('button', { name: 'Done' }).click()
+
+  await page.evaluate(() => window.mail.saveSummary({ chosen: true }))
+  await page.getByRole('button', { name: 'Subscriptions' }).click()
+  await expect(page.getByRole('button', { name: 'Add news@post.example to Summary' })).toBeVisible()
+  await page.evaluate(() => {
+    for (const who of ['hi@shop.example', 'news@post.example']) document.querySelector<HTMLButtonElement>(`button[aria-label="Add ${who} to Summary"]`)?.click()
+  })
+  await expect(page.getByText('No subscriptions')).toBeVisible()
+  await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).summary.senders.slice().sort()).toEqual(['hi@shop.example', 'news@post.example'])
+})
+
 test('settings can be searched', async () => {
   run = await launch()
   const { page } = run

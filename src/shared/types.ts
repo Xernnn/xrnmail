@@ -382,6 +382,13 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
+/** The lists of senders that are added to and taken from one at a time: straight through, the
+ *  Summary, muted, blocked, and those whose pictures load by themselves. */
+export type SenderList = 'vip' | 'summary' | 'muted' | 'blocked' | 'imagesFrom'
+export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', 'blocked', 'imagesFrom']
+
+/** Only what's named changes. Each account named in `identities` has its identity replaced, and the
+ *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
@@ -415,9 +422,13 @@ export interface MailApi {
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
   settings(): Promise<Settings>
-  saveBatch(batch: BatchSettings): Promise<void>
-  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the batches. */
-  saveSummary(summary: SummarySettings): Promise<void>
+  /** Only what's named changes, so a page that's behind can't undo what it hasn't heard of. */
+  saveBatch(batch: Partial<BatchSettings>): Promise<void>
+  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the
+   *  batches. Only what's named changes. */
+  saveSummary(summary: Partial<SummarySettings>): Promise<void>
+  /** Senders into one of the lists of them, or out of it, with the rest of the list as it is then. */
+  editSenders(list: SenderList, addresses: string[], on: boolean): Promise<void>
   /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
   summarySenders(): Promise<Subscription[]>
   saveBackfill(days: number): Promise<void>

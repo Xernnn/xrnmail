@@ -3,8 +3,9 @@ import {
   AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
 } from 'lucide-react'
 import {
-  QUICK_SLOTS, type AccountView, type BatchSettings, type Identity, type ProfilePatch, type QuickAction, type Settings, type SummarySettings, type SwipeAction, type Template
+  QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type SummarySettings, type SwipeAction, type Template
 } from '@shared/types'
+import { SettingsKeeper, type SettingsChange } from '@shared/keeper'
 import type { Question } from './Common'
 import { problem } from './format'
 import {
@@ -56,6 +57,12 @@ const QUICK_NAMES: [QuickAction, string][] = [
 ]
 
 type Save = (patch: ProfilePatch) => void
+/** A change worked out from the settings with every change before it in them, never from what a
+ *  page was last drawn with: two made in quick succession would otherwise both start from the same
+ *  old settings, and the second would undo the first. */
+type Change = (make: (now: Settings) => SettingsChange | null) => void
+/** Senders into one of the lists of them, or out of it. */
+type Senders = (list: SenderList, address: string, on: boolean) => void
 
 /** A tick box with its words after it, as Edison's settings have them. */
 function Check(props: { label: string; on: boolean; set(on: boolean): void }): ReactNode {
@@ -94,13 +101,14 @@ const WORDS = Object.fromEntries(COMMANDS) as Record<KeyCommand, string>
 /** Edison's Shortcuts page: a set to start from, then each action with its keys, any of which can
  *  be changed by pressing the new one. A key another action has is offered to take over, and each
  *  change can go back to the set's own. */
-function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: ProfilePatch): void; all: Settings['keyChanges'] }): ReactNode {
+function Shortcuts(props: { set: KeySet; changes: KeyChanges; change: Change }): ReactNode {
   const { set, changes } = props
   const [choosing, setChoosing] = useState<Choosing | null>(null)
   const name = KEY_SETS.find(([id]) => id === set)?.[1] ?? 'Edison'
-  const saveChanges = (next: KeyChanges): void => {
+  /** [edit] is given this set's changes as they are by then. */
+  const saveChanges = (edit: (changes: KeyChanges) => KeyChanges): void => {
     setChoosing(null)
-    props.save({ keyChanges: { ...props.all, [set]: next } })
+    props.change((now) => ({ profile: { keyChanges: { ...now.keyChanges, [set]: edit(now.keyChanges[set] ?? {}) } } }))
   }
 
   // While a key is being chosen, the next press is it. Esc calls it off instead of closing Settings.
@@ -115,7 +123,7 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: Profil
       if (problem) return setChoosing({ command: choosing.command, problem })
       const taken = holder(set, changes, pressed, choosing.command)
       if (taken) return setChoosing({ command: choosing.command, key: pressed, taken })
-      saveChanges(rebound(changes, choosing.command, pressed))
+      saveChanges((now) => rebound(now, choosing.command, pressed))
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -124,7 +132,7 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: Profil
   return (
     <>
       <section>
-        <Choice label="Shortcut set" value={set} options={KEY_SETS} set={(keys) => { setChoosing(null); props.save({ keys }) }} />
+        <Choice label="Shortcut set" value={set} options={KEY_SETS} set={(keys) => { setChoosing(null); props.change(() => ({ profile: { keys } })) }} />
         <p className="muted note">Press Change beside an action, then the key you want for it.</p>
       </section>
       <section className="shortcuts" aria-label="Shortcuts">
@@ -143,14 +151,14 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: Profil
               </span>
               <span className="shortcut-actions">
                 {here && choosing.key && (
-                  <button className="quiet" onClick={() => saveChanges(rebound(changes, command, choosing.key ?? ''))}>Use it here</button>
+                  <button className="quiet" onClick={() => saveChanges((now) => rebound(now, command, choosing.key ?? ''))}>Use it here</button>
                 )}
-                {here && !choosing.key && keys.length > 0 && <button className="quiet" onClick={() => saveChanges(rebound(changes, command, ''))}>No key</button>}
+                {here && !choosing.key && keys.length > 0 && <button className="quiet" onClick={() => saveChanges((now) => rebound(now, command, ''))}>No key</button>}
                 {here
                   ? <button className="quiet" onClick={() => setChoosing(null)}>Cancel</button>
                   : <button className="quiet" aria-label={`Change the key for ${what}`} onClick={() => setChoosing({ command })}>Change</button>}
                 {!here && command in changes && (
-                  <button className="link" aria-label={`Reset ${what} to the ${name} set`} onClick={() => saveChanges(reset(changes, command))}>Reset</button>
+                  <button className="link" aria-label={`Reset ${what} to the ${name} set`} onClick={() => saveChanges((now) => reset(now, command))}>Reset</button>
                 )}
               </span>
             </div>
@@ -164,7 +172,7 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: Profil
           </div>
         ))}
         {Object.keys(changes).length > 0 && (
-          <button className="quiet" onClick={() => saveChanges({})}>Reset all to the {name} set</button>
+          <button className="quiet" onClick={() => saveChanges(() => ({}))}>Reset all to the {name} set</button>
         )}
       </section>
     </>
@@ -172,12 +180,12 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; save(patch: Profil
 }
 
 /** When the Summary lands, as Edison's page has it: the schedule, and a way to turn it off. */
-function Summary(props: { summary: SummarySettings; save(summary: SummarySettings): void; ask: Ask }): ReactNode {
+function Summary(props: { summary: SummarySettings; save(summary: Partial<SummarySettings>): void; ask: Ask }): ReactNode {
   const { summary, save } = props
   const senders = summary.senders.length
   const off = async (): Promise<void> => {
     const note = `${senders === 1 ? 'Its sender goes' : `Its ${senders} senders go`} back to the deliveries, with what's waiting for it.`
-    if (await props.ask({ title: 'Turn off Summary?', note, action: 'Turn off', danger: true })) save({ ...summary, senders: [], chosen: false })
+    if (await props.ask({ title: 'Turn off Summary?', note, action: 'Turn off', danger: true })) save({ senders: [], chosen: false })
   }
   return (
     <section>
@@ -200,19 +208,21 @@ const MODES: [boolean, string, string][] = [
 ]
 
 /** How mail arrives: live, or in batches at set times. Switching keeps the times for coming back. */
-function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void }): ReactNode {
-  const { batch, save } = props
+function Batches(props: { batch: Settings['batch']; change: Change }): ReactNode {
+  const { batch, change } = props
   const [time, setTime] = useState('')
   const [vip, setVip] = useState(batch.vip.join('\n'))
 
   const add = (): void => {
     if (!time) return
-    save({ ...batch, times: [...batch.times, time] })
+    change((now) => ({ batch: { times: [...now.batch.times, time] } }))
     setTime('')
   }
   const choose = (live: boolean): void => {
-    if (live === batch.live) return
-    save({ ...batch, live, times: !live && batch.times.length === 0 ? FIRST_TIMES : batch.times })
+    change((now) => {
+      if (live === now.batch.live) return null
+      return { batch: !live && now.batch.times.length === 0 ? { live, times: FIRST_TIMES } : { live } }
+    })
   }
 
   return (
@@ -242,7 +252,7 @@ function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void
           <div className="chips">
             {batch.times.map((t) => (
               <button key={t} className="chip" aria-label={`Remove ${t}`}
-                onClick={() => save({ ...batch, times: batch.times.filter((x) => x !== t) })}>
+                onClick={() => change((now) => ({ batch: { times: now.batch.times.filter((x) => x !== t) } }))}>
                 {t} <span aria-hidden="true">×</span>
               </button>
             ))}
@@ -254,11 +264,11 @@ function Batches(props: { batch: BatchSettings; save(batch: BatchSettings): void
             Straight through
             <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
               onChange={(e) => setVip(e.target.value)}
-              onBlur={() => save({ ...batch, vip: vip.split(/\s+/).filter(Boolean) })} />
+              onBlur={() => change(() => ({ batch: { vip: vip.split(/\s+/).filter(Boolean) } }))} />
           </label>
           <label className="inline">
             Early deliveries a day
-            <select value={batch.earlyPerDay} onChange={(e) => save({ ...batch, earlyPerDay: Number(e.target.value) })}>
+            <select value={batch.earlyPerDay} onChange={(e) => change(() => ({ batch: { earlyPerDay: Number(e.target.value) } }))}>
               {[0, 1, 2, 3, 5].map((n) => <option key={n}>{n}</option>)}
             </select>
           </label>
@@ -272,24 +282,29 @@ interface Identities {
   who(email: string): Identity
   edit(email: string, patch: Partial<Identity>): void
   set(email: string, patch: Partial<Identity>): void
-  flush(): void
+  /** Saves what's been typed for this account. */
+  flush(email: string): void
 }
 
+const NO_IDENTITY: Identity = { name: '', signature: '', aliases: [], color: '', notify: true }
+
 /** Each account's own name, signature and the rest, edited in place and saved when a field is left.
- *  One copy serves every page: a page opened while a save is still on its way would otherwise start
- *  from the settings as they were, and write the old name back with its own first save. */
-function useIdentities(settings: Settings, save: Save): Identities {
-  const [drafts, setDrafts] = useState<Record<string, Identity>>(settings.identities)
-  const who = (email: string): Identity => drafts[email] ?? { name: '', signature: '', aliases: [], color: '', notify: true }
+ *  What's typed and not yet saved is held once for every page, over the settings as they stand, and
+ *  a save sends that one account's identity alone: sending them all sent another account's as it
+ *  was when the page opened, and brought back one removed meanwhile. */
+function useIdentities(settings: Settings, change: Change): Identities {
+  const [typed, setTyped] = useState<Record<string, Partial<Identity>>>({})
+  const who = (email: string): Identity => ({ ...NO_IDENTITY, ...settings.identities[email], ...typed[email] })
+  const save = (email: string, patch: Partial<Identity>): void => {
+    const held = typed[email] ?? {}
+    setTyped(({ [email]: _saved, ...rest }) => rest)
+    change((now) => ({ profile: { identities: { [email]: { ...NO_IDENTITY, ...now.identities[email], ...held, ...patch } } } }))
+  }
   return {
     who,
-    edit: (email, patch) => setDrafts({ ...drafts, [email]: { ...who(email), ...patch } }),
-    set: (email, patch) => {
-      const next = { ...drafts, [email]: { ...who(email), ...patch } }
-      setDrafts(next)
-      save({ identities: next })
-    },
-    flush: () => save({ identities: drafts })
+    edit: (email, patch) => setTyped((now) => ({ ...now, [email]: { ...now[email], ...patch } })),
+    set: save,
+    flush: (email) => { if (typed[email]) save(email, {}) }
   }
 }
 
@@ -321,13 +336,13 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
   )
 }
 
-function Notifications(props: { accounts: AccountView[]; ids: Identities; muted: string[]; save: Save }): ReactNode {
+function Notifications(props: { accounts: AccountView[]; ids: Identities; muted: string[]; senders: Senders }): ReactNode {
   const { ids, muted } = props
   const [adding, setAdding] = useState('')
   const add = (): void => {
     const who = adding.trim()
     if (!who) return
-    props.save({ muted: [...muted, who] })
+    props.senders('muted', who, true)
     setAdding('')
   }
   return (
@@ -346,7 +361,7 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; muted:
         {muted.map((who) => (
           <div className="line" key={who}>
             <span className="grow">{who}</span>
-            <button className="quiet" aria-label={`Unmute ${who}`} onClick={() => props.save({ muted: muted.filter((m) => m !== who) })}>Unmute</button>
+            <button className="quiet" aria-label={`Unmute ${who}`} onClick={() => props.senders('muted', who, false)}>Unmute</button>
           </div>
         ))}
         <form className="line" onSubmit={(e) => { e.preventDefault(); add() }}>
@@ -404,7 +419,7 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
           <h3>{accounts.length > 1 ? a.email : 'Who you write as'}</h3>
           <label>
             Your name
-            <input value={ids.who(a.email).name} onChange={(e) => ids.edit(a.email, { name: e.target.value })} onBlur={ids.flush} />
+            <input value={ids.who(a.email).name} onChange={(e) => ids.edit(a.email, { name: e.target.value })} onBlur={() => ids.flush(a.email)} />
           </label>
           <label>
             Also sends as
@@ -459,9 +474,12 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
   )
 }
 
-function Actions(props: { settings: Settings; save: Save }): ReactNode {
-  const { settings, save } = props
-  const quick = Array.from({ length: QUICK_SLOTS }, (_, i) => settings.quickActions[i] ?? 'none')
+/** Every slot a row has, with nothing in the ones not chosen. */
+const slots = (actions: QuickAction[]): QuickAction[] => Array.from({ length: QUICK_SLOTS }, (_, i) => actions[i] ?? 'none')
+
+function Actions(props: { settings: Settings; save: Save; change: Change }): ReactNode {
+  const { settings, save, change } = props
+  const quick = slots(settings.quickActions)
   return (
     <>
       <section>
@@ -469,7 +487,7 @@ function Actions(props: { settings: Settings; save: Save }): ReactNode {
         <Check label="Show quick actions when the pointer is over a thread in the list" on={settings.quickOn} set={(quickOn) => save({ quickOn })} />
         {quick.map((action, i) => (
           <Choice key={i} label={`Action ${i + 1}`} value={action} options={QUICK_NAMES}
-            set={(next) => save({ quickActions: quick.map((old, at) => (at === i ? next : old)) })} />
+            set={(next) => change((now) => ({ profile: { quickActions: slots(now.quickActions).map((old, at) => (at === i ? next : old)) } }))} />
         ))}
       </section>
       <section>
@@ -506,19 +524,19 @@ function Signatures(props: { accounts: AccountView[]; ids: Identities }): ReactN
       {props.accounts.map((a) => (
         <label key={a.id}>
           {many ? `Signature for ${a.email}` : 'Signature'}
-          <textarea rows={4} value={ids.who(a.email).signature} onChange={(e) => ids.edit(a.email, { signature: e.target.value })} onBlur={ids.flush} />
+          <textarea rows={4} value={ids.who(a.email).signature} onChange={(e) => ids.edit(a.email, { signature: e.target.value })} onBlur={() => ids.flush(a.email)} />
         </label>
       ))}
     </section>
   )
 }
 
-function Blocked(props: { blocked: string[]; save: Save }): ReactNode {
+function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
   const [adding, setAdding] = useState('')
   const add = (): void => {
     const who = adding.trim()
     if (!who) return
-    props.save({ blocked: [...props.blocked, who] })
+    props.senders('blocked', who, true)
     setAdding('')
   }
   return (
@@ -528,7 +546,7 @@ function Blocked(props: { blocked: string[]; save: Save }): ReactNode {
       {props.blocked.map((who) => (
         <div className="line" key={who}>
           <span className="grow">{who}</span>
-          <button className="quiet" aria-label={`Unblock ${who}`} onClick={() => props.save({ blocked: props.blocked.filter((b) => b !== who) })}>Unblock</button>
+          <button className="quiet" aria-label={`Unblock ${who}`} onClick={() => props.senders('blocked', who, false)}>Unblock</button>
         </div>
       ))}
       <form className="line" onSubmit={(e) => { e.preventDefault(); add() }}>
@@ -539,7 +557,7 @@ function Blocked(props: { blocked: string[]; save: Save }): ReactNode {
   )
 }
 
-function Templates(props: { templates: Template[]; save(templates: Template[]): void }): ReactNode {
+function Templates(props: { templates: Template[]; save(edit: (templates: Template[]) => Template[]): void }): ReactNode {
   const { templates, save } = props
   const [name, setName] = useState('')
   const [text, setText] = useState('')
@@ -549,14 +567,15 @@ function Templates(props: { templates: Template[]; save(templates: Template[]): 
       {templates.map((t) => (
         <div className="line" key={t.name}>
           <span className="grow">{t.name}</span>
-          <button className="quiet danger" onClick={() => save(templates.filter((x) => x !== t))}>Remove</button>
+          <button className="quiet danger" onClick={() => save((now) => now.filter((x) => x.name !== t.name))}>Remove</button>
         </div>
       ))}
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
       <label>Text<textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} /></label>
       <button className="quiet" disabled={!name.trim() || !text.trim()}
         onClick={() => {
-          save([...templates.filter((t) => t.name !== name.trim()), { name: name.trim(), text }])
+          const made = { name: name.trim(), text }
+          save((now) => [...now.filter((t) => t.name !== made.name), made])
           setName('')
           setText('')
         }}>
@@ -611,29 +630,26 @@ function Pages(props: {
   accounts: AccountView[]
   settings: Settings
   ask: Ask
-  save: Save
+  change: Change
   editMenu?: () => void
-  saveBatch(batch: BatchSettings): void
-  saveSummary(summary: SummarySettings): void
-  saveKeep(days: number): void
 }): ReactNode {
-  const { page, accounts, settings, save } = props
-  const ids = useIdentities(settings, save)
+  const { page, accounts, settings, change } = props
+  const save: Save = (patch) => change(() => ({ profile: patch }))
+  const senders: Senders = (list, address, on) => change(() => ({ senders: list, addresses: [address], on }))
+  const ids = useIdentities(settings, change)
   return (
     <div className="settings-page">
       {page === 'general' && <General settings={settings} save={save} />}
-      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} muted={settings.muted} save={save} />}
-      {page === 'accounts' && <Accounts accounts={accounts} settings={settings} ids={ids} ask={props.ask} saveKeep={props.saveKeep} />}
+      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} muted={settings.muted} senders={senders} />}
+      {page === 'accounts' && <Accounts accounts={accounts} settings={settings} ids={ids} ask={props.ask} saveKeep={(days) => change(() => ({ backfill: days }))} />}
       {page === 'appearance' && <Appearance settings={settings} save={save} editMenu={props.editMenu} />}
-      {page === 'actions' && <Actions settings={settings} save={save} />}
-      {page === 'shortcuts' && (
-        <Shortcuts set={settings.keys} changes={settings.keyChanges[settings.keys] ?? {}} all={settings.keyChanges} save={save} />
-      )}
+      {page === 'actions' && <Actions settings={settings} save={save} change={change} />}
+      {page === 'shortcuts' && <Shortcuts set={settings.keys} changes={settings.keyChanges[settings.keys] ?? {}} change={change} />}
       {page === 'signatures' && <Signatures accounts={accounts} ids={ids} />}
-      {page === 'templates' && <Templates templates={settings.templates} save={(templates) => save({ templates })} />}
-      {page === 'summary' && <Summary summary={settings.summary} save={props.saveSummary} ask={props.ask} />}
-      {page === 'blocked' && <Blocked blocked={settings.blocked} save={save} />}
-      {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} save={props.saveBatch} />}
+      {page === 'templates' && <Templates templates={settings.templates} save={(edit) => change((now) => ({ profile: { templates: edit(now.templates) } }))} />}
+      {page === 'summary' && <Summary summary={settings.summary} save={(summary) => change(() => ({ summary }))} ask={props.ask} />}
+      {page === 'blocked' && <Blocked blocked={settings.blocked} senders={senders} />}
+      {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} change={change} />}
       {page === 'hub' && <Hub settings={settings} />}
       {page === 'about' && <About />}
     </div>
@@ -649,38 +665,31 @@ export function SettingsDialog(props: {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [tab, setTab] = useState<Tab>(props.tab)
   const [search, setSearch] = useState('')
+  const [failure, setFailure] = useState('')
+  // Shown at once, and saved one after another in the order they were made.
+  const [keeper] = useState(() => new SettingsKeeper({
+    read: () => window.mail.settings(),
+    write: (change) => {
+      if ('profile' in change) return window.mail.saveProfile(change.profile)
+      if ('batch' in change) return window.mail.saveBatch(change.batch)
+      if ('summary' in change) return window.mail.saveSummary(change.summary)
+      if ('senders' in change) return window.mail.editSenders(change.senders, change.addresses, change.on)
+      return window.mail.saveBackfill(change.backfill)
+    }
+  }, setSettings, (e) => setFailure(problem(e))))
 
   useEffect(() => {
-    void window.mail.settings().then(setSettings)
+    void keeper.refresh()
   }, [props.version])
 
   useEffect(() => {
     dialog.current?.showModal()
   }, [])
 
-  const saveBatch = async (batch: BatchSettings): Promise<void> => {
-    setSettings((now) => (now ? { ...now, batch } : now)) // shown at once; the save follows
-    await window.mail.saveBatch(batch)
-    setSettings(await window.mail.settings())
+  const change: Change = (make) => {
+    setFailure('')
+    void keeper.change(make)
   }
-
-  const saveSummary = async (summary: SummarySettings): Promise<void> => {
-    setSettings((now) => (now ? { ...now, summary } : now)) // shown at once; the save follows
-    await window.mail.saveSummary(summary)
-    setSettings(await window.mail.settings())
-  }
-
-  const saveKeep = async (days: number): Promise<void> => {
-    await window.mail.saveBackfill(days)
-    setSettings(await window.mail.settings())
-  }
-
-  const saveProfile = async (patch: ProfilePatch): Promise<void> => {
-    await window.mail.saveProfile(patch)
-    setSettings(await window.mail.settings())
-  }
-
-  const save = (patch: ProfilePatch): void => void saveProfile(patch)
   const looking = search.trim().toLowerCase()
   const tabs = TABS.filter(([id, label]) => `${label} ${TAB_WORDS[id]}`.toLowerCase().includes(looking))
   const page = tabs.some(([id]) => id === tab) ? tab : tabs[0]?.[0] ?? tab
@@ -702,10 +711,8 @@ export function SettingsDialog(props: {
           <input type="search" placeholder="Search settings" aria-label="Search settings" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button className="quiet" onClick={props.close}>Done</button>
         </header>
-        {settings && (
-          <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} save={save} editMenu={props.editMenu}
-            saveBatch={(b) => void saveBatch(b)} saveSummary={(s) => void saveSummary(s)} saveKeep={(d) => void saveKeep(d)} />
-        )}
+        {failure && <p className="error settings-failure" role="alert">{failure}</p>}
+        {settings && <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} change={change} editMenu={props.editMenu} />}
       </div>
     </dialog>
   )

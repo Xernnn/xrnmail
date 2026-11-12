@@ -1,8 +1,9 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { QUICK_SLOTS } from '@shared/types'
+import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
@@ -1383,10 +1384,11 @@ export class MailService {
   }
 
   /** Waiting mail moves to the next slot of the new timetable. Measuring from now, not from when it
-   *  arrived, means changing the times can't deliver anything early by accident. */
-  saveBatch(batch: BatchSettings): void {
+   *  arrived, means changing the times can't deliver anything early by accident. Only what [patch]
+   *  names changes: a page that's behind can't put back what it hasn't heard of yet. */
+  saveBatch(patch: Partial<BatchSettings>): void {
     const settings = this.settings()
-    const clean = cleanBatch(batch)
+    const clean = cleanBatch({ ...settings.batch, ...patch })
     // Coming straight through and waiting for the Summary pull opposite ways, so a sender newly let
     // through leaves the Summary.
     const added = clean.vip.filter((v) => !settings.batch.vip.includes(v))
@@ -1400,10 +1402,10 @@ export class MailService {
 
   /** A sender added to the Summary waits for it from now on, and what it's sent that's waiting for a
    *  batch moves to the Summary. One taken out goes back to the batches. Moving the time moves what's
-   *  waiting with it. */
-  saveSummary(summary: SummarySettings): void {
+   *  waiting with it. Only what [patch] names changes, as with the batches. */
+  saveSummary(patch: Partial<SummarySettings>): void {
     const settings = this.settings()
-    const clean = cleanSummary(summary)
+    const clean = cleanSummary({ ...settings.summary, ...patch })
     const added = clean.senders.filter((s) => !settings.summary.senders.includes(s))
     const batch = { ...settings.batch, vip: settings.batch.vip.filter((v) => !added.includes(v)) }
     const next = { ...settings, batch, summary: clean }
@@ -1419,11 +1421,17 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Each account's identity in [patch] replaces that account's alone, and only for an account that's
+   *  here: a page still showing one that was removed can't bring it back. */
   saveProfile(patch: ProfilePatch): void {
     const settings = this.settings()
+    const accounts = this.emails()
+    const identities = patch.identities
+      ? Object.fromEntries(Object.entries({ ...settings.identities, ...patch.identities }).filter(([email]) => accounts.includes(email)))
+      : settings.identities
     this.saveSettings({
       ...settings,
-      identities: patch.identities ?? settings.identities,
+      identities,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
@@ -1455,8 +1463,19 @@ export class MailService {
 
   /** New mail from them goes to Trash from now on. */
   block(address: string): void {
+    this.editSenders('blocked', [address], true)
+  }
+
+  /** Senders into one of the lists of them, or out of it, with the rest of that list as it is now.
+   *  Built here, where nothing else changes the settings meanwhile: the page building the whole list
+   *  from what it last read lost one of two senders added in quick succession. */
+  editSenders(list: SenderList, addresses: string[], on: boolean): void {
+    if (!addresses.some((a) => a.trim())) return
     const settings = this.settings()
-    this.saveSettings({ ...settings, blocked: cleanSenders([...settings.blocked, address]) })
+    const edited = (from: string[]): string[] => editedSenders(from, addresses, on)
+    if (list === 'vip') return this.saveBatch({ vip: edited(settings.batch.vip) })
+    if (list === 'summary') return this.saveSummary({ senders: edited(settings.summary.senders) })
+    this.saveSettings({ ...settings, [list]: cleanSenders(edited(settings[list])) })
     this.deps.changed()
   }
 

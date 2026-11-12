@@ -408,9 +408,21 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
-- `Settings.tsx`: Edison's sections, then xrnmail's own. Each account's name, signature and the rest
-  are held once for every page, so a page opened while a save is on its way can't write old values
-  back.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
+  signature and the rest is held once for every page until the field is left.
+
+Settings are saved as changes, never as a whole copy put back. Each save names only what it changes
+(`saveProfile`, `saveBatch` and `saveSummary` all take part of their settings, and an identity
+replaces that one account's), and senders go into a list or come out of it one at a time
+(`editSenders`), added to the list as the main process has it then, which is the only place that
+changes it. Before this, a page built the whole list, or all four quick actions, from what it last
+read: two changes made in quick succession both started from the same old settings, so the second
+put the first back, and two senders added to the Summary one after the other kept one.
+
+Settings goes through `shared/keeper.ts` as well. A change there is worked out from the settings with
+every change before it already in them, shown at once, and sent after the ones before it. What's read
+back from the main process is shown only when nothing is still on its way, since a reading taken
+before a change would put its old value back on screen for the next change to start from.
 
 What a row offers is all in settings, and `saveProfile` keeps it to what a row can show: none to four
 lines of preview, four quick actions from a fixed list, a swipe action for each of the four swipes.

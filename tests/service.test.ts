@@ -1426,6 +1426,43 @@ describe('settings', () => {
     service.saveProfile({ imagesFrom: ['News@Shop.example', 'news@shop.example', 'not an address'] })
     expect(service.settings().imagesFrom).toEqual(['news@shop.example'])
   })
+
+  it('changes only what a save names, so a page that is behind puts nothing back', () => {
+    service.saveBatch({ live: false, times: ['09:00'], vip: ['boss@work.example'], earlyPerDay: 2 })
+    service.saveBatch({ times: ['09:00', '17:00'] }) // from a page that never heard of the boss
+    expect(service.settings().batch).toEqual({ live: false, times: ['09:00', '17:00'], vip: ['boss@work.example'], earlyPerDay: 2 })
+    service.saveSummary({ senders: ['news@shop.example'], every: 'weekly', day: 3, time: '18:00', chosen: true })
+    service.saveSummary({ time: '07:30' })
+    expect(service.settings().summary).toEqual({ senders: ['news@shop.example'], every: 'weekly', day: 3, time: '07:30', chosen: true })
+  })
+
+  it('puts senders into a list one at a time, with the rest of it as it is then', () => {
+    for (const list of ['muted', 'blocked', 'imagesFrom'] as const) {
+      service.editSenders(list, ['Ada@Example.com'], true)
+      service.editSenders(list, ['@shop.example', 'not an address'], true)
+      service.editSenders(list, ['ada@example.com'], true) // already there
+      expect(service.settings()[list]).toEqual(['ada@example.com', '@shop.example'])
+      service.editSenders(list, ['ADA@example.com'], false)
+      expect(service.settings()[list]).toEqual(['@shop.example'])
+    }
+    service.editSenders('vip', ['ada@example.com'], true)
+    service.editSenders('summary', ['news@shop.example'], true)
+    service.editSenders('summary', ['letters@post.example'], true)
+    expect(service.settings().summary.senders).toEqual(['news@shop.example', 'letters@post.example'])
+    expect(service.settings().batch.vip).toEqual(['ada@example.com'])
+    service.editSenders('summary', ['ada@example.com'], true) // the Summary and straight through pull opposite ways
+    expect(service.settings().batch.vip).toEqual([])
+  })
+
+  it('saves one account\'s identity without touching another\'s, and never one for an account that has gone', async () => {
+    await signedIn()
+    const mine = { name: 'Me', signature: 'Regards', aliases: [], color: '', notify: true }
+    service.saveProfile({ identities: { [ME]: mine } })
+    service.saveProfile({ identities: { 'gone@example.com': { ...mine, name: 'Gone' } } })
+    expect(service.settings().identities).toEqual({ [ME]: mine })
+    service.saveProfile({ theme: 'dark' })
+    expect(service.settings().identities).toEqual({ [ME]: mine })
+  })
 })
 
 describe('the first sync', () => {

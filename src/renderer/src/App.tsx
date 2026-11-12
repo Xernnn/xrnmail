@@ -412,13 +412,11 @@ export function App(): ReactNode {
 
   const reply = useCallback((kind: ReplyKind, message: number) => void compose({ kind, message }), [compose])
 
-  /** The straight-through list from the reader: one address on or off, and the rest as they were. */
+  /** The straight-through list from the reader: one address on or off, and the rest as they are by
+   *  the time it's saved, which the main process sees to. */
   const straight = async (address: string, on: boolean): Promise<void> => {
-    const batch = profile?.batch
-    if (!batch) return
-    const who = address.toLowerCase()
     try {
-      await window.mail.saveBatch({ ...batch, vip: on ? [...batch.vip, who] : batch.vip.filter((v) => v.trim().toLowerCase() !== who) })
+      await window.mail.editSenders('vip', [address], on)
       bump()
       say(on ? `Mail from ${address} comes straight through` : `Mail from ${address} waits for the next delivery`)
     } catch (e) {
@@ -474,22 +472,23 @@ export function App(): ReactNode {
     }
   }
 
-  /** Senders into the Summary or out of it. The first one in asks when it should land. */
-  const summarize = async (address: string, on: boolean): Promise<void> => {
-    const who = address.trim().toLowerCase()
+  /** Senders into the Summary or out of it. The first one in asks when it should land. The main
+   *  process puts them in the list as it is then: two added one after the other both go in. */
+  const summarize = async (addresses: string[], on: boolean): Promise<void> => {
+    if (addresses.length === 0) return
     try {
-      let { summary } = await window.mail.settings()
+      const { summary } = await window.mail.settings()
       if (on && !summary.chosen) {
-        const current = summary
-        const picked = await new Promise<SummarySettings | null>((resolve) => setScheduling({ summary: current, done: resolve }))
+        const picked = await new Promise<SummarySettings | null>((resolve) => setScheduling({ summary, done: resolve }))
         setScheduling(null)
         if (!picked) return
-        summary = picked
+        await window.mail.saveSummary({ every: picked.every, time: picked.time, day: picked.day, chosen: true })
       }
-      const senders = on ? [...summary.senders.filter((s) => s !== who), who] : summary.senders.filter((s) => s !== who)
-      await window.mail.saveSummary({ ...summary, senders })
+      await window.mail.editSenders('summary', addresses, on)
       bump()
-      setToast({ text: on ? `${address} goes into your Summary` : `${address} is out of your Summary`, undo: () => summarize(address, !on) })
+      const who = addresses.length === 1 ? addresses[0] : `${addresses.length} senders`
+      const text = on ? `${who} ${addresses.length === 1 ? 'goes' : 'go'} into your Summary` : `${who} ${addresses.length === 1 ? 'is' : 'are'} out of your Summary`
+      setToast({ text, undo: () => summarize(addresses, !on) })
     } catch (e) {
       say(problem(e))
     }
@@ -542,10 +541,8 @@ export function App(): ReactNode {
 
   /** A muted sender's mail still arrives; it just isn't announced. */
   const mute = async (address: string, on: boolean): Promise<void> => {
-    const who = address.toLowerCase()
     try {
-      const muted = (await window.mail.settings()).muted
-      await window.mail.saveProfile({ muted: on ? [...muted, who] : muted.filter((m) => m !== who) })
+      await window.mail.editSenders('muted', [address], on)
       say(on ? `Mail from ${address} won't be announced` : `Mail from ${address} is announced again`)
     } catch (e) {
       say(problem(e))
@@ -553,8 +550,12 @@ export function App(): ReactNode {
   }
 
   const trustImages = async (address: string): Promise<void> => {
-    await window.mail.saveProfile({ imagesFrom: [...(profile?.imagesFrom ?? []), address] })
-    say(`Images from ${address} will load by themselves`)
+    try {
+      await window.mail.editSenders('imagesFrom', [address], true)
+      say(`Images from ${address} will load by themselves`)
+    } catch (e) {
+      say(problem(e))
+    }
   }
 
   const togglePick = (row: ThreadRow, index: number, range: boolean): void => {
@@ -800,7 +801,7 @@ export function App(): ReactNode {
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
       forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}
-      summarize={(address, on) => void summarize(address, on)}
+      summarize={(address, on) => void summarize([address], on)}
       write={(address) => void compose({ kind: 'new', account: open?.account, to: address })}
       find={SOLO ? undefined : (text) => {
         setSearch(text)
@@ -913,7 +914,7 @@ export function App(): ReactNode {
               ))}
               {showSubscriptions && (
                 <Subscriptions version={version} side={subscriptionSide} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
-                  summarize={(item, on) => void summarize(item.address, on)}
+                  summarize={(item, on) => void summarize([item.address], on)}
                   top={subscriptionSide === 'summary' && <>{summaryBar}<LatestSummary overview={overview} open={() => go({ kind: 'summary' })} /></>} />
               )}
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
