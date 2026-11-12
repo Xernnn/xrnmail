@@ -3,7 +3,7 @@ import {
   CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
-import { arranged, cleanSidebar, moved, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
+import { arranged, arrangedLabels, cleanSidebar, moved, movedLabel, shownLabel, siblingsOf, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
 import type { AccountView, AssistantSection, Draft, ListQuery, Overview, ThreadRef } from '@shared/types'
 import { ago, mailbox } from './format'
 
@@ -45,6 +45,12 @@ const GROUP_NAMES = ['Folders', 'Assistant']
 
 /** What an entry carries while it's dragged to another place in its list. */
 const ENTRY = 'application/x-xrnmail-entry'
+/** And a label, by its account and path. */
+const LABEL = 'application/x-xrnmail-label'
+
+/** An account's own labels or folders: what the server lists, and any found on mail that it doesn't. */
+export const labelsOf = (a: AccountView, overview: Overview | null): string[] =>
+  [...new Set([...a.folders, ...(overview?.labels ?? []).filter((l) => l.account === a.email).map((l) => l.label)])]
 
 /** Dragging something onto a place in the list does what going there would mean. */
 const DROPS = new Set(['inbox', 'starred', 'pinned', 'all', 'archive', 'spam', 'trash', 'label'])
@@ -78,6 +84,8 @@ export function Sidebar(props: {
   editing: boolean
   /** Editing is over, with what was chosen, or with nothing when it was called off. */
   edited(choice: SidebarChoice | null): void
+  /** Edit Menu's New Label… or New Folder…, for an account. */
+  newFolder(account: string): void
 }): ReactNode {
   const { accounts, overview, view, go, drafts } = props
   const many = accounts.length > 1
@@ -92,7 +100,8 @@ export function Sidebar(props: {
   useEffect(() => {
     if (!props.editing) return undefined
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      // Esc in New Label closes that alone.
+      if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return
       event.stopPropagation()
       props.edited(null)
     }
@@ -157,7 +166,7 @@ export function Sidebar(props: {
 
   /** What belongs to one account alone: its own folders when there are several accounts, and its labels. */
   const folders = (a: AccountView): ReactNode => {
-    const labels = (overview?.labels ?? []).filter((l) => l.account === a.email)
+    const labels = arrangedLabels(labelsOf(a, overview), choice.labels?.[a.email]).filter((row) => !row.hidden)
     const scope = { account: a.email }
     return (
       <div className="nav-folders">
@@ -167,14 +176,11 @@ export function Sidebar(props: {
         {many && item('Spam', { kind: 'spam', ...scope }, { icon: OctagonAlert })}
         {many && item('Trash', { kind: 'trash', ...scope }, { icon: Trash2 })}
         {labels.length > 0 && <h2 className="nav-head">{a.labels ? 'Labels' : 'Folders'}</h2>}
-        {labels.map((l) => {
-          const depth = l.label.split('/').length - 1
-          return (
-            <div key={l.label} style={{ paddingLeft: depth * 14 }}>
-              {item(l.label.split('/').at(-1) ?? l.label, { kind: 'label', account: a.email, label: l.label }, { icon: a.labels ? Tag : Folder })}
-            </div>
-          )
-        })}
+        {labels.map((row) => (
+          <div key={row.path} style={{ paddingLeft: row.depth * 14 }}>
+            {item(row.name, { kind: 'label', account: a.email, label: row.path }, { icon: a.labels ? Tag : Folder })}
+          </div>
+        ))}
       </div>
     )
   }
@@ -220,6 +226,55 @@ export function Sidebar(props: {
           <button className="pill strong" onClick={() => props.edited(draft)}>Done</button>
         </div>
         <div className="sidebar-scroll">
+          {accounts.map((a) => {
+            const names = labelsOf(a, overview)
+            const mine = draft.labels?.[a.email]
+            const rows = arrangedLabels(names, mine)
+            const setMine = (next: NonNullable<typeof mine>): void => setDraft({ ...draft, labels: { ...draft.labels, [a.email]: next } })
+            const kind = a.labels ? 'Label' : 'Folder'
+            return (
+              <Fragment key={a.email}>
+                <h2 className="nav-head">{many ? a.email : a.labels ? 'Labels' : 'Folders'}</h2>
+                <ul className="nav-group nav-editing" aria-label={`${a.labels ? 'Labels' : 'Mailboxes'} on ${a.email}`}>
+                  {rows.map((row) => {
+                    const siblings = siblingsOf(names, mine, row.path)
+                    const at = siblings.indexOf(row.path)
+                    const Icon = a.labels ? Tag : Folder
+                    return (
+                      <li className="nav-edit" key={row.path} style={{ paddingLeft: 16 + row.depth * 14 }} draggable
+                        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData(LABEL, JSON.stringify([a.email, row.path])); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragOver={(e) => {
+                          if (!e.dataTransfer.types.includes(LABEL)) return
+                          e.preventDefault()
+                          e.currentTarget.classList.add('drop')
+                        }}
+                        onDragLeave={(e) => e.currentTarget.classList.remove('drop')}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          e.currentTarget.classList.remove('drop')
+                          const [account, path] = JSON.parse(e.dataTransfer.getData(LABEL) || '[]') as [string?, string?]
+                          if (account === a.email && path) setMine(movedLabel(names, mine, path, row.path))
+                        }}>
+                        <label className="grow">
+                          <input type="checkbox" checked={row.shown} onChange={() => setMine(shownLabel(mine, row.path, !row.shown))} aria-label={`Show ${row.path}`} />
+                          <Icon className="nav-icon" size={16} aria-hidden="true" />
+                          <span className={row.hidden && row.shown ? 'grow muted' : 'grow'}>{row.name}</span>
+                        </label>
+                        <button className="icon" aria-label={`Move ${row.path} up`} disabled={at <= 0}
+                          onClick={() => setMine(movedLabel(names, mine, row.path, siblings[at - 1] ?? row.path))}><ChevronUp size={14} aria-hidden="true" /></button>
+                        <button className="icon" aria-label={`Move ${row.path} down`} disabled={at === siblings.length - 1}
+                          onClick={() => setMine(movedLabel(names, mine, row.path, siblings[at + 1] ?? row.path))}><ChevronDown size={14} aria-hidden="true" /></button>
+                        <GripHorizontal className="nav-grip" size={15} aria-hidden="true" />
+                      </li>
+                    )
+                  })}
+                </ul>
+                <button className="link nav-new" aria-label={`New ${kind} on ${a.email}`} onClick={() => props.newFolder(a.email)}>New {kind}…</button>
+                <hr />
+              </Fragment>
+            )
+          })}
           {SIDEBAR_GROUPS.map((group, g) => {
             const list = arranged(group, draft)
             return (

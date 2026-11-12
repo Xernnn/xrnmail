@@ -18,7 +18,8 @@ import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
 import { landedWords, LatestSummary, ScheduleDialog, SummaryBar, SummaryNotice } from './Summary'
-import { ASSISTANT, Sidebar, THREADS, type View } from './Sidebar'
+import { NewFolderDialog } from './Labels'
+import { ASSISTANT, labelsOf, Sidebar, THREADS, type View } from './Sidebar'
 
 const TAKES_AWAY = ['archive', 'trash', 'spam', 'forever', 'move']
 
@@ -128,6 +129,8 @@ export function App(): ReactNode {
   const [sideMenu, setSideMenu] = useState<{ x: number; y: number; target: ListQuery | null } | null>(null)
   /** The sidebar's entries are being chosen and put in order. */
   const [editingMenu, setEditingMenu] = useState(false)
+  /** Edit Menu's New Label… or New Folder…, for the account it was asked from. */
+  const [newFolder, setNewFolder] = useState<string | null>(null)
   /** The first sender going into the Summary asks when it should land. */
   const [scheduling, setScheduling] = useState<{ summary: SummarySettings; done(summary: SummarySettings | null): void } | null>(null)
   const [version, setVersion] = useState(0)
@@ -814,7 +817,7 @@ export function App(): ReactNode {
   const reader = (
     <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
       settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
-      labels={(overview?.labels ?? []).filter((l) => l.account === open?.account).map((l) => l.label)}
+      labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
       reply={reply} replyWith={replyWith} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
@@ -851,6 +854,12 @@ export function App(): ReactNode {
       )}
       {question && <Confirm question={question} />}
       {scheduling && <ScheduleDialog summary={scheduling.summary} done={scheduling.done} />}
+      {newFolder && (
+        <NewFolderDialog accounts={accounts} account={newFolder} done={(made) => {
+          if (made) say(`Made the ${made.kind} ${made.path}`)
+          setNewFolder(null)
+        }} />
+      )}
     </>
   )
 
@@ -860,7 +869,7 @@ export function App(): ReactNode {
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
-        menu={(target, x, y) => setSideMenu({ x, y, target })}
+        menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
         choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
         edited={(choice) => {
           setEditingMenu(false)

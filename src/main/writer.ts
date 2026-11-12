@@ -19,6 +19,9 @@ export interface MailWriter {
   apply(box: string, uids: number[], action: MailAction): Promise<Moved | null>
   /** Files a sent message, unless the server already did. */
   fileSent(raw: Buffer, messageId: string): Promise<void>
+  /** Makes a folder, or on Gmail a label, from the parts of its path. Answers with the path the server
+   *  gave it, which joins the parts with its own separator. One that's there already is answered too. */
+  createFolder(parts: string[]): Promise<string>
   close(): Promise<void>
 }
 
@@ -161,6 +164,12 @@ export class ImapWriter implements MailWriter {
       lock.release()
     }
     if (!(await this.client.append(sent.path, raw, ['\\Seen']))) throw new Refused('append')
+  }
+
+  async createFolder(parts: string[]): Promise<string> {
+    const made = await this.client.mailboxCreate(parts.length === 1 ? (parts[0] ?? '') : parts)
+    if (!made?.path) throw new Refused('create')
+    return made.path
   }
 
   async close(): Promise<void> {

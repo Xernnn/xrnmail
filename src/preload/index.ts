@@ -45,6 +45,7 @@ const api: MailApi = {
   openThreadWindow: (account, thread, bins) => call('openThreadWindow', account, thread, bins),
   openDraftWindow: (id) => call('openDraftWindow', id),
   showDraftWindow: (id) => call('showDraftWindow', id),
+  createFolder: (account, name) => call('createFolder', account, name),
   startDraft: (start) => call('startDraft', start),
   saveDraft: (id, edit) => call('saveDraft', id, edit),
   discardDraft: (id) => call('discardDraft', id),

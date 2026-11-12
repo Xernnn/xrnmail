@@ -29,6 +29,21 @@ test('a plain server: choosing the service, entering its details, and reading fo
   await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible()
   await page.getByRole('button', { name: 'Work', exact: true }).click()
   await expect(page.getByText('Filed under work')).toBeVisible()
+  // A folder of its own, made from Edit Menu, is a folder on the server, read from then on.
+  await page.locator('.sidebar-foot .status').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await page.getByRole('button', { name: 'New Folder on me@mail.example' }).click()
+  const making = page.getByRole('dialog', { name: 'New Folder' })
+  await making.getByLabel('Name').fill('Receipts')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(page.getByText('Made the folder Receipts')).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Mailboxes on me@mail.example' }).getByRole('listitem')).toHaveText(['Receipts', 'Work'])
+  await page.locator('.sidebar').getByRole('button', { name: 'Done' }).click()
+  expect(plain.box('Receipts').mails).toEqual([])
+  plain.add(rawMail({ subject: 'Filed under receipts' }), { box: 'Receipts' })
+  await page.getByRole('button', { name: /^Sync/ }).click()
+  await page.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await expect(page.getByText('Filed under receipts')).toBeVisible()
 })
 
 test('moving, deleting and restoring on a folder server', async () => {

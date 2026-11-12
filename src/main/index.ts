@@ -383,6 +383,7 @@ function register(service: MailService): void {
     bringForward(shown)
     return true
   })
+  handle('createFolder', (account: unknown, name: unknown) => service.createFolder(text(account, 320), text(name, 500)))
   handle('startDraft', (start: unknown) => service.startDraft(draftStart(start)))
   handle('saveDraft', (id: unknown, edit: unknown) => service.saveDraft(number(id), draftEdit(edit)))
   handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))

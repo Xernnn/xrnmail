@@ -1235,6 +1235,14 @@ describe('the sidebar', () => {
     expect(service.list({ kind: 'recent' }, 500)).toEqual([])
   })
 
+  it('forgets how an account arranged its own labels once the account goes', () => {
+    const other = { order: [], hidden: ['Old'] }
+    service.saveProfile({ sidebar: { ...service.settings().sidebar, labels: { [ME]: { order: ['Work'], hidden: ['Work'] }, 'other@example.org': other } } })
+    expect(Object.keys(service.settings().sidebar.labels ?? {})).toEqual([ME, 'other@example.org'])
+    service.removeAccount(ME)
+    expect(service.settings().sidebar.labels).toEqual({ 'other@example.org': other })
+  })
+
   it('keeps which entries the sidebar shows and their order, made whole whatever was saved', () => {
     expect(service.settings().sidebar.hidden).toEqual([])
     expect(service.settings().sidebar.order.slice(0, 4)).toEqual(['today', 'unread', 'starred', 'pinned'])

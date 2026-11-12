@@ -70,7 +70,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
   selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
-  choose which of its entries show and in what order), recipient chips, side-by-side or
+  choose which of its entries show and in what order, each account's own labels or folders among them,
+  with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
 - **Stays with you:** new mail shows as it lands, the tray shows what's unread, and closing the window
   keeps it running. Spell check knows your language, plus English and Vietnamese.
@@ -112,8 +113,10 @@ without Vietnamese marks, sender warnings, xrnhub, and the one-thing-at-a-time l
 
 Not here, though Edison has them:
 
-- Choosing and ordering the accounts' own labels in Edit Menu, and making a label or folder from it.
-  Edit Menu here covers the gathered folders and the Assistant's lists.
+- In Subscriptions, picking several senders at once to add to the Summary, and a page for each sender
+  with how much they send and how much of it gets opened.
+- Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
+  Back up & Sync would need a server of Edison's.
 
 Done differently:
 
@@ -131,10 +134,13 @@ Done differently:
   Summary waits for its time, not the next batch, and does with batches off; Deliver now is for the
   batch and leaves it waiting. Letting a sender straight through takes them out of it, and adding one
   to it takes them off that list. Its mail stays in your service's inbox: only this laptop shows it
-  apart. Edison's picking of several senders at once to add, and its page for each sender, aren't here.
+  apart.
 - The Inbox set is from Inbox's own Shift+? list, as people who used it wrote it down, since Google's
   help page only ever said to press Shift+?. Apple's page leaves out deleting, flagging and searching,
   so those are from Mail's menus. Outlook's is Outlook for Mac's.
+- In Edit Menu a label moves among the ones beside it, taking what's inside it along, and hiding one
+  hides what's inside it. An account's All Mail, Sent and the rest stay where they are. Making a label
+  or folder goes to the server there and then, so it needs a connection, where other changes wait.
 - A changed key is one key for its action, in place of all the set's keys for it.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.

@@ -191,6 +191,19 @@ const MX_OWNERS: [RegExp, string][] = [
 
 const lower = (items: string[]): string[] => items.map((v) => v.trim().toLowerCase())
 
+/** A name typed for a new folder or label, as the parts of its path. What a server keeps for itself,
+ *  and what can't be a name anywhere, is turned down in words. */
+export function folderParts(name: string, kind: 'folder' | 'label'): string[] {
+  const parts = name.split('/').map((part) => part.trim())
+  if (!name.trim()) throw new Error(`Give the ${kind} a name.`)
+  if (parts.some((part) => !part)) throw new Error('Leave no part of the name empty, before or after a slash.')
+  if (name.length > 200) throw new Error('That name is too long.')
+  if (/[\u0000-\u001f\u007f*%"\\]/.test(name)) throw new Error('Leave out *, %, " and \\ from the name.')
+  const first = parts[0]?.toLowerCase() ?? ''
+  if (first === 'inbox' || first === '[gmail]' || first === '[google mail]') throw new Error(`${parts[0]} is the service's own.`)
+  return parts
+}
+
 type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progress'>
 
 /** How many messages have to be coming before it's worth saying so. */
@@ -296,9 +309,38 @@ export class MailService {
     }
   }
 
+  /** What the server lists, each pass: a folder or label made or taken away elsewhere comes and goes. */
   private noteFolders(email: string, source: MailSource): void {
-    const paths = source.mailboxes().filter((box) => box.role === 'folder').map((box) => box.path)
-    this.store.setMeta(`folders:${email}`, JSON.stringify(paths))
+    this.store.setMeta(`folders:${email}`, JSON.stringify(source.folders()))
+  }
+
+  /** A folder, or a Gmail label, made from Edit Menu. It goes straight to the server in the account's
+   *  lane, as nothing here could show one the server might refuse, and there's nothing to undo; the
+   *  next pass lists it like any other. */
+  async createFolder(email: string, name: string): Promise<string> {
+    if (!this.emails().includes(email)) throw new Error('That account is gone.')
+    const { gmail } = this.config(email)
+    const kind = gmail ? 'label' : 'folder'
+    const parts = folderParts(name, kind)
+    const wanted = parts.join('/').toLowerCase()
+    if (this.folders(email).some((path) => path.toLowerCase() === wanted)) throw new Error(`There's a ${kind} called that already.`)
+    const service = this.serviceName(email)
+    return this.inLane(email, async () => {
+      let writer: MailWriter | null = null
+      try {
+        writer = this.deps.openWriter(this.config(email), await this.login(email))
+        await writer.connect()
+        const path = await writer.createFolder(parts)
+        this.store.setMeta(`folders:${email}`, JSON.stringify(unique([...this.folders(email), path])))
+        this.deps.changed()
+        return path
+      } catch (e) {
+        if (e instanceof Refused || (e as { responseStatus?: string })?.responseStatus === 'NO') throw new Error(`${service.charAt(0).toUpperCase()}${service.slice(1)} wouldn't make that ${kind}.`)
+        throw new Error(describeFailure(e, service))
+      } finally {
+        await writer?.close().catch(() => undefined)
+      }
+    })
   }
 
   accounts(): AccountView[] {
@@ -478,7 +520,8 @@ export class MailService {
     for (const draft of this.store.forgetAccount(email)) this.deps.files.clear(draft)
     const { identities, ...rest } = this.settings()
     const { [email]: _gone, ...kept } = identities
-    this.saveSettings({ ...rest, identities: kept })
+    const { [email]: _arranged, ...labels } = rest.sidebar.labels ?? {}
+    this.saveSettings({ ...rest, identities: kept, sidebar: { ...rest.sidebar, labels } })
     this.status.delete(email)
     this.deps.changed()
   }

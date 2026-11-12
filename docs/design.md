@@ -327,7 +327,16 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
   moved, by their arrows or by dragging, each within its own list. The choice is a setting
   (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
-  up after the one it follows, shown, in a choice saved before it existed.
+  up after the one it follows, shown, in a choice saved before it existed. Each account's own labels
+  or folders are switches there too, kept by account in the same setting: an order among siblings,
+  so a label moves with what's inside it, and the ones hidden. What's listed is what the server lists
+  on each pass (`MailSource.folders`: an account's own folders, or on Gmail its labels, which IMAP
+  lists as folders), with any label found on mail that it doesn't. So an empty label shows, one made
+  elsewhere turns up after the ones arranged, and one taken away goes. New Label and New Folder send
+  CREATE on the account's writer connection, in its lane, there and then: it needs the server's yes
+  before there's anything to show, and there's nothing to undo. A slash in the name nests it, joined
+  with the server's own separator. The service's own names (INBOX, `[Gmail]`) and what IMAP can't
+  name are turned down before anything is sent.
 - `App.tsx`: the band with the view's title and search across list and reader, the list, the bar that
   floats under a selection, and what every key and button does.
 - `List.tsx`: a row (face, sender with a dot while unread, subject, lines of preview), its quick

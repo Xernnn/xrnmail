@@ -27,7 +27,7 @@ export interface AccountView {
   providerName: string
   /** Gmail labels can be added and removed; anywhere else, a message lives in one folder. */
   labels: boolean
-  /** Folders and labels to file mail under, including empty ones. */
+  /** Its own folders, or on Gmail its own labels: what mail can be filed under, empty ones too. */
   folders: string[]
   /** Unread in its inbox. */
   unread: number
@@ -411,6 +411,9 @@ export interface MailApi {
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
   openDraftWindow(id: number): Promise<void>
+  /** Makes a folder, or on Gmail a label, on the server there and then. A slash puts it inside another.
+   *  Returns its path as the server has it. */
+  createFolder(account: string, name: string): Promise<string>
   /** Brings forward the window a draft is being written in, when it has one, and says whether it did. */
   showDraftWindow(id: number): Promise<boolean>
   /** A window of its own is about to close. It closes itself again once it's ready, and that time it does. */

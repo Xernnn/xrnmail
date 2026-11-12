@@ -789,6 +789,52 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
 })
 
+test('Edit Menu: an account\'s own labels are hidden and moved there, and New Label makes one on the server', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.labels = ['Travel', 'Receipts', 'Work', 'Work/Plans']
+  gmail.add(rawMail({ subject: 'Paid' }), { arrived: earlier(5), labels: ['\\Inbox', 'Receipts'] })
+  await signIn(run)
+  const side = page.locator('.sidebar')
+  const shown = async (): Promise<string[]> => (await side.locator('.nav-folders .nav-item .grow').allInnerTexts()).map((name) => name.trim())
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Travel', 'Work', 'Plans']) // empty ones too, each inside its own
+  await side.locator('.sidebar-foot .status').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  const labels = side.getByRole('list', { name: `Labels on ${ME}` })
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Travel', 'Work', 'Plans'])
+  await labels.getByLabel('Show Travel').uncheck()
+  await labels.getByRole('button', { name: 'Move Work up' }).click()
+  await labels.getByRole('button', { name: 'Move Work up' }).click()
+  await expect(labels.getByRole('listitem')).toHaveText(['Work', 'Plans', 'Receipts', 'Travel']) // Plans goes with Work
+  await expect(labels.getByRole('button', { name: 'Move Work/Plans up' })).toBeDisabled() // alone inside Work
+  await labels.getByRole('listitem').filter({ hasText: 'Receipts' }).dragTo(labels.getByRole('listitem').filter({ hasText: 'Work' }).first())
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Work', 'Plans', 'Travel'])
+
+  await side.getByRole('button', { name: `New Label on ${ME}` }).click()
+  const making = page.getByRole('dialog', { name: 'New Label' })
+  await making.getByLabel('Name').fill('INBOX/Mine')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(making.getByRole('alert')).toHaveText("INBOX is the service's own.")
+  await making.getByLabel('Name').fill('Ideas')
+  await making.getByRole('button', { name: 'Create New' }).click()
+  await expect(page.getByText('Made the label Ideas')).toBeVisible()
+  await expect(making).toHaveCount(0)
+  expect(gmail.labels).toContain('Ideas')
+  await expect(labels.getByRole('listitem')).toHaveText(['Receipts', 'Work', 'Plans', 'Travel', 'Ideas']) // still editing, with the new one
+  await side.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Work', 'Plans', 'Ideas'])
+
+  // An empty label can be given to mail at once, and the choice lasts.
+  await page.locator('.threads').getByText('Paid').click()
+  await page.getByRole('button', { name: 'Labels' }).click()
+  await page.locator('.popover').getByLabel('Ideas').click()
+  await expect.poll(() => gmail.mails[0]?.labels ?? [], LONG).toContain('Ideas')
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await expect.poll(shown).toEqual(['All Mail', 'Receipts', 'Work', 'Plans', 'Ideas'])
+  expect((await page.evaluate(() => window.mail.settings())).sidebar.labels).toEqual({ [ME]: { order: ['Receipts', 'Work', 'Travel', 'Work/Plans'], hidden: ['Travel'] } })
+})
+
 test('muting a sender from the reader, and the muted senders in Settings', async () => {
   run = await launch()
   const { page, gmail } = run
