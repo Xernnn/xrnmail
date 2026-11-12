@@ -437,7 +437,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .message-slot { display: grid; }
 .message-slot + .message-slot { border-top: 1px solid var(--line-soft); }
 .message { flex: none; min-width: 0; }
-.message-head { display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 0 12px; cursor: default; }
+.message-head { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 0 12px; cursor: default; }
+.message-head > .popover.details-panel { top: calc(100% - 6px); left: 58px; width: min(560px, calc(100% - 58px)); }
 .message.open > .message-head { cursor: pointer; }
 .message-head.closed { gap: 18px; padding: 12px 0 12px 4px; cursor: pointer; }
 .message-head.closed:hover { background: var(--hover); }
@@ -454,9 +455,28 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .who-to svg { color: var(--muted); }
 .straight { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; padding: 1px 7px 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 11px; font-weight: 600; }
 .when { flex: none; font-size: 13px; white-space: nowrap; }
-.details { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; padding: 4px; font-size: 12px; white-space: normal; }
-.details dt { color: var(--muted); }
-.details dd { margin: 0; overflow-wrap: anywhere; }
+/* The details under "To: me": Edison's opened header, with Gmail's facts about delivery added. */
+.popover.details-panel { width: min(560px, calc(100vw - 120px)); max-height: min(70vh, 620px); padding: 14px 16px 12px; font-weight: 400; white-space: normal; cursor: auto; }
+.details-panel:focus { outline: none; }
+.details { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 8px 16px; margin: 0; font-size: 12.5px; white-space: normal; }
+.details dt { color: var(--muted); text-align: right; white-space: nowrap; }
+.details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.detail-people { display: grid; gap: 3px; }
+.detail-person { display: grid; }
+.detail-person-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.detail-person-name { font-weight: 600; }
+.selectable { min-width: 0; user-select: text; cursor: text; overflow-wrap: anywhere; }
+.icon.small { width: 22px; height: 22px; border-radius: 6px; }
+.detail-person-menu { display: grid; gap: 1px; margin: 4px 0 6px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.details .account-swatch { display: inline-block; margin-right: 7px; vertical-align: -3px; }
+.check-result { margin-right: 10px; white-space: nowrap; }
+.check-result.bad { color: var(--danger); font-weight: 600; }
+.details-link { margin-left: 8px; }
+.details-warnings { color: var(--caution); }
+.details-warnings p { margin: 0 0 4px; }
+.details-note { margin: 12px 0 0; font-size: 11.5px; }
+.who-to svg { transition: transform 0.12s var(--ease); }
+.who-to svg.flip { transform: rotate(180deg); }
 .fold { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0 9px 5px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 13px; }
 .fold:hover { color: var(--text); }
 .fold-count { display: inline-grid; place-items: center; min-width: 34px; height: 34px; margin-right: 8px; padding: 0 6px; border: 1.5px solid var(--outline); border-radius: 999px; background: var(--bg); color: var(--text); font-weight: 700; }

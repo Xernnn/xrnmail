@@ -1531,6 +1531,59 @@ describe('new mail as it lands', () => {
   })
 })
 
+describe('a message\'s details', () => {
+  const TOP = [
+    'Delivered-To: me@example.com',
+    'Received: from mail.shop.example (mail.shop.example [1.2.3.4]) by mx.google.com with ESMTPS id 1 (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)',
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@shop.example; spf=pass smtp.mailfrom=bounce@mail.shop.example; dmarc=pass header.from=shop.example'
+  ].join('\n')
+  const news = (): string => `${TOP}\n${rawMail({ subject: 'Offers', from: 'Shop <news@shop.example>', headers: ['List-Id: "Shop News" <news.shop.example>'] })}`
+  /** Found in the store, so nothing is opened, and nothing marked read. */
+  const idOf = (subject: string): number => {
+    const row = service.list({ kind: 'all' }).find((r) => r.subject === subject)
+    return store.thread(ME, row?.thread ?? '', clock).find((m) => m.subject === subject)?.id ?? 0
+  }
+
+  it('keeps what a new message\'s headers say, and knows whether you\'ve written to the sender', async () => {
+    gmail.add(news(), { arrived: new Date(at(9)) })
+    await signedIn()
+    const before = gmail.commands.length
+    expect(await service.details(idOf('Offers'))).toEqual({
+      bcc: [], deliveredTo: 'me@example.com', recorded: true, wroteTo: false,
+      checks: { by: 'mx.google.com', spf: 'pass', dkim: 'pass', dmarc: 'pass' }, mailedBy: 'mail.shop.example', signedBy: ['shop.example'],
+      tls: 'TLS 1.3', list: { id: 'news.shop.example', name: 'Shop News' }, sent: expect.any(Number)
+    })
+    expect(gmail.commands.length).toBe(before) // kept when it arrived, so nothing was asked
+    gmail.add(rawMail({ subject: 'Re: Offers', from: `Me <${ME}>`, to: 'news@shop.example', headers: ['Bcc: Linh <linh@example.com>'] }), { arrived: new Date(at(9, 30)), labels: ['\\Sent'], flags: ['\\Seen'] })
+    await service.syncAll()
+    expect((await service.details(idOf('Offers'))).wroteTo).toBe(true)
+    expect((await service.details(idOf('Re: Offers'))).bcc).toEqual([{ name: 'Linh', address: 'linh@example.com' }])
+  })
+
+  it('reads the headers of mail kept before they were, once, without marking it read', async () => {
+    gmail.add(news(), { arrived: new Date(at(9)) })
+    await signedIn()
+    ;(store as unknown as { db: { exec(sql: string): void } }).db.exec(`UPDATE messages SET details = ''`)
+    const id = idOf('Offers')
+    const asked = (): string[] => gmail.commands.filter((line) => /BODY\.PEEK\[HEADER\]/.test(line))
+    expect(await service.details(id)).toMatchObject({ recorded: true, mailedBy: 'mail.shop.example', tls: 'TLS 1.3' })
+    expect(asked()).toHaveLength(1)
+    await service.details(id)
+    expect(asked()).toHaveLength(1)
+    expect(gmail.mails[0]?.flags).not.toContain('\\Seen')
+    expect(gmail.writes()).toEqual([])
+  })
+
+  it('says what it can when the server can\'t be reached, and tries again next time', async () => {
+    gmail.add(news(), { arrived: new Date(at(9)) })
+    await signedIn()
+    ;(store as unknown as { db: { exec(sql: string): void } }).db.exec(`UPDATE messages SET details = ''`)
+    gmail.dropNextConnection = true
+    expect(await service.details(idOf('Offers'))).toMatchObject({ recorded: false, checks: null, wroteTo: false })
+    expect(await service.details(idOf('Offers'))).toMatchObject({ recorded: true, mailedBy: 'mail.shop.example' })
+  })
+})
+
 describe('going back over old previews', () => {
   it('remakes them once for each version', async () => {
     gmail.add(rawMail({ subject: 'Reply', text: 'Fresh words.\n\nOn Tue, Mai <mai@example.com> wrote:\n> Older words' }), { arrived: new Date(at(8)) })

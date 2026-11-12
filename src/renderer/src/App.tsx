@@ -800,7 +800,12 @@ export function App(): ReactNode {
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
       forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}
-      summarize={(address, on) => void summarize(address, on)} />
+      summarize={(address, on) => void summarize(address, on)}
+      write={(address) => void compose({ kind: 'new', account: open?.account, to: address })}
+      find={SOLO ? undefined : (text) => {
+        setSearch(text)
+        focusSearch()
+      }} />
   )
   /** What's drawn over the page, in any window. */
   const over = (

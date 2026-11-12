@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, nativeTheme, powerMonitor, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeTheme, powerMonitor, screen, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -373,6 +373,14 @@ function register(service: MailService): void {
     writeFileSync(path, found.content, { mode: 0o600 })
     const failure = await shell.openPath(path)
     if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+  })
+  handle('details', (message: unknown) => service.details(number(message)))
+  // An address and nothing else: a page gone wrong mustn't be able to put a command on the clipboard
+  // for someone to paste into a terminal.
+  handle('copyAddress', (address: unknown) => {
+    const value = text(address, 320)
+    if (!/^[^\s@<>"'`;|&$\\]+@[^\s@<>"'`;|&$\\]+$/.test(value)) throw new Error("That isn't an address.")
+    clipboard.writeText(value)
   })
   handle('drafts', () => service.drafts())
   handle('openThreadWindow', (account: unknown, thread: unknown, bins: unknown) =>

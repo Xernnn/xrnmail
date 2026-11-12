@@ -58,6 +58,13 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
 - **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
   going somewhere else. It warns; it never vouches.
+- **Message details:** "To: me ⌄" over a message opens everything about it, as Edison's header does
+  and with what Gmail's details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full
+  date and the one the sender wrote if it's far off, the account and where it is, the address it was
+  delivered to, mailed by and signed by, TLS, the SPF, DKIM and DMARC results the receiving server
+  wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
+  warnings. Every address can be selected, copied, written to, searched for, muted, let straight
+  through or blocked from there. Escape or a click elsewhere closes it.
 - **Snooze:** a thread comes back when you say, or when someone replies.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or

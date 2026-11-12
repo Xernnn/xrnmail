@@ -220,6 +220,35 @@ export interface ThreadRef {
   thread: string
 }
 
+/** What a message's headers say about where it came from and how, for its details. A receiving
+ *  server wrote these, as far as anything here can tell, and they're shown as what it wrote down. */
+export interface HeaderDetails {
+  /** Known on your own copy of what you sent. */
+  bcc: Address[]
+  /** Which of your addresses the server delivered it to, when it says. */
+  deliveredTo: string
+  /** The top Authentication-Results line: who checked, and what SPF, DKIM and DMARC came to. */
+  checks: { by: string; spf: string; dkim: string; dmarc: string } | null
+  /** The envelope's domain, as Gmail's "mailed-by". */
+  mailedBy: string
+  /** Domains whose DKIM signatures passed, as Gmail's "signed-by". */
+  signedBy: string[]
+  /** How it reached your mail service, "TLS 1.3" or "TLS", or '' when that isn't recorded. */
+  tls: string
+  /** The mailing list it came through. */
+  list: { id: string; name: string } | null
+  /** The Date header: when the sender says they sent it. */
+  sent: number | null
+}
+
+/** A message's details panel: its headers' details, and what's known here about its sender. */
+export interface MessageDetails extends HeaderDetails {
+  /** The headers could be read, now or when it arrived. */
+  recorded: boolean
+  /** Mail has gone from this account to the sender. */
+  wroteTo: boolean
+}
+
 export interface MessageView {
   id: number
   account: string
@@ -412,6 +441,11 @@ export interface MailApi {
   saveAttachment(message: number, index: number): Promise<boolean>
   openAttachment(message: number, index: number): Promise<void>
   drafts(): Promise<Draft[]>
+  /** Everything about where a message came from and how. Mail stored before this was kept has its
+   *  headers read from the server, once. */
+  details(message: number): Promise<MessageDetails>
+  /** Puts an email address, and nothing else, on the clipboard. */
+  copyAddress(address: string): Promise<void>
   /** Opens a thread in a window of its own, or brings forward the one it already has. */
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */

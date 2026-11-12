@@ -1,5 +1,5 @@
 import type {
-  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, Identity, ListQuery, MailAction, MessageView, QuickAction,
+  AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
   NewAccount, Overview, ProfilePatch, Rsvp, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { QUICK_SLOTS } from '@shared/types'
@@ -13,7 +13,8 @@ import { escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubjec
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
-import { attachmentsOf, makeSnippet, type WholeAttachment } from './parse'
+import { NO_DETAILS } from './details'
+import { attachmentsOf, detailsOf, makeSnippet, type WholeAttachment } from './parse'
 import { gmailThreadUrl, isPublicHttps, isSafeHubUrl } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, type MailSender } from './sender'
@@ -926,6 +927,36 @@ export class MailService {
     } finally {
       this.listing.delete(id)
     }
+  }
+
+  /** What a message's details panel shows beyond the message. Mail kept before its headers were
+   *  read has them read now, from the server and read-only, and kept, so it's asked once. Not being
+   *  able to reach the server leaves them unknown, and they're tried again next time. */
+  async details(id: number): Promise<MessageDetails> {
+    const message = this.store.message(id, this.deps.now())
+    if (!message) throw new Error("That message isn't here any more.")
+    let found: HeaderDetails | null = this.store.details(id)
+    if (!found) {
+      let source: MailSource | null = null
+      try {
+        source = this.deps.openSource(this.config(message.account), await this.login(message.account))
+        await source.connect()
+        const box = source.mailboxes().find((b) => b.id === message.box)
+        if (box) {
+          await source.open(box)
+          const header = await source.header(message.uid)
+          if (header) {
+            found = await detailsOf(header)
+            this.store.saveDetails(id, found)
+          }
+        }
+      } catch {
+        // Unknown for now: the panel says so, and the next look tries again.
+      } finally {
+        await source?.close().catch(() => undefined)
+      }
+    }
+    return { ...(found ?? NO_DETAILS), recorded: found !== null, wroteTo: this.store.wroteTo(message.account, message.from.address) }
   }
 
   contacts(text: string): Address[] {

@@ -88,6 +88,8 @@ export interface MailSource {
   flagsOf(uids: number[]): AsyncIterable<RemoteHeader>
   /** One message with nothing cut, for its attachments. */
   whole(uid: number): Promise<Buffer | null>
+  /** One message's header alone, for its details. */
+  header(uid: number): Promise<Buffer | null>
   done(): void
   close(): Promise<void>
 }
@@ -280,6 +282,12 @@ export class ImapSource implements MailSource {
   async whole(uid: number): Promise<Buffer | null> {
     const found = await this.client.fetchOne(String(uid), { uid: true, source: true }, { uid: true })
     return found ? (found.source ?? null) : null
+  }
+
+  /** BODY.PEEK[HEADER]: reading it leaves the message unread. */
+  async header(uid: number): Promise<Buffer | null> {
+    const found = await this.client.fetchOne(String(uid), { uid: true, headers: true }, { uid: true })
+    return found ? (found.headers ?? null) : null
   }
 
   done(): void {

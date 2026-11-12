@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
@@ -7,6 +7,7 @@ import {
 import { plainName } from '@shared/names'
 import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
 import { Avatar, Empty, KIND_ICONS } from './Common'
+import { Details, type AddressActions } from './Details'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
@@ -94,32 +95,17 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
   )
 }
 
-/** "To: Me", and everything else about who it went to when that's opened. */
-function Recipients(props: { message: MessageView; own: string[] }): ReactNode {
+/** "To: me ⌄": who it went to. Pressed, it opens the message's details. */
+function Recipients(props: { message: MessageView; own: string[]; open: boolean; toggle(): void; button: RefObject<HTMLButtonElement | null> }): ReactNode {
   const { message: m, own } = props
-  const [open, setOpen] = useState(false)
   const label = (who: Address): string => (own.includes(who.address.toLowerCase()) ? 'me' : nameOf(who))
   const everyone = [...m.to, ...m.cc]
-  const line = (who: Address[]): string => who.map((one) => (one.name ? `${one.name} <${one.address}>` : one.address)).join(', ')
   return (
-    <>
-      <button className="who-to" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="muted">To:</span> {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open && (
-        <Popover close={() => setOpen(false)}>
-          <dl className="details">
-            <dt>From</dt><dd>{line([m.from])}</dd>
-            {m.to.length > 0 && <><dt>To</dt><dd>{line(m.to)}</dd></>}
-            {m.cc.length > 0 && <><dt>Cc</dt><dd>{line(m.cc)}</dd></>}
-            {m.replyTo.length > 0 && <><dt>Reply to</dt><dd>{line(m.replyTo)}</dd></>}
-            <dt>Date</dt><dd>{longTime(m.date)}</dd>
-            <dt>Account</dt><dd>{m.account}</dd>
-          </dl>
-        </Popover>
-      )}
-    </>
+    <button ref={props.button} type="button" className="who-to" aria-expanded={props.open} aria-haspopup="dialog" title="Details"
+      onClick={props.toggle}>
+      <span className="muted">To:</span> {everyone.length > 0 ? everyone.map(label).join(', ') : 'undisclosed'}
+      <ChevronDown className={props.open ? 'flip' : ''} size={13} aria-hidden="true" />
+    </button>
   )
 }
 
@@ -134,6 +120,9 @@ function Message(props: {
   bins: boolean
   own: string[]
   settings: Settings | null
+  account: AccountView | undefined
+  /** What the details offer to do with each address. */
+  actions: AddressActions
   /** The sender skips the wait for a delivery. */
   straight: boolean
   toggle(): void
@@ -147,6 +136,13 @@ function Message(props: {
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
   const [menu, setMenu] = useState(false)
+  const [details, setDetails] = useState(false)
+  const toggleButton = useRef<HTMLButtonElement>(null)
+  // Closed by Escape or a click elsewhere, it hands the focus back to what opened it.
+  const closeDetails = useCallback((): void => {
+    setDetails(false)
+    toggleButton.current?.focus()
+  }, [])
   const address = m.from.address.toLowerCase()
   const trusted = settings?.images === 'always' || (settings?.imagesFrom ?? []).includes(address)
   // A From line can be forged, so being trusted only counts on mail that passed for its sender.
@@ -181,7 +177,7 @@ function Message(props: {
               </span>
             )}
           </div>
-          <div className="anchor"><Recipients message={m} own={own} /></div>
+          <Recipients message={m} own={own} open={details} toggle={() => setDetails(!details)} button={toggleButton} />
         </div>
         <span className="muted when">{longTime(m.date)}</span>
         {!bins && <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />}
@@ -201,6 +197,10 @@ function Message(props: {
               </Popover>
             )}
           </div>
+        )}
+        {details && (
+          <Details message={m} account={props.account} own={own} actions={props.actions} close={closeDetails}
+            cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={() => props.unsubscribe(m.id)} />
         )}
       </div>
       <div className="message-body">
@@ -267,6 +267,10 @@ export function Reader(props: {
   mute(address: string, on: boolean): void
   /** Into the Summary, or out of it. */
   summarize(address: string, on: boolean): void
+  /** A new message to an address. */
+  write(address: string): void
+  /** Searches for what's given. Not in a window of its own. */
+  find?: (text: string) => void
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -320,6 +324,18 @@ export function Reader(props: {
   const summarized = bulkSender !== undefined && (settings?.summary.senders ?? []).includes(bulkSender.toLowerCase())
   // Only the address itself can be taken off here; a whole @domain stays a decision for Settings.
   const listedExactly = sender !== undefined && (vip ?? []).some((v) => v.trim().toLowerCase() === sender.toLowerCase())
+
+  const actions: AddressActions = {
+    write: props.write,
+    find: props.find,
+    block: props.block,
+    mute: props.mute,
+    muted: (address) => (settings?.muted ?? []).includes(address.toLowerCase()),
+    straight: vip !== null && !bins ? props.straight : null,
+    isStraight,
+    listedExactly: (address) => (vip ?? []).some((v) => v.trim().toLowerCase() === address.toLowerCase()),
+    say: props.say
+  }
 
   const moreItem = (Icon: LucideIcon, label: string, run: () => void): ReactNode => (
     <button type="button" className="menu-item" onClick={() => { setPanel(null); run() }}>
@@ -407,7 +423,7 @@ export function Reader(props: {
               </button>
             )}
             <Message message={m} open={open.has(m.id)} leaving={m === leaving} blocking={!bins && !leaving && m === blockable} bins={bins} own={own}
-              settings={settings} straight={isStraight(m.from.address)}
+              settings={settings} account={account} actions={actions} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
               unsubscribe={props.unsubscribe} block={props.block} trust={props.trust} />
           </div>

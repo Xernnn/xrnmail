@@ -1,7 +1,8 @@
 import { htmlToText } from 'html-to-text'
 import { simpleParser, type AddressObject, type Attachment } from 'mailparser'
 import { splitQuoted } from '@shared/quoted'
-import type { Address, AttachmentInfo, SenderWarning } from '@shared/types'
+import type { Address, AttachmentInfo, HeaderDetails, SenderWarning } from '@shared/types'
+import { headerDetails } from './details'
 import { inviteOf, type Invite } from './invite'
 
 /** The most of one message kept on this laptop. Attachments are the usual reason to go past it,
@@ -37,6 +38,8 @@ export interface ParsedMail {
   bulk: boolean
   warnings: SenderWarning[]
   invite: Invite | null
+  /** Where it came from and how, for its details. */
+  details: HeaderDetails
 }
 
 function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
@@ -192,8 +195,15 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
     attachments: attachmentInfo(mail.attachments ?? []),
     bulk,
     warnings: senderWarnings({ from, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),
-    invite: calendar ? inviteOf(calendar.content.toString('utf8')) : null
+    invite: calendar ? inviteOf(calendar.content.toString('utf8')) : null,
+    details: headerDetails(mail.headerLines, addresses(mail.bcc), mail.date)
   }
+}
+
+/** The details from a message's headers alone, as fetched for mail stored before they were kept. */
+export async function detailsOf(header: Buffer): Promise<HeaderDetails> {
+  const mail = await simpleParser(Buffer.concat([header, Buffer.from('\r\n')]), { maxHtmlLengthToParse: 0 })
+  return headerDetails(mail.headerLines, addresses(mail.bcc), mail.date)
 }
 
 export interface WholeAttachment {

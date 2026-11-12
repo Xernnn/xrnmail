@@ -196,8 +196,19 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
   pressed.
 
 Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
-server wrote, and a pass is never shown, because lower lines are the sender's own work and on a server
-that adds no line of its own the top one is too.
+server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
+work and on a server that adds no line of its own the top one is too.
+
+A message's details show those results all the same, as Gmail's details do, labelled as what the
+receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
+strings are dropped before a result is looked for, only the top `Authentication-Results`,
+`Delivered-To` and the topmost `Received` line that names where it came from are read, every value is
+cut short and stripped of control and bidirectional characters, and all of it is shown as text. They
+are kept with the message when it arrives (`details`, as JSON). Mail stored before that has none; the
+first time its details are opened its header alone is fetched, with `BODY.PEEK[HEADER]` so nothing
+is marked read, and kept. Copying an address goes through the main process, which takes only
+something shaped like an address, so a page gone wrong can't put a command on the clipboard to be
+pasted into a terminal.
 
 ## Batches
 

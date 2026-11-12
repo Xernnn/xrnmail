@@ -485,6 +485,7 @@ export class FakeGmail {
     const box = this.selected(socket)
     const top = box.mails.at(-1)?.uid ?? 0
     const peek = /BODY\.PEEK\[\](?:<(\d+)\.(\d+)>)?/i.exec(items)
+    const header = /BODY\.PEEK\[HEADER\]/i.test(items)
     const silent = /\bBODY\[/i.test(items.replace(/BODY\.PEEK/gi, ''))
     if (silent) this.commands.push('TOUCHED-SEEN')
     const gmail = !this.options.plain
@@ -500,7 +501,13 @@ export class FakeGmail {
       if (gmail && /X-GM-THRID/i.test(items)) bits.push(`X-GM-THRID ${mail.thread}`)
       if (gmail && /X-GM-LABELS/i.test(items)) bits.push(`X-GM-LABELS (${mail.labels.map(this.bareLabels ? bare : quoted).join(' ')})`)
       const head = `* ${index + 1} FETCH (${bits.join(' ')}`
-      if (peek) {
+      if (header) {
+        const end = mail.raw.indexOf('\r\n\r\n')
+        const top = mail.raw.subarray(0, end < 0 ? mail.raw.length : end + 4)
+        socket.write(`${head} BODY[HEADER] {${top.length}}\r\n`)
+        socket.write(top)
+        socket.write(')\r\n')
+      } else if (peek) {
         const start = Number(peek[1] ?? 0)
         const body = mail.raw.subarray(start, peek[2] ? start + Number(peek[2]) : undefined)
         socket.write(`${head} BODY[]<${start}> {${body.length}}\r\n`)

@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import type {
-  Address, AssistantSection, AttachmentInfo, Draft, DraftState, Facts, LabelCount, ListQuery, MailAction, MessageView, SenderWarning,
+  Address, AssistantSection, AttachmentInfo, Draft, DraftState, Facts, HeaderDetails, LabelCount, ListQuery, MailAction, MessageView, SenderWarning,
   Subscription, ThreadRef, ThreadRow
 } from '@shared/types'
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
@@ -46,6 +46,8 @@ export interface StoredMail {
   focused: boolean
   facts: Facts | null
   warnings: SenderWarning[]
+  /** What its headers say about where it came from, for its details. Null when they couldn't be read. */
+  details?: HeaderDetails | null
 }
 
 export interface HeldMail {
@@ -246,6 +248,11 @@ export const MIGRATIONS = [
   DROP INDEX messages_unread;
   CREATE INDEX messages_unread ON messages(in_inbox, release_at, bin, focus, arrived, account, thread, summary) WHERE seen = 0 AND hidden = 0;
   CREATE INDEX messages_summary ON messages(release_at, account, thread, hidden, bin, in_inbox, seen, from_name, from_address, arrived) WHERE summary = 1;
+  `,
+  // What the headers say about where a message came from, for its details panel. Mail stored before
+  // this has none, and has its headers read from the server the first time its details are opened.
+  `
+  ALTER TABLE messages ADD COLUMN details TEXT NOT NULL DEFAULT '';
   `
 ]
 
@@ -437,8 +444,8 @@ export class Store {
           `INSERT OR IGNORE INTO messages(account, box, uid, thread, gmail_id, message_id, subject, from_name, from_address,
              to_json, cc_json, reply_to, refs, unsubscribe, arrived, snippet, body_text, body_html, attachments,
              has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, files_cut, size, release_at,
-             summary, focus, kind, facts, warnings)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+             summary, focus, kind, facts, warnings, details)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           mail.account, mail.box, mail.uid, mail.thread, mail.gmailId, mail.messageId, mail.subject, mail.from.name, mail.from.address,
@@ -450,7 +457,8 @@ export class Store {
           // Gmail's own unsent drafts live in All Mail too; a thread shouldn't show them as sent.
           mail.seen ? 1 : 0, mail.flagged ? 1 : 0, mail.labels.includes(DRAFT) ? 1 : 0,
           mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt, mail.summary ? 1 : 0,
-          mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings)
+          mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings),
+          mail.details ? JSON.stringify(mail.details) : ''
         )
       if (Number(result.changes) === 0) return null
       this.db
@@ -752,6 +760,21 @@ export class Store {
       references: String(r['refs']),
       unsubscribeTo: unsubscribe ? (JSON.parse(unsubscribe) as Unsubscribe) : null
     }
+  }
+
+  /** What a message's headers said, if it was kept when it arrived or read since. */
+  details(id: number): HeaderDetails | null {
+    const value = String(this.one('SELECT details FROM messages WHERE id = ?', id)?.['details'] ?? '')
+    if (!value) return null
+    try {
+      return JSON.parse(value) as HeaderDetails
+    } catch {
+      return null
+    }
+  }
+
+  saveDetails(id: number, details: HeaderDetails): void {
+    this.db.prepare('UPDATE messages SET details = ? WHERE id = ?').run(JSON.stringify(details), id)
   }
 
   /** Of these messages, the ones whose list of files came from a cut copy and may be short. */
