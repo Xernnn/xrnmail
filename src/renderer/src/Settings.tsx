@@ -316,7 +316,7 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <h3>Inbox</h3>
         <Check label="Split the inbox into Focused and Other" on={settings.focused} set={(focused) => save({ focused })} />
         <Choice label="Layout" value={settings.layout} set={(layout) => save({ layout })}
-          options={[['panes', 'List and message side by side'], ['list', 'One thing at a time']]} />
+          options={[['panes', 'List and message side by side'], ['below', 'Message under the list'], ['list', 'One thing at a time']]} />
         <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
           options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
       </section>

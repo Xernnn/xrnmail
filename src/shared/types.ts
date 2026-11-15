@@ -132,8 +132,8 @@ export interface Settings {
   /** The application ID Outlook accounts added before each kept its own renew with. Left as it is:
    *  a renewal only works with the ID its account signed in with. */
   microsoftClientId: string
-  /** `panes` reads beside the list, `list` is one thing at a time. */
-  layout: 'panes' | 'list'
+  /** `panes` reads beside the list, `below` under it, and `list` is one thing at a time. */
+  layout: 'panes' | 'below' | 'list'
   /** What the reader opens once the open thread is archived, deleted or otherwise leaves the list:
    *  the thread below it, the one above, or nothing, back to the list. */
   afterRemove: 'next' | 'previous' | 'list'

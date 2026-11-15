@@ -754,32 +754,36 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
 .app.solo .back { display: none; }
 
 .one-pane .panes { grid-template-columns: minmax(0, 1fr); }
+/* The reader under the list, the line between them dragged up and down. */
+.below .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--list-height) 1px minmax(0, 1fr); }
+.below .resize { cursor: row-resize; }
+.below .resize::before { inset: -3px 0; }
 .one-pane .resize, .one-pane .reader { display: none; }
 .one-pane.reading .list, .one-pane.reading .band { display: none; }
 .one-pane.reading .reader { display: flex; }
 .one-pane .back { display: inline-grid; margin-right: 6px; }
 
-/* The wide list: who, what and when along one line */
+/* The wide list, alone or over the reader: who, what and when along one line */
 
 @media (min-width: 900px) {
-  .one-pane:not(.reading) .thread-card { align-items: center; padding-block: 8px; }
-  .one-pane:not(.reading) .thread { contain-intrinsic-size: auto 60px; }
-  .one-pane:not(.reading) .face { display: block; height: 44px; }
-  .one-pane:not(.reading) .pick { position: absolute; right: -5px; bottom: -3px; }
-  .one-pane:not(.reading) .thread-open { display: flex; align-items: center; gap: 16px; padding-right: 72px; }
-  .one-pane:not(.reading) .thread-top { flex: 0 0 240px; }
-  .one-pane:not(.reading) .thread time { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); padding-left: 0; }
-  .one-pane:not(.reading) .thread-mid { flex: 0 1 auto; max-width: 46%; margin: 0; }
-  .one-pane:not(.reading) .snippet { flex: 1; min-width: 0; -webkit-line-clamp: 1; }
-  .one-pane:not(.reading) .cards { display: none; }
-  .one-pane:not(.reading) .row-actions { top: 50%; transform: translateY(-50%); }
-  .one-pane:not(.reading) .bulk { left: 50%; right: auto; width: 420px; transform: translateX(-50%); animation: none; }
+  .one-pane:not(.reading) .thread-card, .below .thread-card { align-items: center; padding-block: 8px; }
+  .one-pane:not(.reading) .thread, .below .thread { contain-intrinsic-size: auto 60px; }
+  .one-pane:not(.reading) .face, .below .face { display: block; height: 44px; }
+  .one-pane:not(.reading) .pick, .below .pick { position: absolute; right: -5px; bottom: -3px; }
+  .one-pane:not(.reading) .thread-open, .below .thread-open { display: flex; align-items: center; gap: 16px; padding-right: 72px; }
+  .one-pane:not(.reading) .thread-top, .below .thread-top { flex: 0 0 240px; }
+  .one-pane:not(.reading) .thread time, .below .thread time { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); padding-left: 0; }
+  .one-pane:not(.reading) .thread-mid, .below .thread-mid { flex: 0 1 auto; max-width: 46%; margin: 0; }
+  .one-pane:not(.reading) .snippet, .below .snippet { flex: 1; min-width: 0; -webkit-line-clamp: 1; }
+  .one-pane:not(.reading) .cards, .below .cards { display: none; }
+  .one-pane:not(.reading) .row-actions, .below .row-actions { top: 50%; transform: translateY(-50%); }
+  .one-pane:not(.reading) .bulk, .below .bulk { left: 50%; right: auto; width: 420px; transform: translateX(-50%); animation: none; }
 }
 
 @media (max-width: 1040px) {
   .app { --side-width: 210px; }
   .view-title { font-size: 22px; }
-  .panes { grid-template-columns: minmax(0, 1fr); }
+  .panes, .below .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .resize, .reader { display: none; }
   .app.reading { grid-template-columns: minmax(0, 1fr); }
   .app.reading .sidebar, .app.reading .list, .app.reading .band { display: none; }

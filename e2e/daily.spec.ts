@@ -458,6 +458,47 @@ test('nothing refreshes once quitting has closed the store', async () => {
   rmSync(folder, { recursive: true, force: true })
 })
 
+test('the reading pane can sit under the list, as tall as it is dragged to, and stays so', async () => {
+  run = await launch({ size: [1280, 840] })
+  const { page, gmail } = run
+  for (const [i, subject] of ['Alpha', 'Bravo', 'Charlie'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const box = async (selector: string): Promise<{ x: number; y: number; width: number; height: number }> => {
+    const found = await page.locator(selector).first().boundingBox()
+    if (!found) throw new Error(`${selector} isn't on screen`)
+    return found
+  }
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByLabel('Layout').selectOption('below')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.locator('.threads').getByText('Bravo').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Bravo')
+  await expect.poll(async () => Math.round((await box('.reader')).x)).toBe(Math.round((await box('section.list')).x))
+  const [list, handle, reader] = [await box('section.list'), await box('.resize'), await box('.reader')]
+  expect(Math.round(list.x)).toBe(Math.round(reader.x)) // one over the other, as wide
+  expect(Math.round(list.width)).toBe(Math.round(reader.width))
+  expect(handle.y).toBeGreaterThanOrEqual(list.y + list.height - 1)
+  expect(reader.y).toBeGreaterThanOrEqual(handle.y + handle.height - 1)
+  expect(handle.width).toBeGreaterThan(handle.height)
+  // Dragged down, the list grows by as much.
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 100, { steps: 5 })
+  await page.mouse.up()
+  const taller = await box('section.list')
+  expect(Math.round(taller.height - list.height)).toBe(100)
+  await page.reload()
+  await page.locator('.threads').getByText('Bravo').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Bravo')
+  expect(Math.round((await box('section.list')).height)).toBe(Math.round(taller.height))
+  expect(Math.round((await box('.reader')).x)).toBe(Math.round(list.x))
+  // And back beside it, at the width it had.
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByLabel('Layout').selectOption('panes')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(async () => (await box('.reader')).x).toBeGreaterThan(list.x + 300)
+})
+
 test('the window: a title and search over list and reader, and the sidebar in its order', async () => {
   run = await launch()
   const { page, gmail } = run

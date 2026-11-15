@@ -42,16 +42,19 @@ const SOLO = soloFrom(window.location.search)
 
 const keyOf = (ref: ThreadRef): string => `${ref.account}/${ref.thread}`
 
-const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+interface Span { key: string; low: number; high: number; start: number }
+/** How wide the list is beside the reader, and how tall over it, as last dragged. */
+const LIST_WIDTHS: Span = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+const LIST_HEIGHTS: Span = { key: 'xrnmail.listHeight', low: 140, high: 900, start: 300 }
 /** More than Trash is ever likely to hold on this laptop. */
 const WHOLE_LIST = 20_000
 
-const savedWidth = (): number => {
+const savedSpan = (span: Span): number => {
   try {
-    const saved = Number(localStorage.getItem(LIST_WIDTHS.key))
-    return saved >= LIST_WIDTHS.low && saved <= LIST_WIDTHS.high ? saved : LIST_WIDTHS.start
+    const saved = Number(localStorage.getItem(span.key))
+    return saved >= span.low && saved <= span.high ? saved : span.start
   } catch {
-    return LIST_WIDTHS.start
+    return span.start
   }
 }
 
@@ -142,7 +145,8 @@ export function App(): ReactNode {
   const [senderFrom, setSenderFrom] = useState<'subscribed' | 'left' | 'summary'>('subscribed')
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
-  const [listWidth, setListWidth] = useState(savedWidth)
+  const [listWidth, setListWidth] = useState(() => savedSpan(LIST_WIDTHS))
+  const [listHeight, setListHeight] = useState(() => savedSpan(LIST_HEIGHTS))
   const searchBox = useRef<HTMLInputElement>(null)
   /** The searches made lately, which the empty search box offers while it has the focus, and which of
    *  them the arrow keys are on. */
@@ -809,21 +813,27 @@ export function App(): ReactNode {
 
   const own = useMemo(() => (accounts ?? []).flatMap((a) => [a.email, ...(profile?.identities[a.email]?.aliases ?? [])]).map((a) => a.toLowerCase()), [accounts, profile])
 
+  /** The line between list and reader, dragged: sideways beside it, up and down over it. */
   const resize = (down: PointerEvent): void => {
-    const start = down.clientX
-    const from = listWidth
+    const over = profile?.layout === 'below'
+    const span = over ? LIST_HEIGHTS : LIST_WIDTHS
+    const set = over ? setListHeight : setListWidth
+    const start = over ? down.clientY : down.clientX
+    const from = over ? listHeight : listWidth
+    // Over the reader, the list can't take so much that the reader has no room.
+    const high = over ? Math.min(span.high, window.innerHeight - 260) : span.high
     let now = from
     const moved = (event: globalThis.PointerEvent): void => {
-      now = Math.max(LIST_WIDTHS.low, Math.min(LIST_WIDTHS.high, from + event.clientX - start))
-      setListWidth(now)
+      now = Math.round(Math.max(span.low, Math.min(high, from + (over ? event.clientY : event.clientX) - start)))
+      set(now)
     }
     const done = (): void => {
       window.removeEventListener('pointermove', moved)
       window.removeEventListener('pointerup', done)
       try {
-        localStorage.setItem(LIST_WIDTHS.key, String(now))
+        localStorage.setItem(span.key, String(now))
       } catch {
-        // Only a convenience: next time it starts at its usual width.
+        // Only a convenience: next time it starts at its usual size.
       }
     }
     window.addEventListener('pointermove', moved)
@@ -869,6 +879,7 @@ export function App(): ReactNode {
   const done = progress.reduce((sum, p) => sum + p.done, 0)
   const total = progress.reduce((sum, p) => sum + p.total, 0)
   const single = profile?.layout === 'list'
+  const below = profile?.layout === 'below'
   const lines = profile?.previewLines ?? 2
   const showRecent = searchFocus && !searching && searches.length > 0
   // What the bar under a selection's ⋮ works on: labels and folders are one account's own.
@@ -877,7 +888,7 @@ export function App(): ReactNode {
   const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
   const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
   const onOther = active.kind === 'inbox' && active.focus === 'other'
-  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
+  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', below ? 'below' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
     ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
     : NO_SWIPES
@@ -952,7 +963,7 @@ export function App(): ReactNode {
   if (SOLO) return <div className={`app solo solo-${SOLO.kind}`}>{SOLO.kind === 'thread' && reader}{over}</div>
 
   return (
-    <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
+    <div className={appClass} style={{ '--list': `${listWidth}px`, '--list-height': `${listHeight}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
         menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
