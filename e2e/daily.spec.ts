@@ -1492,3 +1492,26 @@ test('settings can be searched', async () => {
   await expect(page.getByLabel('Swipe left, short')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Batches' })).toHaveCount(0)
 })
+
+test('an Undo toast stays clear of Reply and Forward', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch on Friday', text: 'Shall we?' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'Your receipt', text: 'Thanks.' }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Lunch on Friday').click()
+  const reply = page.getByRole('button', { name: 'Reply', exact: true })
+  const forward = page.getByRole('button', { name: 'Forward', exact: true })
+  await expect(reply).toBeVisible()
+  await page.locator('.threads').getByText('Your receipt').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Pin', exact: true }).click()
+  const toast = page.locator('.toast')
+  await expect(toast).toContainText('Undo')
+  const box = await toast.boundingBox()
+  for (const button of [reply, forward]) {
+    const under = await button.boundingBox()
+    if (!box || !under) throw new Error('no box to compare')
+    const apart = box.x + box.width <= under.x || under.x + under.width <= box.x || box.y + box.height <= under.y || under.y + under.height <= box.y
+    expect(apart, `the toast ${JSON.stringify(box)} covers ${JSON.stringify(under)}`).toBe(true)
+  }
+})
