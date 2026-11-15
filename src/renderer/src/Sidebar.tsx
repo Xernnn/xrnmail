@@ -237,7 +237,7 @@ export function Sidebar(props: {
 
   const labelOf = (entry: SidebarEntry): string => `${many && ENTRIES[entry].gathered ? 'All ' : ''}${ENTRIES[entry].label}`
   const countOf = (entry: SidebarEntry): number | undefined =>
-    entry === 'drafts' ? drafts.length : entry === 'spam' ? overview?.spam : entry === 'summary' ? overview?.summary.unread : entry in (overview?.assistant ?? {}) ? overview?.assistant[entry as AssistantSection] : undefined
+    entry === 'drafts' ? drafts.length : entry === 'today' ? overview?.today : entry === 'spam' ? overview?.spam : entry === 'summary' ? overview?.summary.unread : entry in (overview?.assistant ?? {}) ? overview?.assistant[entry as AssistantSection] : undefined
 
   if (props.editing) {
     const toggleEntry = (entry: SidebarEntry): void =>

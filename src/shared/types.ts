@@ -313,6 +313,8 @@ export interface Overview {
   labels: LabelCount[]
   /** Threads waiting to be read on the Other side. */
   otherUnread: number
+  /** Threads in the inbox with something unread that came today. */
+  today: number
   spam: number
   /** Unread, by what the Assistant made of it. */
   assistant: Record<AssistantSection, number>

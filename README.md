@@ -217,7 +217,8 @@ Not here, though Edison has them:
 - From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
   have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
   quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
-  importance markers; and unread counts beside Today and Unread.
+  importance markers; and a count beside Unread, which here is the inbox's unread and would only
+  repeat the inbox's count. Today has its count, of what came today and is unread.
 - View original: a message's source, with Download. The source isn't kept on this laptop, so it would
   be fetched from the server.
 - A message's own ⋮ has Reply all and Forward here. Edison's also has Pin Thread, Trash, Mark as

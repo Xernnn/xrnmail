@@ -839,6 +839,19 @@ test('in Unread the open thread keeps its place while it is read, and j goes on 
   await expect(page.locator('.thread-subject')).toHaveText('Note 0')
 })
 
+test('Today in the sidebar counts what came today and is unread', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Days ago' }), { arrived: earlier(72) })
+  gmail.add(rawMail({ subject: 'Just now' }), { arrived: new Date() })
+  gmail.add(rawMail({ subject: 'Also now' }), { arrived: new Date() })
+  await signIn(run)
+  const today = page.locator('.sidebar').getByRole('button', { name: /^Today/ })
+  await expect(today.locator('.nav-count')).toHaveText('2')
+  await page.locator('.threads').getByText('Just now').click()
+  await expect(today.locator('.nav-count')).toHaveText('1')
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -1112,7 +1125,7 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   const folders = side.getByRole('list', { name: 'Folders' })
   const assistant = side.getByRole('list', { name: 'Assistant' })
 
-  await side.getByRole('button', { name: 'Today', exact: true }).click({ button: 'right' })
+  await side.getByRole('button', { name: /^Today/ }).click({ button: 'right' }) // with what came today counted beside it
   await expect(page.getByRole('menuitem', { name: 'Mark all as read' })).toBeVisible() // a place keeps its own entry
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await expect(side.getByRole('button', { name: 'Compose' })).toHaveCount(0)

@@ -941,6 +941,7 @@ export class MailService {
       earlyLeft: this.earlyLeft(),
       labels: this.store.labelCounts(now),
       otherUnread: this.store.unreadThreads(now, 'm.focus = 0'),
+      today: this.store.unreadThreads(now, 'm.arrived >= ?', new Date(now).setHours(0, 0, 0, 0)),
       spam: this.store.spamCount(now),
       assistant: this.store.assistantCounts(now),
       summary: {

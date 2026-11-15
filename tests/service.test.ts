@@ -1525,6 +1525,22 @@ describe('the sidebar', () => {
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual(['Held'])
   })
 
+  it('Today counts what of it is unread, as Edison\'s sidebar does, and held mail once it lands', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    gmail.add(rawMail({ subject: 'Yesterday' }), { arrived: new Date(at(9, 0) - 86_400_000) })
+    await arrive('Morning', 9, 0)
+    await arrive('Later', 9, 5)
+    expect(subjects('today')).toEqual(['Later', 'Morning'])
+    expect(service.overview().today).toBe(2)
+    service.thread(ME, ref('Morning').thread)
+    expect(service.overview().today).toBe(1)
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['13:00'] })
+    await arrive('Held', 10, 30)
+    expect(service.overview().today).toBe(1)
+    clock = at(13, 1)
+    expect(service.overview().today).toBe(2)
+  })
+
   it('Unread keeps the thread it is asked to keep once it has been read, read, and only that one', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     await arrive('First', 9, 0)
