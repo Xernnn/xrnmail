@@ -597,6 +597,35 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+test('Settings choose what the reply button on a message does: reply, or reply to everyone on it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plain', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'To several', from: 'Mai Tran <mai@example.com>', to: `${ME}, Linh Pham <linh@example.com>` }), { arrived: earlier(4) })
+  await signIn(run)
+  const message = page.locator('.message.open')
+  await page.locator('.threads').getByText('To several').click()
+  await message.getByRole('button', { name: 'Reply to this' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove mai@example.com' })).toBeVisible()
+  await expect(composer(page).getByRole('button', { name: 'Remove linh@example.com' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Default reply')
+  await expect(choice).toHaveValue('reply')
+  await choice.selectOption('replyAll')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await message.getByRole('button', { name: 'Reply all to this' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove mai@example.com' })).toBeVisible()
+  await expect(composer(page).getByRole('button', { name: 'Remove linh@example.com' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  // With no one else on it, there's only the sender to answer.
+  await page.locator('.threads').getByText('Plain').click()
+  await expect(message.getByRole('button', { name: 'Reply to this' })).toBeVisible()
+  await expect(page.locator('.reply-bar').getByRole('button')).toHaveText(['Reply', 'Forward']) // the foot keeps both, as it was
+})
+
 test('nothing to type into under a thread: replying starts at the buttons at its foot', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -33,7 +33,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo send pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
@@ -324,6 +324,8 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <h3>Sending</h3>
         <Choice label="Undo send for" value={settings.undoSeconds} set={(undoSeconds) => save({ undoSeconds })}
           options={[0, 5, 10, 20, 30].map((n) => [n, n === 0 ? 'Off' : `${n} seconds`])} />
+        <Choice label="Default reply" value={settings.defaultReply} set={(defaultReply) => save({ defaultReply })}
+          options={[['reply', 'Reply'], ['replyAll', 'Reply All']]} />
       </section>
       <section>
         <h3>Reading</h3>
