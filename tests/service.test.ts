@@ -1471,6 +1471,21 @@ describe('the sidebar', () => {
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual(['Held'])
   })
 
+  it('Unread keeps the thread it is asked to keep once it has been read, read, and only that one', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('First', 9, 0)
+    await arrive('Second', 9, 5)
+    await arrive('Third', 9, 10)
+    const second = ref('Second')
+    service.thread(ME, second.thread) // opened, so read
+    service.thread(ME, ref('Third').thread)
+    expect(subjects('unread')).toEqual(['First'])
+    const kept = service.list({ kind: 'unread', keep: second })
+    expect(kept.map((row) => [row.subject, row.unread])).toEqual([['Second', 0], ['First', 1]])
+    expect(service.list({ kind: 'unread', account: ME, keep: second }).map((row) => row.subject)).toEqual(['Second', 'First'])
+    expect(service.list({ kind: 'unread', account: 'someone@else.example', keep: second })).toEqual([])
+  })
+
   it('Archive lists what was put away, and neither the inbox nor what you sent', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     await arrive('Keep in the inbox', 9, 0)

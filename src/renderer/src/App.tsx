@@ -218,16 +218,19 @@ export function App(): ReactNode {
     return () => { current = false }
   }, [senderKey, version])
 
+  // Opening a thread reads it, so Unread is asked to keep the open one, or it would leave the list as
+  // it opened, and j would have nowhere to go on from.
+  const query = active.kind === 'unread' && open ? { ...active, keep: open } : active
   useEffect(() => {
-    if (SOLO || active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
+    if (SOLO || query.kind === 'drafts' || query.kind === 'subscriptions') return setRows([])
     const asked = ++listAsked.current
     const timer = setTimeout(() => {
-      void window.mail.list(active as ListQuery, limit).then((found) => {
+      void window.mail.list(query as ListQuery, limit).then((found) => {
         if (asked === listAsked.current) setRows(found)
       })
     }, 120)
     return () => clearTimeout(timer)
-  }, [JSON.stringify(active), version, reads, limit])
+  }, [JSON.stringify(query), version, reads, limit])
 
   useEffect(() => {
     if (!open) return setMessages([])

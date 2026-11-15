@@ -723,8 +723,12 @@ export class Store {
         return this.threadRows(by('1'), params, now, limit, { bin: 1 })
       case 'spam':
         return this.threadRows(by('1'), params, now, limit, { bin: 2 })
-      case 'unread':
-        return this.threadRows(by('in_inbox = 1 AND seen = 0'), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+      case 'unread': {
+        // The open thread stays while it's read, in its place, until another is opened.
+        const keep = query.keep ? [query.keep.account, query.keep.thread] : []
+        const unread = query.keep ? '(seen = 0 OR (account = ? AND thread = ?))' : 'seen = 0'
+        return this.threadRows(by(`in_inbox = 1 AND ${unread}`), [...keep, ...params], now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+      }
       case 'attachments':
         return this.threadRows(by('has_attachment = 1'), params, now, limit)
       case 'today':

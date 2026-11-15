@@ -722,6 +722,31 @@ test('a stranger\'s very long name and address wrap, in the warning and the deta
   expect(await sideways()).toBe(0)
 })
 
+// Opening a thread reads it, so in Unread it left the list the moment it opened: nothing in the list
+// was marked as open, and j, which goes on from the open thread, started again at the top.
+test('in Unread the open thread keeps its place while it is read, and j goes on to the one below', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (let i = 0; i < 5; i++) gmail.add(rawMail({ subject: `Note ${i}` }), { arrived: earlier(10 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const rows = list.locator('.thread .subject')
+  await page.getByRole('button', { name: 'Unread', exact: true }).click()
+  await expect(rows).toHaveText(['Note 4', 'Note 3', 'Note 2', 'Note 1', 'Note 0'])
+  await list.getByText('Note 2').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Note 2')
+  await page.waitForTimeout(600) // the list is read again once the thread has been
+  await expect(rows).toHaveText(['Note 4', 'Note 3', 'Note 2', 'Note 1', 'Note 0'])
+  await expect(list.locator('.thread.on')).toContainText('Note 2')
+  await expect(list.locator('.thread', { hasText: 'Note 2' }).locator('.unread-dot')).toHaveCount(0)
+  await page.keyboard.press('j')
+  await expect(page.locator('.thread-subject')).toHaveText('Note 1')
+  await page.waitForTimeout(600)
+  await expect(rows).toHaveText(['Note 4', 'Note 3', 'Note 1', 'Note 0']) // read and let go of, it has gone
+  await page.keyboard.press('j')
+  await expect(page.locator('.thread-subject')).toHaveText('Note 0')
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -184,6 +184,11 @@ const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 function listQuery(value: unknown): ListQuery {
   const q = (value ?? {}) as Record<string, unknown>
   const scoped = SCOPED.find((kind) => kind === q['kind'])
+  if (scoped === 'unread' && q['keep']) {
+    const keep = q['keep'] as Record<string, unknown>
+    const query: ListQuery = { kind: 'unread', keep: { account: text(keep['account'], 320), thread: text(keep['thread'], 64) } }
+    return q['account'] ? { ...query, account: text(q['account']) } : query
+  }
   if (scoped) return q['account'] ? { kind: scoped, account: text(q['account']) } : { kind: scoped }
   if (q['kind'] === 'inbox') {
     const focus = q['focus'] === 'focused' || q['focus'] === 'other' ? q['focus'] : undefined
