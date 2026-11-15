@@ -276,6 +276,41 @@ describe('as it arrives', () => {
     expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello', account: ME, thread: ref('Hello').thread })
   })
 
+  it('with notices for Focused only, mail sorted into Other arrives without one, as it comes or in a batch', async () => {
+    const bulk = (subject: string, hour: number, minute: number): void => {
+      gmail.add(rawMail({ subject, from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://shop.example/u>'] }), { arrived: new Date(at(hour, minute)) })
+    }
+    service.saveProfile({ notifyFocusedOnly: true })
+    live(true)
+    bulk('Sale', 10, 30)
+    clock = at(10, 31)
+    await service.tick()
+    await service.syncAll()
+    expect(service.list({ kind: 'inbox', focus: 'other' }).map((r) => r.subject)).toEqual(['Sale'])
+    expect(landed).not.toHaveBeenCalled()
+    await arrive('Hello', 10, 40, 'Ada <ada@example.com>')
+    expect(landed).toHaveBeenCalledTimes(1)
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ subject: 'Hello' }))
+
+    landed.mockClear()
+    live(false)
+    bulk('Another sale', 11, 0)
+    await arrive('Lunch', 11, 5, 'Bao <bao@example.com>')
+    clock = at(13, 1)
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1) // Lunch, and not the sale beside it
+    // With Focused and Other off, there's no Other to keep quiet.
+    landed.mockClear()
+    service.saveProfile({ focused: false })
+    bulk('Last sale', 13, 30)
+    clock = at(13, 31)
+    await service.tick()
+    await service.syncAll()
+    clock = at(17, 1)
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1)
+  })
+
   it('back in batches, only what comes next waits, at the times kept', async () => {
     live(true)
     await arrive('Early', 10, 30)

@@ -1261,13 +1261,13 @@ export class Store {
     return { at: Number(at), unread: threads.size, senders }
   }
 
-  /** Who sent each message a delivery brought in (after, upto], one entry a message, and whether it
-   *  came with a Summary. */
-  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean }[] {
+  /** Who sent each message a delivery brought in (after, upto], one entry a message, whether it
+   *  came with a Summary, and whether it's in Focused. */
+  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean; focused: boolean }[] {
     return this.all(
-      'SELECT from_address, from_name, summary FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
+      'SELECT from_address, from_name, summary, focus FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
       after, upto
-    ).map((r) => ({ from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0 }))
+    ).map((r) => ({ from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0, focused: Number(r['focus']) > 0 }))
   }
 
   landedBetween(after: number, upto: number): number {

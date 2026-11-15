@@ -55,6 +55,7 @@ const DEFAULT_SETTINGS: Settings = {
   templates: [],
   blocked: [],
   muted: [],
+  notifyFocusedOnly: false,
   undoSeconds: 10,
   theme: 'system',
   focused: true,
@@ -698,7 +699,7 @@ export class MailService {
           const current = this.settings() // a sender blocked or muted meanwhile counts
           if (isVip(mail.from.address, current.blocked)) return void blocked.push(id)
           if (mail.from.address) senders.push(mail.from.address)
-          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
@@ -740,8 +741,13 @@ export class MailService {
 
   /** Mail a sync finds that's already due never passes through a tick's window, which only sees
    *  mail landing from now on, so a sync has to tell about it itself. */
-  private worthTelling(labels: string[], from: string, seen: boolean, email: string): boolean {
-    return !seen && labels.includes(INBOX) && !this.ownAddresses(email).includes(from.toLowerCase()) && this.identity(email).notify
+  private worthTelling(labels: string[], from: string, seen: boolean, email: string, focused: boolean): boolean {
+    return !seen && labels.includes(INBOX) && !this.ownAddresses(email).includes(from.toLowerCase()) && this.identity(email).notify && (focused || !this.quietOther())
+  }
+
+  /** Mail sorted into Other arrives unannounced, when the inbox is split and Settings say so. */
+  private quietOther(settings = this.settings()): boolean {
+    return settings.focused && settings.notifyFocusedOnly
   }
 
   /** Who someone is on an account, with anything not yet set filled in. */
@@ -775,7 +781,8 @@ export class MailService {
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
       const muted = this.settings().muted
-      const loud = senders.filter((mail) => !isVip(mail.from, muted)).length + woken
+      const quiet = this.quietOther()
+      const loud = senders.filter((mail) => !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
       if (loud > 0) this.deps.landed?.(loud)
       // A Summary is announced as one, apart from the batch.
       const told = summed.filter((mail) => !isVip(mail.from, muted))
@@ -1698,6 +1705,7 @@ export class MailService {
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
+      notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       theme: patch.theme ?? settings.theme,
       focused: patch.focused ?? settings.focused,
