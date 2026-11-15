@@ -2,6 +2,7 @@ import { app, clipboard, Menu, nativeImage, Notification, session, shell, Tray, 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppCommand } from '@shared/types'
+import { AUTOSTART_FLAG, autostartEntry } from './autostart'
 import { isSafeExternalUrl } from './safe-url'
 
 /** The parts of being a desktop app that have nothing to do with mail: tray, menus, spelling. */
@@ -176,18 +177,17 @@ export function notifySummary(count: number, senders: string[], open: () => void
   note.show()
 }
 
-const AUTOSTART_FLAG = '--hidden'
-
 export const startedHidden = (argv: string[]): boolean => argv.includes(AUTOSTART_FLAG)
 
 /** Linux has no system call for this: it's a file in the autostart folder. Only an installed build
- *  writes one, because a development build at login isn't something anyone asked for. */
+ *  writes one, because a development build at login isn't something anyone asked for. An AppImage
+ *  is started from an extracted copy, as the app's launcher starts it (see autostart.ts). */
 export function setStartAtLogin(on: boolean): void {
   if (!app.isPackaged) return
   const folder = join(app.getPath('appData'), 'autostart')
   const file = join(folder, 'xrnmail.desktop')
   if (!on) return rmSync(file, { force: true })
-  const target = process.env['APPIMAGE'] ?? process.execPath
+  const appImage = process.env['APPIMAGE']
   mkdirSync(folder, { recursive: true })
-  writeFileSync(file, `[Desktop Entry]\nType=Application\nName=xrnmail\nExec="${target}" ${AUTOSTART_FLAG}\nX-GNOME-Autostart-enabled=true\n`, { mode: 0o644 })
+  writeFileSync(file, autostartEntry(appImage ?? process.execPath, Boolean(appImage)), { mode: 0o644 })
 }
