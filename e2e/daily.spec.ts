@@ -1081,6 +1081,36 @@ test('attachments: saved exactly, opened only when safe', async () => {
   expect(await run.openedFiles()).toHaveLength(1)
 })
 
+test('View original shows a message as the server has it, as text, and saves it as .eml', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p>Hello <b id="planted">there</b></p><img src=x onerror="document.title=\'pwned\'">'
+  gmail.add(rawMail({ subject: 'Plans: Friday', from: 'Mai Tran <mai@example.com>', html, headers: ['X-Mailer: Made Up 1.0'], attachment: { name: 'plan.txt', type: 'text/plain', body: 'step one' } }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plans: Friday').click()
+  await page.locator('.message.open').getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('button', { name: 'View original' }).click()
+  const sheet = page.getByRole('dialog', { name: 'Original: Plans: Friday' })
+  const source = sheet.locator('pre')
+  await expect(source).toContainText('X-Mailer: Made Up 1.0')
+  await expect(source).toContainText('Subject: Plans: Friday')
+  await expect(source).toContainText('<b id="planted">there</b>') // its HTML as text, never as a page
+  await expect(source).toContainText(Buffer.from('step one').toString('base64'))
+  expect(await sheet.locator('#planted, img').count()).toBe(0)
+  await page.keyboard.press('e') // the app's keys wait while it's open
+  await expect(page.locator('.threads').getByText('Plans: Friday')).toBeVisible()
+  await sheet.getByRole('button', { name: 'Save as .eml' }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  const saved = readFileSync(run.savedTo, 'utf8')
+  expect(saved).toContain('X-Mailer: Made Up 1.0')
+  expect(saved.replace(/\r\n/g, '\n')).toBe(gmail.mails[0]?.raw.toString().replace(/\r\n/g, '\n'))
+  await page.keyboard.press('Escape')
+  await expect(sheet).toHaveCount(0)
+  expect(await page.title()).toBe('xrnmail')
+  expect(await run.opened()).toEqual([])
+  expect(await run.openedFiles()).toEqual([])
+})
+
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.
 test('a thread in a window of its own: it follows the thread, and the main window keeps up', async () => {
   run = await launch()

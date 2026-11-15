@@ -179,6 +179,9 @@ const number = (value: unknown): number => {
   return value
 }
 
+/** How much of a message's source View original shows; Save as .eml keeps all of it. */
+const ORIGINAL_SHOWN = 2 * 1024 * 1024
+
 const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
@@ -458,6 +461,22 @@ function register(service: MailService, avatars: Avatars): void {
     writeFileSync(path, found.content, { mode: 0o600 })
     const failure = await shell.openPath(path)
     if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+  })
+  // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
+  // than a few megabytes of it, and saving writes it as it came.
+  handle('original', async (message: unknown) => {
+    const { bytes } = await service.original(number(message))
+    const cut = bytes.length > ORIGINAL_SHOWN
+    return { text: new TextDecoder().decode(cut ? bytes.subarray(0, ORIGINAL_SHOWN) : bytes), size: bytes.length, cut }
+  })
+  handle('saveOriginal', async (message: unknown) => {
+    const found = await service.original(number(message))
+    const parent = dialogParent()
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }] }
+    const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
+    if (choice.canceled || !choice.filePath) return false
+    writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })
+    return true
   })
   handle('details', (message: unknown) => service.details(number(message)))
   // An address and nothing else: a page gone wrong mustn't be able to put a command on the clipboard

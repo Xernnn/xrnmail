@@ -23,7 +23,7 @@ import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './saf
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
-import type { DraftCopy, DraftLink, Located, PendingAction, Store } from './store'
+import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
 
@@ -1060,6 +1060,22 @@ export class MailService {
   /** Fetched whole on demand: attachments aren't kept here. Their list is, and if it was made from a
    *  cut copy, it's made again from this. */
   private async wholeAttachments(id: number): Promise<WholeAttachment[]> {
+    const { whole } = await this.wholeMessage(id)
+    if (!whole) throw new Error("That attachment isn't in the message any more.")
+    const found = await attachmentsOf(whole)
+    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
+    return found
+  }
+
+  /** A message as the server has it, every byte, for View original and Save as .eml. Only what's
+   *  read from it is kept here, so it's fetched each time it's asked for. */
+  async original(id: number): Promise<{ name: string; bytes: Buffer }> {
+    const { message, whole } = await this.wholeMessage(id)
+    if (!whole) throw new Error("That message isn't on the server any more.")
+    return { name: `${message.subject.trim() || 'Message'}.eml`, bytes: whole }
+  }
+
+  private async wholeMessage(id: number): Promise<{ message: MessageDetail; whole: Buffer | null }> {
     const message = this.store.message(id, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
     let source: MailSource | null = null
@@ -1077,10 +1093,7 @@ export class MailService {
     } finally {
       await source?.close().catch(() => undefined)
     }
-    if (!whole) throw new Error("That attachment isn't in the message any more.")
-    const found = await attachmentsOf(whole)
-    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
-    return found
+    return { message, whole }
   }
 
   /** A stranger's header picks the address, so the app only ever sends the fixed request the

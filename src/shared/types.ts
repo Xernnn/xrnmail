@@ -503,6 +503,11 @@ export interface MailApi {
   /** Everything about where a message came from and how. Mail stored before this was kept has its
    *  headers read from the server, once. */
   details(message: number): Promise<MessageDetails>
+  /** A message as the server has it, as text, for View original: the first few megabytes, and how big
+   *  it is in all. */
+  original(message: number): Promise<{ text: string; size: number; cut: boolean }>
+  /** The same, every byte, saved where the person picks. False when they didn't pick anywhere. */
+  saveOriginal(message: number): Promise<boolean>
   /** Puts an email address, and nothing else, on the clipboard. */
   copyAddress(address: string): Promise<void>
   /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the

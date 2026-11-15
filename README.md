@@ -80,6 +80,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
   warnings. Every address can be selected, copied, written to, searched for, muted, let straight
   through or blocked from there. Escape or a click elsewhere closes it.
+- **View original:** a message's ⋮ shows it as your mail service has it, headers and every part, as
+  plain text (the first 2 MB of it), with Save as .eml for the whole. It's fetched when asked for,
+  since only what's read from a message is kept here.
 - **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
   Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
   the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
@@ -227,9 +230,7 @@ Not here, though Edison has them:
   quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
   importance markers; and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
-- View original: a message's source, with Download. The source isn't kept on this laptop, so it would
-  be fetched from the server.
-- A message's own ⋮ has Reply all and Forward here. Edison's also has Pin Thread, Trash, Mark as
+- A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
   under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Pin and
   Move to Other here, but not Mark as important (Gmail's importance isn't read here at all).
@@ -283,6 +284,8 @@ Done differently:
   everything unread.
 - Edison's layouts are Reading Pane Right, Reading Pane Bottom and Full Screen; here they're Layout's
   side by side, Message under the list, and One thing at a time (Settings, General).
+- View original is a sheet over the window, where Edison's is a window of its own, and Save as .eml
+  is its Download.
 - Edison's Adaptive Coloring is Darken mail made for a white page here (Settings, Appearance), with
   Show original colours on each message darkened. How Edison darkens isn't published; here the
   colours are moved one by one, never the pictures.

@@ -569,6 +569,11 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .confirm-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .sheet header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .sheet h2 { font-size: 16px; }
+.sheet.original { width: min(980px, calc(100vw - 48px)); }
+.original header { gap: 10px; }
+.original-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.original-text { max-height: min(70vh, 720px); margin: 0; padding: 14px 18px; overflow: auto; font: 12px/1.5 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.original-note { padding: 14px 18px; }
 .danger-fill { background: var(--danger); color: #fff; }
 .danger-fill:hover:not(:disabled) { background: var(--danger); filter: brightness(0.94); }
 .context-menu { position: fixed; z-index: 40; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: 210px; padding: 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
