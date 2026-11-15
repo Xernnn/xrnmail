@@ -33,8 +33,8 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout undo send pictures images tray background start login',
-  notifications: 'new mail tell account mute muted senders unmute quiet',
+  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen pictures images tray background start login',
+  notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
@@ -317,15 +317,21 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <Check label="Split the inbox into Focused and Other" on={settings.focused} set={(focused) => save({ focused })} />
         <Choice label="Layout" value={settings.layout} set={(layout) => save({ layout })}
           options={[['panes', 'List and message side by side'], ['list', 'One thing at a time']]} />
+        <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
+          options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
       </section>
       <section>
         <h3>Sending</h3>
         <Choice label="Undo send for" value={settings.undoSeconds} set={(undoSeconds) => save({ undoSeconds })}
           options={[0, 5, 10, 20, 30].map((n) => [n, n === 0 ? 'Off' : `${n} seconds`])} />
+        <Choice label="Default reply" value={settings.defaultReply} set={(defaultReply) => save({ defaultReply })}
+          options={[['reply', 'Reply'], ['replyAll', 'Reply All']]} />
       </section>
       <section>
         <h3>Reading</h3>
         <Check label="Load the pictures in a message without asking" on={settings.images === 'always'} set={(on) => save({ images: on ? 'always' : 'ask' })} />
+        <Choice label="Mark a thread read" value={settings.readAfter} set={(readAfter) => save({ readAfter })}
+          options={[[0, 'As soon as it opens'], [1, 'After 1 second'], [2, 'After 2 seconds'], [5, 'After 5 seconds'], [-1, 'Only when I mark it read']]} />
       </section>
       <section>
         <h3>This laptop</h3>
@@ -336,8 +342,9 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
   )
 }
 
-function Notifications(props: { accounts: AccountView[]; ids: Identities; muted: string[]; senders: Senders }): ReactNode {
-  const { ids, muted } = props
+function Notifications(props: { accounts: AccountView[]; ids: Identities; settings: Settings; save: Save; senders: Senders }): ReactNode {
+  const { ids, settings, save } = props
+  const { muted } = settings
   const [adding, setAdding] = useState('')
   const add = (): void => {
     const who = adding.trim()
@@ -352,6 +359,9 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; muted:
         {props.accounts.map((a) => (
           <Check key={a.id} label={`Tell me about new mail in ${a.email}`} on={ids.who(a.email).notify} set={(notify) => ids.set(a.email, { notify })} />
         ))}
+        {settings.focused && (
+          <Check label="Only mail in Focused" on={settings.notifyFocusedOnly} set={(notifyFocusedOnly) => save({ notifyFocusedOnly })} />
+        )}
         <p className="muted note">Mail held for a delivery is announced when it lands, not before.</p>
       </section>
       <section>
@@ -640,7 +650,7 @@ function Pages(props: {
   return (
     <div className="settings-page">
       {page === 'general' && <General settings={settings} save={save} />}
-      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} muted={settings.muted} senders={senders} />}
+      {page === 'notifications' && <Notifications accounts={accounts} ids={ids} settings={settings} save={save} senders={senders} />}
       {page === 'accounts' && <Accounts accounts={accounts} settings={settings} ids={ids} ask={props.ask} saveKeep={(days) => change(() => ({ backfill: days }))} />}
       {page === 'appearance' && <Appearance settings={settings} save={save} editMenu={props.editMenu} />}
       {page === 'actions' && <Actions settings={settings} save={save} change={change} />}

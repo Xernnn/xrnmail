@@ -117,6 +117,8 @@ export function App(): ReactNode {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [composing, setComposing] = useState<Draft | null>(null)
+  /** The draft as Reply, Forward or Compose just started it. One opened again from anywhere is another copy. */
+  const [started, setStarted] = useState<Draft | null>(null)
   const [profile, setProfile] = useState<Settings | null>(null)
   const [settings, setSettings] = useState<Tab | null>(null)
   const [help, setHelp] = useState(false)
@@ -154,6 +156,15 @@ export function App(): ReactNode {
 
   useEffect(() => window.mail.onChanged(bump), [bump])
   useEffect(() => window.mail.onCompose(setComposing), [])
+  // The notice for a new message leads to it, in the inbox it came to.
+  useEffect(() => window.mail.onOpenThread((ref) => {
+    setView({ kind: 'inbox' })
+    setSearch('')
+    setPicked(new Set())
+    setLimit(PAGE)
+    setRows(null)
+    setOpen(ref)
+  }), [])
 
   useEffect(() => {
     void window.mail.accounts().then(setAccounts)
@@ -216,27 +227,35 @@ export function App(): ReactNode {
     return () => { current = false }
   }, [senderKey, version])
 
+  // Opening a thread reads it, so Unread is asked to keep the open one, or it would leave the list as
+  // it opened, and j would have nowhere to go on from.
+  const query = active.kind === 'unread' && open ? { ...active, keep: open } : active
   useEffect(() => {
-    if (SOLO || active.kind === 'drafts' || active.kind === 'subscriptions') return setRows([])
+    if (SOLO || query.kind === 'drafts' || query.kind === 'subscriptions') return setRows([])
     const asked = ++listAsked.current
     const timer = setTimeout(() => {
-      void window.mail.list(active as ListQuery, limit).then((found) => {
+      void window.mail.list(query as ListQuery, limit).then((found) => {
         if (asked === listAsked.current) setRows(found)
       })
     }, 120)
     return () => clearTimeout(timer)
-  }, [JSON.stringify(active), version, reads, limit])
+  }, [JSON.stringify(query), version, reads, limit])
+
+  /** Seconds an open thread waits before it's marked read: none, some, or -1 for only when asked. */
+  const readAfter = profile?.readAfter ?? 0
+  // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
+  const remember = SOLO !== null || active.kind !== 'recent'
 
   useEffect(() => {
     if (!open) return setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
-      // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
-      let found = await window.mail.thread(open.account, open.thread, bins, SOLO !== null || active.kind !== 'recent')
+      const read = readAfter === 0
+      let found = await window.mail.thread(open.account, open.thread, bins, remember, read)
       if (SOLO && found.length === 0) {
         // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
         // what sent it there is never out of reach.
-        const moved = await window.mail.thread(open.account, open.thread, !bins)
+        const moved = await window.mail.thread(open.account, open.thread, !bins, true, read)
         if (moved.length > 0) {
           found = moved
           setSoloBins(!bins)
@@ -250,6 +269,18 @@ export function App(): ReactNode {
     })()
     return undefined
   }, [open?.account, open?.thread, version])
+
+  // With a wait set, a thread is read once it has been open that long, so one passed by on the way
+  // to another stays unread. Mail arriving in it while it's open waits as long again.
+  const unseen = messages.filter((m) => !m.seen).length
+  useEffect(() => {
+    if (!open || readAfter <= 0 || unseen === 0) return undefined
+    const ref = open
+    const timer = setTimeout(() => {
+      void window.mail.thread(ref.account, ref.thread, bins, remember, true).then(() => setReads((n) => n + 1)).catch(() => undefined)
+    }, readAfter * 1000)
+    return () => clearTimeout(timer)
+  }, [open?.account, open?.thread, readAfter, unseen])
 
   // A window of its own that's being closed is told first, and closes itself once what's typed is safe.
   useEffect(() => window.mail.onLeaving(() => {
@@ -283,16 +314,21 @@ export function App(): ReactNode {
     [list, open]
   )
 
-  /** After a thread leaves the list, the reader moves on to the next one instead of closing. */
+  /** After a thread leaves the list, the reader moves on to the next one, or the one before, or goes
+   *  back to the list, as Settings say. */
+  const afterRemove = profile?.afterRemove ?? 'next'
   const leave = useCallback(
     (gone: ThreadRef[]) => {
       if (!open || !gone.some((ref) => keyOf(ref) === keyOf(open))) return
       const leaving = new Set(gone.map(keyOf))
       const at = list.findIndex((r) => keyOf(r) === keyOf(open))
-      const next = [...list.slice(at + 1), ...list.slice(0, Math.max(at, 0)).reverse()].find((r) => !leaving.has(keyOf(r)))
+      const below = list.slice(at + 1)
+      const above = list.slice(0, Math.max(at, 0)).reverse()
+      const order = afterRemove === 'list' ? [] : afterRemove === 'previous' ? [...above, ...below] : [...below, ...above]
+      const next = order.find((r) => !leaving.has(keyOf(r)))
       setOpen(next ? { account: next.account, thread: next.thread } : null)
     },
-    [list, open]
+    [list, open, afterRemove]
   )
 
   const targets = useCallback((): ThreadRef[] => {
@@ -303,9 +339,12 @@ export function App(): ReactNode {
   const run = useCallback(
     async (refs: ThreadRef[], action: MailAction, label?: string) => {
       if (refs.length === 0) return
-      const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins) || (action.kind === 'unread' && open !== null)
+      const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins)
+      // Marked unread, the open thread closes: moving on to the next would open it, and so read it.
+      const closes = action.kind === 'unread' && open !== null && refs.some((ref) => keyOf(ref) === keyOf(open))
       try {
         if (leaves && !SOLO) leave(refs)
+        if (closes && !SOLO) setOpen(null)
         const token = await window.mail.act(refs, action)
         // Reading it again would only mark it read again, so a window of its own goes with it.
         if (SOLO && action.kind === 'unread') return window.close()
@@ -352,7 +391,9 @@ export function App(): ReactNode {
       const attempt = { off: false }
       starting.current = attempt
       try {
-        setComposing(await window.mail.startDraft(start))
+        const draft = await window.mail.startDraft(start)
+        setStarted(draft)
+        setComposing(draft)
       } catch (e) {
         if (starting.current === attempt) starting.current = null
         say(problem(e))
@@ -826,7 +867,7 @@ export function App(): ReactNode {
     <>
       {composing && (
         <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          solo={SOLO?.kind === 'draft'} leaving={leaving}
+          solo={SOLO?.kind === 'draft'} leaving={leaving} fresh={composing === started}
           moveOut={(id) => {
             setComposing(null)
             void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))

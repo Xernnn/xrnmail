@@ -147,6 +147,8 @@ function Message(props: {
   const trusted = settings?.images === 'always' || (settings?.imagesFrom ?? []).includes(address)
   // A From line can be forged, so being trusted only counts on mail that passed for its sender.
   const images = trusted && !bins && m.warnings.length === 0
+  // Its own reply button answers everyone on it, when Settings say so and there's someone else.
+  const replyAll = settings?.defaultReply === 'replyAll' && m.to.length + m.cc.length > 1
   if (!open) {
     return (
       <article className="message">
@@ -180,7 +182,9 @@ function Message(props: {
           <Recipients message={m} own={own} open={details} toggle={() => setDetails(!details)} button={toggleButton} />
         </div>
         <span className="muted when">{longTime(m.date)}</span>
-        {!bins && <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />}
+        {!bins && (replyAll
+          ? <IconButton icon={ReplyAll} label="Reply all to this" click={() => props.reply('replyAll', m.id)} />
+          : <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />)}
         {leaving && <button className="pill soft" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>}
         {props.blocking && !leaving && <button className="pill soft" onClick={() => props.block(m.from.address)}>Block</button>}
         {!bins && (

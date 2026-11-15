@@ -126,6 +126,8 @@ export function Composer(props: {
   moveOut(id: number): void
   /** Filled in while it's open with what to do before its window closes. */
   leaving: { current: (() => Promise<void>) | null }
+  /** Just started here, by Reply, Forward or a new message: closed as it started, it goes. */
+  fresh?: boolean
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -148,6 +150,8 @@ export function Composer(props: {
   // a frame shows it, which is why the editor below holds nothing but what's typed here.
   const [quote] = useState(() => cleanQuote(draft.quote))
   const editor = useRef<HTMLDivElement>(null)
+  /** What the editor held when it opened. */
+  const startText = useRef('')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gone = useRef(false)
   const selection = useRef<Range | null>(null)
@@ -179,6 +183,7 @@ export function Composer(props: {
 
   useEffect(() => {
     if (editor.current) editor.current.innerHTML = sanitize(draft.html)
+    startText.current = editor.current?.innerText ?? ''
     if (!draft.to) return
     if (editor.current) {
       editor.current.focus()
@@ -205,6 +210,12 @@ export function Composer(props: {
   const isEmpty = (edit: DraftEdit): boolean =>
     !edit.to && !edit.cc && !edit.bcc && !edit.subject && !edit.text.trim() && files.length === 0 && !quote
 
+  /** A reply or forward comes with a subject, someone to write to and what it quotes, so it isn't
+   *  empty; but as it started, nothing was written and there's nothing to keep. */
+  const untouched = (edit: DraftEdit): boolean =>
+    Boolean(props.fresh) && edit.account === draft.account && edit.from === draft.from && edit.to === draft.to && edit.cc === draft.cc &&
+    edit.bcc === draft.bcc && edit.subject === draft.subject && edit.text === startText.current && files.length === draft.files.length
+
   // A window of its own can be closed around its composer. The app is asked first, and through this
   // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
   useEffect(() => {
@@ -219,7 +230,8 @@ export function Composer(props: {
   })
 
   const closeUp = async (): Promise<void> => {
-    if (isEmpty(collect())) {
+    const edit = collect()
+    if (isEmpty(edit) || untouched(edit)) {
       gone.current = true
       await window.mail.discardDraft(draft.id)
       return props.close(false)

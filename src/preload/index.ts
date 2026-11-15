@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { AppCommand, Draft, MailApi } from '@shared/types'
+import type { AppCommand, Draft, MailApi, ThreadRef } from '@shared/types'
 
 const call = (channel: string, ...args: unknown[]): Promise<never> =>
   ipcRenderer.invoke(channel, ...args) as Promise<never>
@@ -14,7 +14,7 @@ const api: MailApi = {
   syncNow: () => call('syncNow'),
   overview: () => call('overview'),
   list: (query, limit) => call('list', query, limit),
-  thread: (account, thread, bins, remember) => call('thread', account, thread, bins, remember),
+  thread: (account, thread, bins, remember, read) => call('thread', account, thread, bins, remember, read),
   clearRecent: () => call('clearRecent'),
   settings: () => call('settings'),
   saveBatch: (batch) => call('saveBatch', batch),
@@ -91,6 +91,11 @@ const api: MailApi = {
     const relay = (_event: IpcRendererEvent, draft: Draft): void => listener(draft)
     ipcRenderer.on('compose', relay)
     return () => ipcRenderer.removeListener('compose', relay)
+  },
+  onOpenThread: (listener) => {
+    const relay = (_event: IpcRendererEvent, ref: ThreadRef): void => listener(ref)
+    ipcRenderer.on('open-thread', relay)
+    return () => ipcRenderer.removeListener('open-thread', relay)
   }
 }
 

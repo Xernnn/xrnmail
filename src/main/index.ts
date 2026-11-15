@@ -184,6 +184,11 @@ const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 function listQuery(value: unknown): ListQuery {
   const q = (value ?? {}) as Record<string, unknown>
   const scoped = SCOPED.find((kind) => kind === q['kind'])
+  if (scoped === 'unread' && q['keep']) {
+    const keep = q['keep'] as Record<string, unknown>
+    const query: ListQuery = { kind: 'unread', keep: { account: text(keep['account'], 320), thread: text(keep['thread'], 64) } }
+    return q['account'] ? { ...query, account: text(q['account']) } : query
+  }
   if (scoped) return q['account'] ? { kind: scoped, account: text(q['account']) } : { kind: scoped }
   if (q['kind'] === 'inbox') {
     const focus = q['focus'] === 'focused' || q['focus'] === 'other' ? q['focus'] : undefined
@@ -337,11 +342,13 @@ function profile(value: unknown): ProfilePatch {
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
   if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
+  if (p['defaultReply'] === 'reply' || p['defaultReply'] === 'replyAll') patch.defaultReply = p['defaultReply']
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
   if (p['layout'] === 'panes' || p['layout'] === 'list') patch.layout = p['layout']
+  if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -353,6 +360,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['background'] !== undefined) patch.background = p['background'] === true
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
+  if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
   if (Array.isArray(p['imagesFrom'])) patch.imagesFrom = p['imagesFrom'].map((a) => text(a, 320))
   return patch
 }
@@ -392,8 +400,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown) =>
-    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false))
+  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
+    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
   handle('clearRecent', () => service.clearRecent())
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
@@ -708,7 +716,11 @@ void app.whenReady().then(() => {
     now: () => Date.now(),
     changed: tellPage,
     noticed: (addresses) => avatars.want(addresses),
-    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, showWindow),
+    // A notice for one message opens it; one for several brings the window up.
+    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
+      showWindow()
+      if (preview) window?.webContents.send('open-thread', { account: preview.account, thread: preview.thread })
+    }),
     summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
       showWindow()
       tellCommand('summary')

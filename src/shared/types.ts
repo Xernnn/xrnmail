@@ -113,8 +113,12 @@ export interface Settings {
   blocked: string[]
   /** Senders whose new mail is never announced. It arrives all the same. An entry is an address, or @domain. */
   muted: string[]
+  /** With the inbox split, only mail in Focused is announced. */
+  notifyFocusedOnly: boolean
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
+  /** What the reply button on a message does: answer its sender, or everyone on it. */
+  defaultReply: 'reply' | 'replyAll'
   theme: 'system' | 'light' | 'dark'
   /** Split the inbox into Focused and Other. */
   focused: boolean
@@ -128,6 +132,9 @@ export interface Settings {
   microsoftClientId: string
   /** `panes` reads beside the list, `list` is one thing at a time. */
   layout: 'panes' | 'list'
+  /** What the reader opens once the open thread is archived, deleted or otherwise leaves the list:
+   *  the thread below it, the one above, or nothing, back to the list. */
+  afterRemove: 'next' | 'previous' | 'list'
   /** How many lines of a message a row of the list shows under its subject, none to four. */
   previewLines: number
   /** A thread's files as small cards under its row in the list. */
@@ -157,6 +164,8 @@ export interface Settings {
   startAtLogin: boolean
   /** Whether a message's pictures load without being asked for. Trackers are removed either way. */
   images: 'ask' | 'always'
+  /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
+  readAfter: number
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
 }
@@ -304,6 +313,8 @@ export interface Overview {
   labels: LabelCount[]
   /** Threads waiting to be read on the Other side. */
   otherUnread: number
+  /** Threads in the inbox with something unread that came today. */
+  today: number
   spam: number
   /** Unread, by what the Assistant made of it. */
   assistant: Record<AssistantSection, number>
@@ -323,7 +334,9 @@ export interface SummaryOverview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'unread' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
+  /** [keep] is the open thread, which stays listed while it's read. */
+  | { kind: 'unread'; account?: string; keep?: ThreadRef }
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
@@ -399,9 +412,9 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>>
 
 /** What the app's menu and the tray can ask the page to do. */
 export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'
@@ -427,7 +440,8 @@ export interface MailApi {
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
   /** [bins] is for reading what's in Trash or Spam. Opening a thread puts it at the top of Recently
    *  Seen, unless [remember] is false. */
-  thread(account: string, thread: string, bins?: boolean, remember?: boolean): Promise<MessageView[]>
+  /** A thread's messages. Unless [read] is false, opening it reads it. */
+  thread(account: string, thread: string, bins?: boolean, remember?: boolean, read?: boolean): Promise<MessageView[]>
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
   settings(): Promise<Settings>
@@ -519,6 +533,8 @@ export interface MailApi {
   onChanged(listener: () => void): () => void
   /** A mail address was opened, from a message or the system, and here's the draft for it. */
   onCompose(listener: (draft: Draft) => void): () => void
+  /** A notice for one new message was clicked, and this is its thread. */
+  onOpenThread(listener: (ref: ThreadRef) => void): () => void
   onCommand(listener: (command: AppCommand) => void): () => void
   version(): Promise<string>
 }

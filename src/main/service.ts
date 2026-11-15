@@ -55,7 +55,9 @@ const DEFAULT_SETTINGS: Settings = {
   templates: [],
   blocked: [],
   muted: [],
+  notifyFocusedOnly: false,
   undoSeconds: 10,
+  defaultReply: 'reply',
   theme: 'system',
   focused: true,
   alwaysFocused: [],
@@ -63,6 +65,7 @@ const DEFAULT_SETTINGS: Settings = {
   unsubscribed: [],
   microsoftClientId: '',
   layout: 'panes',
+  afterRemove: 'next',
   previewLines: 2,
   attachmentCards: true,
   sidebar: cleanSidebar(null),
@@ -80,7 +83,8 @@ const DEFAULT_SETTINGS: Settings = {
   background: true,
   startAtLogin: false,
   images: 'ask',
-  imagesFrom: []
+  imagesFrom: [],
+  readAfter: 0
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -108,6 +112,12 @@ export interface DomainRecords {
   srv(name: string): Promise<{ name: string; port: number } | null>
 }
 
+/** One new message, as its notice tells of it. */
+export interface Landed extends ThreadRef {
+  from: string
+  subject: string
+}
+
 export interface ServiceDeps {
   store: Store
   secrets: Secrets
@@ -120,8 +130,9 @@ export interface ServiceDeps {
   now(): number
   /** Something on screen may be out of date. */
   changed(): void
-  /** New mail landed. [preview] says who and what, when it's one message found the moment it came. */
-  landed?(count: number, preview?: { from: string; subject: string }): void
+  /** New mail landed. [preview] says who and what, and which thread it's in, when it's one message
+   *  found the moment it came. */
+  landed?(count: number, preview?: Landed): void
   /** A Summary landed: how many messages it brought, and who from. */
   summarized?(count: number, senders: string[]): void
   /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
@@ -659,7 +670,7 @@ export class MailService {
     }
     const own = this.ownAddresses(email)
     let fresh = 0
-    let preview = { from: '', subject: '' }
+    let preview: Landed = { from: '', subject: '', account: email, thread: '' }
     /** Who sent what a Summary has already brought, found by this pass. */
     const summed: string[] = []
     /** Who sent new mail, held or not. */
@@ -690,11 +701,11 @@ export class MailService {
           const current = this.settings() // a sender blocked or muted meanwhile counts
           if (isVip(mail.from.address, current.blocked)) return void blocked.push(id)
           if (mail.from.address) senders.push(mail.from.address)
-          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email) && mail.releaseAt <= this.lastTick) {
+          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
-              preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
+              preview = { from: mail.from.name || mail.from.address, subject: mail.subject, account: email, thread: mail.thread }
             }
           }
         }
@@ -732,8 +743,13 @@ export class MailService {
 
   /** Mail a sync finds that's already due never passes through a tick's window, which only sees
    *  mail landing from now on, so a sync has to tell about it itself. */
-  private worthTelling(labels: string[], from: string, seen: boolean, email: string): boolean {
-    return !seen && labels.includes(INBOX) && !this.ownAddresses(email).includes(from.toLowerCase()) && this.identity(email).notify
+  private worthTelling(labels: string[], from: string, seen: boolean, email: string, focused: boolean): boolean {
+    return !seen && labels.includes(INBOX) && !this.ownAddresses(email).includes(from.toLowerCase()) && this.identity(email).notify && (focused || !this.quietOther())
+  }
+
+  /** Mail sorted into Other arrives unannounced, when the inbox is split and Settings say so. */
+  private quietOther(settings = this.settings()): boolean {
+    return settings.focused && settings.notifyFocusedOnly
   }
 
   /** Who someone is on an account, with anything not yet set filled in. */
@@ -767,7 +783,8 @@ export class MailService {
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
       const muted = this.settings().muted
-      const loud = senders.filter((mail) => !isVip(mail.from, muted)).length + woken
+      const quiet = this.quietOther()
+      const loud = senders.filter((mail) => !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
       if (loud > 0) this.deps.landed?.(loud)
       // A Summary is announced as one, apart from the batch.
       const told = summed.filter((mail) => !isVip(mail.from, muted))
@@ -924,6 +941,7 @@ export class MailService {
       earlyLeft: this.earlyLeft(),
       labels: this.store.labelCounts(now),
       otherUnread: this.store.unreadThreads(now, 'm.focus = 0'),
+      today: this.store.unreadThreads(now, 'm.arrived >= ?', new Date(now).setHours(0, 0, 0, 0)),
       spam: this.store.spamCount(now),
       assistant: this.store.assistantCounts(now),
       summary: {
@@ -945,13 +963,14 @@ export class MailService {
     return this.store.list(query, this.deps.now(), limit)
   }
 
-  /** Opening a thread reads it, here and on the server. Only what could be seen counts. It goes to the
+  /** Opening a thread reads it, here and on the server, unless [read] is false (Settings can ask for a
+   *  wait first, or for nothing until it's marked read). Only what could be seen counts. It goes to the
    *  top of Recently Seen too, unless it was opened from there: that list keeps still while it's read. */
-  thread(account: string, thread: string, bins = false, remember = true): MessageView[] {
+  thread(account: string, thread: string, bins = false, remember = true, read = true): MessageView[] {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
-    this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
     for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages
   }
@@ -1690,10 +1709,13 @@ export class MailService {
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
+      notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
+      defaultReply: patch.defaultReply ?? settings.defaultReply,
       theme: patch.theme ?? settings.theme,
       focused: patch.focused ?? settings.focused,
       layout: patch.layout ?? settings.layout,
+      afterRemove: patch.afterRemove ?? settings.afterRemove,
       previewLines: patch.previewLines === undefined ? settings.previewLines : clamp(Math.round(patch.previewLines) || 0, 0, 4),
       attachmentCards: patch.attachmentCards ?? settings.attachmentCards,
       sidebar: patch.sidebar ? cleanSidebar(patch.sidebar) : settings.sidebar,
@@ -1711,7 +1733,8 @@ export class MailService {
       background: patch.background ?? settings.background,
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,
-      imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom
+      imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
+      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60)
     })
     this.deps.changed()
   }

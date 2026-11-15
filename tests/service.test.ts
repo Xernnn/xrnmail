@@ -29,7 +29,7 @@ let store: Store
 let secrets: MemorySecrets
 let clock: number
 let changed: Mock<() => void>
-let landed: Mock<(count: number, preview?: { from: string; subject: string }) => void>
+let landed: Mock<(count: number, preview?: { from: string; subject: string; account: string; thread: string }) => void>
 let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
@@ -227,6 +227,19 @@ describe('a day of batches', () => {
     expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(0)
     expect(gmail.writes()).toEqual([])
   })
+
+  it('a thread read without marking it read stays unread, for a wait Settings ask for', async () => {
+    gmail.add(rawMail({ subject: 'Read me later' }), { arrived: new Date(at(9)), thread: 3n })
+    await service.syncAll()
+    expect(service.thread(ME, '3', false, true, false).map((m) => [m.subject, m.seen])).toEqual([['Read me later', false]])
+    expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(1)
+    service.thread(ME, '3')
+    expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(0)
+    service.saveProfile({ readAfter: 7.4 })
+    expect(service.settings().readAfter).toBe(7)
+    service.saveProfile({ readAfter: -5 })
+    expect(service.settings().readAfter).toBe(-1)
+  })
 })
 
 describe('as it arrives', () => {
@@ -266,8 +279,49 @@ describe('as it arrives', () => {
     await arrive('Hello', 10, 30, 'Ada <ada@example.com>')
     await arrive('Deals', 10, 40, 'Shop News <news@shop.example>')
     expect(service.list({ kind: 'inbox' }).map((r) => r.subject)).toEqual(['Hello'])
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Hello' }))
     expect(service.overview()).toMatchObject({ held: 0, nextBatch: null, summary: { held: 1, next: at(18) } })
+  })
+
+  it('the notice for one new message says which thread it is, so clicking it can open that', async () => {
+    live(true)
+    await arrive('Hello', 10, 30, 'Ada <ada@example.com>')
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello', account: ME, thread: ref('Hello').thread })
+  })
+
+  it('with notices for Focused only, mail sorted into Other arrives without one, as it comes or in a batch', async () => {
+    const bulk = (subject: string, hour: number, minute: number): void => {
+      gmail.add(rawMail({ subject, from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://shop.example/u>'] }), { arrived: new Date(at(hour, minute)) })
+    }
+    service.saveProfile({ notifyFocusedOnly: true })
+    live(true)
+    bulk('Sale', 10, 30)
+    clock = at(10, 31)
+    await service.tick()
+    await service.syncAll()
+    expect(service.list({ kind: 'inbox', focus: 'other' }).map((r) => r.subject)).toEqual(['Sale'])
+    expect(landed).not.toHaveBeenCalled()
+    await arrive('Hello', 10, 40, 'Ada <ada@example.com>')
+    expect(landed).toHaveBeenCalledTimes(1)
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ subject: 'Hello' }))
+
+    landed.mockClear()
+    live(false)
+    bulk('Another sale', 11, 0)
+    await arrive('Lunch', 11, 5, 'Bao <bao@example.com>')
+    clock = at(13, 1)
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1) // Lunch, and not the sale beside it
+    // With Focused and Other off, there's no Other to keep quiet.
+    landed.mockClear()
+    service.saveProfile({ focused: false })
+    bulk('Last sale', 13, 30)
+    clock = at(13, 31)
+    await service.tick()
+    await service.syncAll()
+    clock = at(17, 1)
+    await service.tick()
+    expect(landed).toHaveBeenCalledWith(1)
   })
 
   it('back in batches, only what comes next waits, at the times kept', async () => {
@@ -1370,7 +1424,7 @@ describe('straight-through mail tells you', () => {
     await service.syncAll()
     clock += 3000
     await service.tick()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Urgent' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Urgent' }))
     expect(landed).toHaveBeenCalledTimes(1)
   })
 
@@ -1394,7 +1448,7 @@ describe('straight-through mail tells you', () => {
     clock = at(10, 36)
     await service.tick()
     await service.syncAll()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Bob', subject: 'Loud' }) // one of the two, and it's named
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Bob', subject: 'Loud' })) // one of the two, and it's named
     expect(landed).toHaveBeenCalledTimes(1)
     landed.mockClear()
     service.saveProfile({ muted: [] })
@@ -1402,7 +1456,7 @@ describe('straight-through mail tells you', () => {
     clock = at(10, 39)
     await service.tick()
     await service.syncAll()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Heard' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Heard' }))
   })
 
   it('a delivery counts out what muted senders sent, and one of only theirs lands unannounced', async () => {
@@ -1469,6 +1523,37 @@ describe('the sidebar', () => {
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual([])
     clock = at(13, 1)
     for (const kind of ['unread', 'attachments', 'today'] as const) expect(subjects(kind)).toEqual(['Held'])
+  })
+
+  it('Today counts what of it is unread, as Edison\'s sidebar does, and held mail once it lands', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    gmail.add(rawMail({ subject: 'Yesterday' }), { arrived: new Date(at(9, 0) - 86_400_000) })
+    await arrive('Morning', 9, 0)
+    await arrive('Later', 9, 5)
+    expect(subjects('today')).toEqual(['Later', 'Morning'])
+    expect(service.overview().today).toBe(2)
+    service.thread(ME, ref('Morning').thread)
+    expect(service.overview().today).toBe(1)
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['13:00'] })
+    await arrive('Held', 10, 30)
+    expect(service.overview().today).toBe(1)
+    clock = at(13, 1)
+    expect(service.overview().today).toBe(2)
+  })
+
+  it('Unread keeps the thread it is asked to keep once it has been read, read, and only that one', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('First', 9, 0)
+    await arrive('Second', 9, 5)
+    await arrive('Third', 9, 10)
+    const second = ref('Second')
+    service.thread(ME, second.thread) // opened, so read
+    service.thread(ME, ref('Third').thread)
+    expect(subjects('unread')).toEqual(['First'])
+    const kept = service.list({ kind: 'unread', keep: second })
+    expect(kept.map((row) => [row.subject, row.unread])).toEqual([['Second', 0], ['First', 1]])
+    expect(service.list({ kind: 'unread', account: ME, keep: second }).map((row) => row.subject)).toEqual(['Second', 'First'])
+    expect(service.list({ kind: 'unread', account: 'someone@else.example', keep: second })).toEqual([])
   })
 
   it('Archive lists what was put away, and neither the inbox nor what you sent', async () => {
