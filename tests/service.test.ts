@@ -227,6 +227,19 @@ describe('a day of batches', () => {
     expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(0)
     expect(gmail.writes()).toEqual([])
   })
+
+  it('a thread read without marking it read stays unread, for a wait Settings ask for', async () => {
+    gmail.add(rawMail({ subject: 'Read me later' }), { arrived: new Date(at(9)), thread: 3n })
+    await service.syncAll()
+    expect(service.thread(ME, '3', false, true, false).map((m) => [m.subject, m.seen])).toEqual([['Read me later', false]])
+    expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(1)
+    service.thread(ME, '3')
+    expect(service.list({ kind: 'inbox' })[0]?.unread).toBe(0)
+    service.saveProfile({ readAfter: 7.4 })
+    expect(service.settings().readAfter).toBe(7)
+    service.saveProfile({ readAfter: -5 })
+    expect(service.settings().readAfter).toBe(-1)
+  })
 })
 
 describe('as it arrives', () => {

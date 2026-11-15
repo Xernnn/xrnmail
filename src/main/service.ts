@@ -83,7 +83,8 @@ const DEFAULT_SETTINGS: Settings = {
   background: true,
   startAtLogin: false,
   images: 'ask',
-  imagesFrom: []
+  imagesFrom: [],
+  readAfter: 0
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -961,13 +962,14 @@ export class MailService {
     return this.store.list(query, this.deps.now(), limit)
   }
 
-  /** Opening a thread reads it, here and on the server. Only what could be seen counts. It goes to the
+  /** Opening a thread reads it, here and on the server, unless [read] is false (Settings can ask for a
+   *  wait first, or for nothing until it's marked read). Only what could be seen counts. It goes to the
    *  top of Recently Seen too, unless it was opened from there: that list keeps still while it's read. */
-  thread(account: string, thread: string, bins = false, remember = true): MessageView[] {
+  thread(account: string, thread: string, bins = false, remember = true, read = true): MessageView[] {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
-    this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
     for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages
   }
@@ -1730,7 +1732,8 @@ export class MailService {
       background: patch.background ?? settings.background,
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,
-      imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom
+      imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
+      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60)
     })
     this.deps.changed()
   }

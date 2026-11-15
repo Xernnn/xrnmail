@@ -360,6 +360,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['background'] !== undefined) patch.background = p['background'] === true
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
+  if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
   if (Array.isArray(p['imagesFrom'])) patch.imagesFrom = p['imagesFrom'].map((a) => text(a, 320))
   return patch
 }
@@ -399,8 +400,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown) =>
-    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false))
+  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
+    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
   handle('clearRecent', () => service.clearRecent())
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))

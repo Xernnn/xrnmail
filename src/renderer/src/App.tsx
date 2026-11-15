@@ -241,16 +241,21 @@ export function App(): ReactNode {
     return () => clearTimeout(timer)
   }, [JSON.stringify(query), version, reads, limit])
 
+  /** Seconds an open thread waits before it's marked read: none, some, or -1 for only when asked. */
+  const readAfter = profile?.readAfter ?? 0
+  // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
+  const remember = SOLO !== null || active.kind !== 'recent'
+
   useEffect(() => {
     if (!open) return setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
-      // Read from Recently Seen, a thread stays where it is in that list instead of jumping to its top.
-      let found = await window.mail.thread(open.account, open.thread, bins, SOLO !== null || active.kind !== 'recent')
+      const read = readAfter === 0
+      let found = await window.mail.thread(open.account, open.thread, bins, remember, read)
       if (SOLO && found.length === 0) {
         // A window of its own follows its thread into Trash or Spam and back out, so the Undo for
         // what sent it there is never out of reach.
-        const moved = await window.mail.thread(open.account, open.thread, !bins)
+        const moved = await window.mail.thread(open.account, open.thread, !bins, true, read)
         if (moved.length > 0) {
           found = moved
           setSoloBins(!bins)
@@ -264,6 +269,18 @@ export function App(): ReactNode {
     })()
     return undefined
   }, [open?.account, open?.thread, version])
+
+  // With a wait set, a thread is read once it has been open that long, so one passed by on the way
+  // to another stays unread. Mail arriving in it while it's open waits as long again.
+  const unseen = messages.filter((m) => !m.seen).length
+  useEffect(() => {
+    if (!open || readAfter <= 0 || unseen === 0) return undefined
+    const ref = open
+    const timer = setTimeout(() => {
+      void window.mail.thread(ref.account, ref.thread, bins, remember, true).then(() => setReads((n) => n + 1)).catch(() => undefined)
+    }, readAfter * 1000)
+    return () => clearTimeout(timer)
+  }, [open?.account, open?.thread, readAfter, unseen])
 
   // A window of its own that's being closed is told first, and closes itself once what's typed is safe.
   useEffect(() => window.mail.onLeaving(() => {

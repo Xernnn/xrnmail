@@ -164,6 +164,8 @@ export interface Settings {
   startAtLogin: boolean
   /** Whether a message's pictures load without being asked for. Trackers are removed either way. */
   images: 'ask' | 'always'
+  /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
+  readAfter: number
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
 }
@@ -410,7 +412,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>>
 
 /** What the app's menu and the tray can ask the page to do. */
 export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'
@@ -436,7 +438,8 @@ export interface MailApi {
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
   /** [bins] is for reading what's in Trash or Spam. Opening a thread puts it at the top of Recently
    *  Seen, unless [remember] is false. */
-  thread(account: string, thread: string, bins?: boolean, remember?: boolean): Promise<MessageView[]>
+  /** A thread's messages. Unless [read] is false, opening it reads it. */
+  thread(account: string, thread: string, bins?: boolean, remember?: boolean, read?: boolean): Promise<MessageView[]>
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
   settings(): Promise<Settings>

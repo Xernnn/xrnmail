@@ -779,6 +779,41 @@ test('a stranger\'s very long name and address wrap, in the warning and the deta
   expect(await sideways()).toBe(0)
 })
 
+test('Settings choose when an open thread is marked read: at once, after a while, or only when asked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const subject of ['Alpha', 'Bravo', 'Charlie']) gmail.add(rawMail({ subject }), { arrived: earlier(5) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const dot = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject }).locator('.unread-dot')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Mark a thread read')
+  await expect(choice).toHaveValue('0') // at once, as before
+  await choice.selectOption('2')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  // Passed through on the way to another, a thread stays unread.
+  await list.getByText('Alpha').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Alpha')
+  await page.waitForTimeout(500)
+  await list.getByText('Bravo').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Bravo')
+  await expect(dot('Bravo')).toBeVisible()
+  await expect(dot('Bravo')).toHaveCount(0, LONG) // read once it has been open two seconds
+  await expect(dot('Alpha')).toBeVisible()
+
+  await page.evaluate(() => window.mail.saveProfile({ readAfter: -1 }))
+  await page.waitForTimeout(400)
+  await list.getByText('Charlie').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Charlie')
+  await page.waitForTimeout(2500)
+  await expect(dot('Charlie')).toBeVisible()
+  await page.keyboard.press('Shift+I') // read when asked
+  await expect(dot('Charlie')).toHaveCount(0)
+  expect(gmail.mails.filter((m) => m.flags.includes('\\Seen')).length).toBeLessThanOrEqual(2)
+  await expect.poll(() => gmail.mails.filter((m) => m.raw.toString().includes('Alpha') && m.flags.includes('\\Seen')).length, LONG).toBe(0)
+})
+
 // Opening a thread reads it, so in Unread it left the list the moment it opened: nothing in the list
 // was marked as open, and j, which goes on from the open thread, started again at the top.
 test('in Unread the open thread keeps its place while it is read, and j goes on to the one below', async () => {
