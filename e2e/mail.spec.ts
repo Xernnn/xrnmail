@@ -103,6 +103,53 @@ test('search finds Vietnamese without its marks', async () => {
   await expect(page.getByText('Something else')).toHaveCount(0)
 })
 
+test('recent searches: offered under the empty search box, picked with the keys, removed one at a time or all, and kept', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Invoice 7', from: 'Shop <shop@example.com>' }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Lunch', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const box = page.getByRole('combobox', { name: 'Search' }) // the list under it is named for searches too
+  const recent = page.getByRole('listbox', { name: 'Recent searches' })
+  await box.click()
+  await expect(recent).toHaveCount(0) // nothing searched for yet
+  await box.fill('invoice')
+  await box.press('Enter') // a search finished with Enter is kept
+  await expect(list.getByText('Invoice 7')).toBeVisible()
+  await box.fill('from:mai')
+  await list.getByText('Lunch').click() // and so is one a result was opened from
+  await expect(page.locator('.thread-subject')).toHaveText('Lunch')
+  await box.fill('')
+  await expect(recent.getByRole('option')).toHaveText(['from:mai', 'invoice'])
+  await box.press('ArrowDown')
+  await box.press('ArrowDown')
+  await expect(recent.getByRole('option', { selected: true })).toHaveText('invoice')
+  await box.press('Enter')
+  await expect(box).toHaveValue('invoice')
+  await expect(list.getByText('Invoice 7')).toBeVisible()
+  await expect(list.getByText('Lunch')).toHaveCount(0)
+  await box.fill('')
+  await expect(recent.getByRole('option')).toHaveText(['invoice', 'from:mai']) // used again, so first
+  await recent.getByRole('button', { name: 'Remove from:mai' }).click()
+  await expect(recent.getByRole('option')).toHaveText(['invoice'])
+  await expect(box).toBeFocused()
+  await box.press('Escape')
+  await expect(recent).toHaveCount(0)
+
+  await page.reload() // kept with the profile
+  await box.click()
+  await expect(recent.getByRole('option')).toHaveText(['invoice'])
+  await recent.getByRole('option').click()
+  await expect(box).toHaveValue('invoice')
+  await box.fill('')
+  await page.getByRole('button', { name: 'Clear recent searches' }).click()
+  await expect(recent).toHaveCount(0)
+  await page.reload()
+  await box.click()
+  await expect(recent).toHaveCount(0)
+})
+
 test('settings change the timetable and stick', async () => {
   run = await launch()
   const { page } = run

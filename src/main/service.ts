@@ -5,6 +5,7 @@ import type {
 import { QUICK_SLOTS } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
+import { cleanSearches, withSearch } from '@shared/searches'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
@@ -923,6 +924,30 @@ export class MailService {
   clearRecent(): void {
     this.store.forgetSeen()
     this.deps.changed()
+  }
+
+  /** The searches made lately, newest first, for the empty search box to offer. */
+  searches(): string[] {
+    try {
+      return cleanSearches(JSON.parse(this.store.meta('searches') ?? '[]'))
+    } catch {
+      return []
+    }
+  }
+
+  /** A search was used: it goes first. */
+  rememberSearch(text: string): string[] {
+    return this.keepSearches(withSearch(this.searches(), text))
+  }
+
+  /** One search let go of, or with none named, all of them. */
+  forgetSearch(text: string | null): string[] {
+    return this.keepSearches(text === null ? [] : this.searches().filter((kept) => kept !== text))
+  }
+
+  private keepSearches(list: string[]): string[] {
+    this.store.setMeta('searches', JSON.stringify(list))
+    return list
   }
 
   /** Nothing goes to the server: a pin is this laptop's own note about a thread. */

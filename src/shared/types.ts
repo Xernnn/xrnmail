@@ -444,6 +444,12 @@ export interface MailApi {
   thread(account: string, thread: string, bins?: boolean, remember?: boolean, read?: boolean): Promise<MessageView[]>
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
+  /** The searches made lately, newest first. */
+  searches(): Promise<string[]>
+  /** A search was used, so it goes first; the list as it is now. */
+  rememberSearch(search: string): Promise<string[]>
+  /** One search let go of, or all of them with null; the list as it is now. */
+  forgetSearch(search: string | null): Promise<string[]>
   settings(): Promise<Settings>
   /** Only what's named changes, so a page that's behind can't undo what it hasn't heard of. */
   saveBatch(batch: Partial<BatchSettings>): Promise<void>

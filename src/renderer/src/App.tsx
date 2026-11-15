@@ -141,6 +141,11 @@ export function App(): ReactNode {
   const [reads, setReads] = useState(0)
   const [listWidth, setListWidth] = useState(savedWidth)
   const searchBox = useRef<HTMLInputElement>(null)
+  /** The searches made lately, which the empty search box offers while it has the focus, and which of
+   *  them the arrow keys are on. */
+  const [searches, setSearches] = useState<string[]>([])
+  const [searchFocus, setSearchFocus] = useState(false)
+  const [searchPick, setSearchPick] = useState(-1)
   const listAsked = useRef(0)
   const anchor = useRef<number | null>(null)
   /** A draft on its way to the composer, which Esc can still call off. */
@@ -155,6 +160,9 @@ export function App(): ReactNode {
   }), [])
 
   useEffect(() => window.mail.onChanged(bump), [bump])
+  useEffect(() => {
+    if (!SOLO) void window.mail.searches().then(setSearches).catch(() => undefined)
+  }, [])
   useEffect(() => window.mail.onCompose(setComposing), [])
   // The notice for a new message leads to it, in the inbox it came to.
   useEffect(() => window.mail.onOpenThread((ref) => {
@@ -208,6 +216,21 @@ export function App(): ReactNode {
   }
 
   const searching = search.trim() !== ''
+  /** A search that was used: finished with Enter, picked again, or a result opened from it. */
+  const keepSearch = (text: string): void => {
+    if (text.trim()) void window.mail.rememberSearch(text).then(setSearches).catch(() => undefined)
+  }
+  const forgetSearch = (text: string | null): void => {
+    void window.mail.forgetSearch(text).then(setSearches).catch(() => undefined)
+  }
+  const pickSearch = (text: string): void => {
+    setSearch(text)
+    setSearchPick(-1)
+    keepSearch(text)
+  }
+  useEffect(() => {
+    if (open && searching) keepSearch(search)
+  }, [open?.account, open?.thread])
   // All Inboxes is every account's inbox whole. Focused and Other belong to each account's own, and
   // to the inbox of the only account there is.
   const allInboxes = view.kind === 'inbox' && !view.account && (accounts?.length ?? 0) > 1
@@ -827,6 +850,7 @@ export function App(): ReactNode {
   const total = progress.reduce((sum, p) => sum + p.total, 0)
   const single = profile?.layout === 'list'
   const lines = profile?.previewLines ?? 2
+  const showRecent = searchFocus && !searching && searches.length > 0
   const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
     ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
@@ -919,8 +943,43 @@ export function App(): ReactNode {
           <div className="search">
             <SearchIcon size={16} aria-hidden="true" />
             <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
-              onChange={(e) => setSearch(e.target.value)} />
+              role="combobox" aria-expanded={showRecent} aria-controls="recent-searches" aria-autocomplete="list"
+              aria-activedescendant={showRecent && searchPick >= 0 ? `recent-search-${searchPick}` : undefined}
+              onFocus={() => { setSearchFocus(true); setSearchPick(-1) }}
+              onBlur={() => setSearchFocus(false)}
+              onChange={(e) => { setSearch(e.target.value); setSearchPick(-1) }}
+              onKeyDown={(e) => {
+                if (showRecent && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                  e.preventDefault()
+                  const count = searches.length
+                  setSearchPick((at) => (e.key === 'ArrowDown' ? (at + 1) % count : at <= 0 ? count - 1 : at - 1))
+                } else if (e.key === 'Enter') {
+                  const picked = showRecent ? searches[searchPick] : undefined
+                  if (picked !== undefined) pickSearch(picked)
+                  else keepSearch(search)
+                }
+              }} />
             {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
+            {showRecent && (
+              <div className="recent-searches" onMouseDown={(e) => e.preventDefault()}>
+                <div className="recent-head">
+                  <span className="grow">Recent searches</span>
+                  <button className="link" aria-label="Clear recent searches" onClick={() => forgetSearch(null)}>Clear</button>
+                </div>
+                <ul role="listbox" id="recent-searches" aria-label="Recent searches">
+                  {searches.map((text, i) => (
+                    <li key={text} id={`recent-search-${i}`} role="option" aria-selected={i === searchPick} className={i === searchPick ? 'on' : ''}
+                      onClick={() => pickSearch(text)}>
+                      <History size={14} aria-hidden="true" />
+                      <span className="grow">{text}</span>
+                      <button className="icon small" tabIndex={-1} aria-label={`Remove ${text}`} onClick={(e) => { e.stopPropagation(); forgetSearch(text) }}>
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </header>
         <div className="panes">

@@ -93,6 +93,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
   `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
+  The empty box offers the last eight searches (finished with Enter, or a result opened from them),
+  picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
+  this laptop.
 - **Faces:** a sender's photo, or their company's logo, where one exists, as in Edison Mail, and
   coloured initials otherwise. Your own accounts show your photo in the sidebar and Settings, from
   Gravatar or one you choose there. Who is asked about whom, and when, is under
@@ -274,6 +277,8 @@ Done differently:
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.
+- Recent searches are as Edison's phone app has them (https://9to5mac.com/?p=837422); its Mac app's
+  pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to
   Later today at 18:00, Tomorrow at 9:00 and Next week on Monday at 9:00, each changeable. Here Later
   today is three hours on, offered only while that's still today, then Tomorrow, the weekend and

@@ -403,6 +403,9 @@ function register(service: MailService, avatars: Avatars): void {
   handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
     service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
   handle('clearRecent', () => service.clearRecent())
+  handle('searches', () => service.searches())
+  handle('rememberSearch', (search: unknown) => service.rememberSearch(text(search, 500)))
+  handle('forgetSearch', (search: unknown) => service.forgetSearch(search === null ? null : text(search, 500)))
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))

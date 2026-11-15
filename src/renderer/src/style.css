@@ -298,6 +298,16 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .search input::-webkit-search-cancel-button { display: none; }
 .search-clear { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--muted); }
 .search-clear:hover { background: var(--hover); color: var(--text); }
+.recent-searches { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0; padding: 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--text); animation: appear 0.12s var(--ease); }
+.recent-head { display: flex; align-items: center; padding: 4px 8px 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.recent-searches ul { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.recent-searches li { display: flex; align-items: center; gap: 9px; padding: 6px 6px 6px 9px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.recent-searches li > svg { flex: none; color: var(--muted); }
+.recent-searches li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-searches li:hover { background: var(--hover); }
+.recent-searches li.on { background: var(--accent-soft); }
+.recent-searches li .icon { color: var(--muted); opacity: 0; }
+.recent-searches li:hover .icon, .recent-searches li.on .icon { opacity: 1; }
 .tabs { flex: none; display: flex; gap: 22px; padding: 14px 24px 6px; }
 .tab { color: var(--muted); font-size: 15px; }
 .tab:hover { color: var(--text); }
