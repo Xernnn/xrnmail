@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Eraser, Flag, History, Inbox, Mail, MailOpen, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
+  SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
@@ -9,7 +10,7 @@ import { Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
-import { IconButton, TimeMenu } from './Menus'
+import { FolderMenu, IconButton, Popover, TimeMenu } from './Menus'
 import { Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
@@ -124,6 +125,8 @@ export function App(): ReactNode {
   const [help, setHelp] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [bulkSnooze, setBulkSnooze] = useState(false)
+  /** The bar under a selection's ⋮, and the labels or folders it leads to. */
+  const [bulkMenu, setBulkMenu] = useState<'more' | 'file' | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; row: ThreadRow } | null>(null)
@@ -160,6 +163,8 @@ export function App(): ReactNode {
   }), [])
 
   useEffect(() => window.mail.onChanged(bump), [bump])
+  // A selection let go of takes its bar's menus with it.
+  useEffect(() => { if (picked.size === 0) setBulkMenu(null) }, [picked.size])
   useEffect(() => {
     if (!SOLO) void window.mail.searches().then(setSearches).catch(() => undefined)
   }, [])
@@ -515,7 +520,8 @@ export function App(): ReactNode {
   const pin = async (refs: ThreadRef[], on: boolean): Promise<void> => {
     try {
       await window.mail.pin(refs, on)
-      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => window.mail.pin(refs, !on) })
+      const word = on ? 'Pinned' : 'Unpinned'
+      setToast({ text: refs.length > 1 ? `${word}: ${refs.length} threads` : word, undo: () => window.mail.pin(refs, !on) })
     } catch (error) {
       say(problem(error))
     }
@@ -613,6 +619,20 @@ export function App(): ReactNode {
   const keepSender = async (address: string, focused: boolean): Promise<void> => {
     await window.mail.setFocus(address, focused)
     say(`${address} stays in ${focused ? 'Focused' : 'Other'}`)
+  }
+
+  /** Focused and Other go by sender, so moving several threads keeps each one's sender on that side. */
+  const keepSenders = async (rows: ThreadRow[], focused: boolean): Promise<void> => {
+    const mine = new Set(own)
+    const senders = [...new Set(rows.map((r) => r.fromAddress.toLowerCase()).filter((a) => a && !mine.has(a)))]
+    setPicked(new Set())
+    if (senders.length === 1) return keepSender(senders[0] ?? '', focused)
+    try {
+      for (const address of senders) await window.mail.setFocus(address, focused)
+      say(`${senders.length} senders stay in ${focused ? 'Focused' : 'Other'}`)
+    } catch (e) {
+      say(problem(e))
+    }
   }
 
   /** A muted sender's mail still arrives; it just isn't announced. */
@@ -851,6 +871,12 @@ export function App(): ReactNode {
   const single = profile?.layout === 'list'
   const lines = profile?.previewLines ?? 2
   const showRecent = searchFocus && !searching && searches.length > 0
+  // What the bar under a selection's ⋮ works on: labels and folders are one account's own.
+  const pickedRows = list.filter((r) => picked.has(keyOf(r)))
+  const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
+  const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
+  const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  const onOther = active.kind === 'inbox' && active.focus === 'other'
   const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
     ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
@@ -1093,6 +1119,39 @@ export function App(): ReactNode {
                     <div className="anchor">
                       <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
                       {bulkSnooze && <TimeMenu title="Snooze until" up right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
+                    </div>
+                  )}
+                  {!bins && (
+                    <div className="anchor">
+                      <IconButton icon={MoreVertical} label="More for the selected" click={() => setBulkMenu(bulkMenu ? null : 'more')} />
+                      {bulkMenu === 'more' && (
+                        <Popover up right close={() => setBulkMenu(null)}>
+                          {pickedAccount ? (
+                            <button type="button" className="menu-item" onClick={() => setBulkMenu('file')}>
+                              {pickedAccount.labels ? <Tag size={15} aria-hidden="true" /> : <FolderInput size={15} aria-hidden="true" />}
+                              {pickedAccount.labels ? 'Labels…' : 'Move to…'}
+                            </button>
+                          ) : (
+                            <p className="muted note menu-note">Labels and folders are each account's own: pick threads from one account to file them.</p>
+                          )}
+                          <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); setPicked(new Set()); void pin(refs, !allPinned) }}>
+                            {allPinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />} {allPinned ? 'Unpin' : 'Pin'}
+                          </button>
+                          {profile?.focused && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void keepSenders(pickedRows, onOther) }}>
+                              <Filter size={15} aria-hidden="true" /> {onOther ? 'Move to Focused' : 'Move to Other'}
+                            </button>
+                          )}
+                        </Popover>
+                      )}
+                      {bulkMenu === 'file' && pickedAccount && (
+                        <FolderMenu up right title={pickedAccount.labels ? 'Add a label' : undefined}
+                          folders={pickedAccount.labels ? labelsOf(pickedAccount, overview) : pickedAccount.folders} close={() => setBulkMenu(null)}
+                          pick={(to) => {
+                            setBulkMenu(null)
+                            void (pickedAccount.labels ? run(refs, { kind: 'label', label: to, add: true }, `Labelled ${to}`) : run(refs, { kind: 'move', to }, `Moved to ${to}`))
+                          }} />
+                      )}
                     </div>
                   )}
                 </div>

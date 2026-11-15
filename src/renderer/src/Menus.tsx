@@ -94,15 +94,16 @@ export function LabelMenu(props: { labels: string[]; active: string[]; right?: b
   )
 }
 
-/** Where a folder account files mail: one place at a time, unlike a label. */
-export function FolderMenu(props: { folders: string[]; right?: boolean; pick(folder: string): void; close(): void }): ReactNode {
+/** Where a folder account files mail: one place at a time, unlike a label. Under a selection, it's
+ *  also the labels to add to every thread picked. */
+export function FolderMenu(props: { folders: string[]; title?: string; right?: boolean; up?: boolean; pick(folder: string): void; close(): void }): ReactNode {
   return (
-    <Popover close={props.close} right={props.right}>
-      <h4>Move to</h4>
+    <Popover close={props.close} right={props.right} up={props.up}>
+      <h4>{props.title ?? 'Move to'}</h4>
       {props.folders.map((folder) => (
         <button type="button" key={folder} className="menu-item" onClick={() => props.pick(folder)}>{folder}</button>
       ))}
-      {props.folders.length === 0 && <p className="muted note menu-note">No folders of your own yet.</p>}
+      {props.folders.length === 0 && <p className="muted note menu-note">No {props.title ? 'labels' : 'folders'} of your own yet.</p>}
     </Popover>
   )
 }

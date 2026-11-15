@@ -106,7 +106,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   in the list do the same.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
-  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
+  selection (its ⋮ labels or files every thread picked, pins them, or moves them to Other or Focused),
+  drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
   choose which of its entries show and in what order, each account's own labels or folders among them,
   with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
@@ -226,9 +227,8 @@ Not here, though Edison has them:
   be fetched from the server.
 - A message's own ⋮ has Reply all and Forward here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
-  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection (Move to Folder, Move to Other,
-  Apply Labels, Pin, Mark as important) isn't here either; a row's right-click menu and dragging to
-  the sidebar do some of it.
+  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Pin and
+  Move to Other here, but not Mark as important (Gmail's importance isn't read here at all).
 
 Done differently:
 
@@ -277,6 +277,10 @@ Done differently:
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.
+- On the bar under a selection, Labels adds a label to every thread picked (taking one off is a
+  thread at a time), and labels and folders need the threads to be from one account. Move to Other
+  and Move to Focused keep each picked thread's sender on that side, since that's how Focused and
+  Other are decided here.
 - Recent searches are as Edison's phone app has them (https://9to5mac.com/?p=837422); its Mac app's
   pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to

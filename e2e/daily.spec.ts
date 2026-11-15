@@ -882,6 +882,50 @@ test('selecting several and acting on them together', async () => {
   await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length, LONG).toBe(0)
 })
 
+test('the ⋮ on the bar under a selection labels, pins and moves to Other every thread picked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Alpha', from: 'Ann <ann@example.com>' }), { arrived: earlier(5), labels: ['\\Inbox', 'Receipts'] })
+  gmail.add(rawMail({ subject: 'Beta', from: 'Bob <bob@example.com>' }), { arrived: earlier(4) })
+  gmail.add(rawMail({ subject: 'Gamma', from: 'Cy <cy@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  const list = page.locator('.threads')
+  const pickTwo = async (): Promise<void> => {
+    await page.getByLabel('Select Beta').check({ force: true })
+    await page.getByLabel('Select Gamma').check({ force: true })
+    await expect(page.getByText('2 selected')).toBeVisible()
+  }
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: /^Labels/ }).click()
+  await bar.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await expect(page.getByText('Labelled Receipts: 2 threads')).toBeVisible()
+  await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('Receipts')).length, LONG).toBe(3)
+  await expect(bar).toHaveCount(0) // done with, the selection goes
+
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Pin', exact: true }).click()
+  await expect(page.getByText('Pinned: 2 threads')).toBeVisible()
+  await page.getByRole('button', { name: 'Pinned', exact: true }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma', 'Beta'])
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Move to Other', exact: true }).click()
+  await expect(page.getByText('2 senders stay in Other')).toBeVisible()
+  await expect(list.locator('.thread .subject')).toHaveText(['Alpha'])
+  await page.getByRole('button', { name: /^Other/ }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma', 'Beta'])
+  await page.getByLabel('Select Beta').check({ force: true })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Move to Focused', exact: true }).click()
+  await expect(page.getByText('bob@example.com stays in Focused')).toBeVisible()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma'])
+})
+
 test('keys keep working after ticking a checkbox, and act on the selection', async () => {
   run = await launch()
   const { page, gmail } = run
