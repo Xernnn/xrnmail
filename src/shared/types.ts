@@ -521,6 +521,8 @@ export interface MailApi {
   onChanged(listener: () => void): () => void
   /** A mail address was opened, from a message or the system, and here's the draft for it. */
   onCompose(listener: (draft: Draft) => void): () => void
+  /** A notice for one new message was clicked, and this is its thread. */
+  onOpenThread(listener: (ref: ThreadRef) => void): () => void
   onCommand(listener: (command: AppCommand) => void): () => void
   version(): Promise<string>
 }

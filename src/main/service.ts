@@ -108,6 +108,12 @@ export interface DomainRecords {
   srv(name: string): Promise<{ name: string; port: number } | null>
 }
 
+/** One new message, as its notice tells of it. */
+export interface Landed extends ThreadRef {
+  from: string
+  subject: string
+}
+
 export interface ServiceDeps {
   store: Store
   secrets: Secrets
@@ -120,8 +126,9 @@ export interface ServiceDeps {
   now(): number
   /** Something on screen may be out of date. */
   changed(): void
-  /** New mail landed. [preview] says who and what, when it's one message found the moment it came. */
-  landed?(count: number, preview?: { from: string; subject: string }): void
+  /** New mail landed. [preview] says who and what, and which thread it's in, when it's one message
+   *  found the moment it came. */
+  landed?(count: number, preview?: Landed): void
   /** A Summary landed: how many messages it brought, and who from. */
   summarized?(count: number, senders: string[]): void
   /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
@@ -659,7 +666,7 @@ export class MailService {
     }
     const own = this.ownAddresses(email)
     let fresh = 0
-    let preview = { from: '', subject: '' }
+    let preview: Landed = { from: '', subject: '', account: email, thread: '' }
     /** Who sent what a Summary has already brought, found by this pass. */
     const summed: string[] = []
     /** Who sent new mail, held or not. */
@@ -694,7 +701,7 @@ export class MailService {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
-              preview = { from: mail.from.name || mail.from.address, subject: mail.subject }
+              preview = { from: mail.from.name || mail.from.address, subject: mail.subject, account: email, thread: mail.thread }
             }
           }
         }

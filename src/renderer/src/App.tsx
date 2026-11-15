@@ -156,6 +156,15 @@ export function App(): ReactNode {
 
   useEffect(() => window.mail.onChanged(bump), [bump])
   useEffect(() => window.mail.onCompose(setComposing), [])
+  // The notice for a new message leads to it, in the inbox it came to.
+  useEffect(() => window.mail.onOpenThread((ref) => {
+    setView({ kind: 'inbox' })
+    setSearch('')
+    setPicked(new Set())
+    setLimit(PAGE)
+    setRows(null)
+    setOpen(ref)
+  }), [])
 
   useEffect(() => {
     void window.mail.accounts().then(setAccounts)

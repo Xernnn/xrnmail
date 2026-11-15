@@ -713,7 +713,11 @@ void app.whenReady().then(() => {
     now: () => Date.now(),
     changed: tellPage,
     noticed: (addresses) => avatars.want(addresses),
-    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, showWindow),
+    // A notice for one message opens it; one for several brings the window up.
+    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
+      showWindow()
+      if (preview) window?.webContents.send('open-thread', { account: preview.account, thread: preview.thread })
+    }),
     summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
       showWindow()
       tellCommand('summary')

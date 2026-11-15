@@ -29,7 +29,7 @@ let store: Store
 let secrets: MemorySecrets
 let clock: number
 let changed: Mock<() => void>
-let landed: Mock<(count: number, preview?: { from: string; subject: string }) => void>
+let landed: Mock<(count: number, preview?: { from: string; subject: string; account: string; thread: string }) => void>
 let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
@@ -266,8 +266,14 @@ describe('as it arrives', () => {
     await arrive('Hello', 10, 30, 'Ada <ada@example.com>')
     await arrive('Deals', 10, 40, 'Shop News <news@shop.example>')
     expect(service.list({ kind: 'inbox' }).map((r) => r.subject)).toEqual(['Hello'])
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Hello' }))
     expect(service.overview()).toMatchObject({ held: 0, nextBatch: null, summary: { held: 1, next: at(18) } })
+  })
+
+  it('the notice for one new message says which thread it is, so clicking it can open that', async () => {
+    live(true)
+    await arrive('Hello', 10, 30, 'Ada <ada@example.com>')
+    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Hello', account: ME, thread: ref('Hello').thread })
   })
 
   it('back in batches, only what comes next waits, at the times kept', async () => {
@@ -1370,7 +1376,7 @@ describe('straight-through mail tells you', () => {
     await service.syncAll()
     clock += 3000
     await service.tick()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Urgent' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Urgent' }))
     expect(landed).toHaveBeenCalledTimes(1)
   })
 
@@ -1394,7 +1400,7 @@ describe('straight-through mail tells you', () => {
     clock = at(10, 36)
     await service.tick()
     await service.syncAll()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Bob', subject: 'Loud' }) // one of the two, and it's named
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Bob', subject: 'Loud' })) // one of the two, and it's named
     expect(landed).toHaveBeenCalledTimes(1)
     landed.mockClear()
     service.saveProfile({ muted: [] })
@@ -1402,7 +1408,7 @@ describe('straight-through mail tells you', () => {
     clock = at(10, 39)
     await service.tick()
     await service.syncAll()
-    expect(landed).toHaveBeenCalledWith(1, { from: 'Ada', subject: 'Heard' })
+    expect(landed).toHaveBeenCalledWith(1, expect.objectContaining({ from: 'Ada', subject: 'Heard' }))
   })
 
   it('a delivery counts out what muted senders sent, and one of only theirs lands unannounced', async () => {

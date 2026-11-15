@@ -1389,6 +1389,24 @@ test('a mail link opens here for reading, sends nothing, and shows what it asked
   expect(smtp.received).toBe(0)
 })
 
+// Clicking the notice for a new message only brought the window up, wherever it was, and the message
+// it named had to be looked for. The main process sends its thread on the click (desktop notices are
+// off in the tests, so this sends what the click does).
+test('the notice for a new message opens that message, in the inbox', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Older' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Just in', from: 'Mai Tran <mai@example.com>', text: 'Are you free?' }), { arrived: earlier(0.1), thread: 77n })
+  await signIn(run)
+  await page.getByRole('button', { name: /^Sent/ }).click()
+  await expect(page.locator('.view-title')).toHaveText('Sent')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.send('open-thread', { account: 'me@example.com', thread: '77' }))
+  await expect(page.locator('.thread-subject')).toHaveText('Just in')
+  await expect(page.locator('.messages')).toContainText('Are you free?')
+  await expect(page.locator('.view-title')).toHaveText('Inbox')
+  await expect(page.locator('.threads .thread.on')).toContainText('Just in')
+})
+
 test('a message Gmail still has as a draft stays out of the thread', async () => {
   run = await launch()
   const { page, gmail } = run
