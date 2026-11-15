@@ -8,6 +8,7 @@ import type {
   Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
+import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
@@ -361,6 +362,10 @@ function profile(value: unknown): ProfilePatch {
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
   if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
+  if (p['later'] && typeof p['later'] === 'object') {
+    const later = p['later'] as Record<string, unknown>
+    patch.later = Object.fromEntries(Object.entries(later).filter(([key]) => key in DEFAULT_LATER).map(([key, value]) => [key, number(value)])) as Partial<LaterTimes>
+  }
   if (Array.isArray(p['imagesFrom'])) patch.imagesFrom = p['imagesFrom'].map((a) => text(a, 320))
   return patch
 }

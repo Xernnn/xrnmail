@@ -1,4 +1,5 @@
 import type { KeyChanges, KeySet } from './keys'
+import type { LaterTimes } from './later'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -168,6 +169,8 @@ export interface Settings {
   images: 'ask' | 'always'
   /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
   readAfter: number
+  /** What Later today, This evening, Tomorrow, the weekend and Next week mean, for snoozing and sending later. */
+  later: LaterTimes
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
 }
@@ -416,7 +419,10 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>>
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>> & {
+  /** Only the times named. */
+  later?: Partial<LaterTimes>
+}
 
 /** What the app's menu and the tray can ask the page to do. */
 export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'

@@ -1007,6 +1007,44 @@ test('snoozing takes a thread away until its time, and it can be found meanwhile
   await expect(page.locator('.threads').getByText('Later please')).toBeVisible()
 })
 
+test('Settings say what Tomorrow, the weekend and Next week mean, for snoozing and for sending later', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Later please' }), { arrived: earlier(5) })
+  await signIn(run)
+  const day = (offset: number, hour: number): Date => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, hour)
+  }
+  const toTuesday = (2 - new Date().getDay() + 7) % 7 || 7
+  const dayName = (at: Date): string => at.toLocaleDateString([], { weekday: 'short' })
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByLabel('Tomorrow, time')).toHaveValue('9')
+  await page.getByLabel('Tomorrow, time').selectOption('7')
+  await page.getByLabel('Next week, day').selectOption('2')
+  await page.getByLabel('Next week, time').selectOption('8')
+  await page.getByLabel('Later today').selectOption('1')
+  await expect.poll(() => page.evaluate(async () => (await window.mail.settings()).later))
+    .toMatchObject({ tomorrow: 7, weekDay: 2, week: 8, laterHours: 1, evening: 18, weekendDay: 6, weekend: 9 })
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+
+  await page.getByText('Later please').click()
+  await page.keyboard.press('b')
+  const tomorrow = page.getByRole('button', { name: /^Tomorrow/ })
+  await expect(tomorrow).toContainText(`${dayName(day(1, 7))}`)
+  await expect(tomorrow).toContainText('07:00')
+  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText(`${dayName(day(toTuesday, 8))}`)
+  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText('08:00')
+  await tomorrow.click()
+  await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+  await expect.poll(() => page.evaluate(async () => (await window.mail.list({ kind: 'snoozed' }))[0]?.snoozedUntil)).toBe(day(1, 7).getTime())
+
+  await page.getByRole('button', { name: 'Compose' }).click()
+  await page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Send later' }).click()
+  await expect(page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: /^Tomorrow/ })).toContainText('07:00')
+})
+
 test('flags and labels reach Gmail', async () => {
   run = await launch()
   const { page, gmail } = run

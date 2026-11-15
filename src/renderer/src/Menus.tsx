@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Calendar, CalendarClock, CalendarDays, Sun, Sunset, type LucideIcon } from 'lucide-react'
-import { laterChoices } from '@shared/later'
+import { Calendar, CalendarClock, CalendarDays, Moon, Sun, Sunset, type LucideIcon } from 'lucide-react'
+import { DEFAULT_LATER, laterChoices, type LaterTimes } from '@shared/later'
 import { longTime } from './format'
 
 export function IconButton(props: { icon: LucideIcon; label: string; on?: boolean; hint?: string; click(): void }): ReactNode {
@@ -36,13 +36,20 @@ export function Popover(props: { close(): void; up?: boolean; right?: boolean; c
 }
 
 const WHEN_ICONS: Record<string, LucideIcon> = {
-  'Later today': Sunset, Tomorrow: Sun, 'This weekend': CalendarDays, 'Next weekend': CalendarDays, 'Next week': Calendar
+  'Later today': Sunset, 'This evening': Moon, Tomorrow: Sun, 'This weekend': CalendarDays, 'Next weekend': CalendarDays, 'Next week': Calendar
+}
+
+let laterTimes: LaterTimes = DEFAULT_LATER
+
+/** Snooze and Send later offer the times Settings give them, in every window. */
+export const setLaterTimes = (times: LaterTimes | undefined): void => {
+  laterTimes = times ?? DEFAULT_LATER
 }
 
 /** "When?", for snoozing and for sending later. */
 export function TimeMenu(props: { title: string; extra?: [string, number][]; up?: boolean; right?: boolean; pick(at: number): void; close(): void }): ReactNode {
   const [custom, setCustom] = useState('')
-  const choices = [...(props.extra ?? []), ...laterChoices(new Date())].filter(
+  const choices = [...(props.extra ?? []), ...laterChoices(new Date(), laterTimes)].filter(
     ([, at], i, all) => all.findIndex(([, other]) => other === at) === i // on a Friday, tomorrow is the weekend
   )
   const when = custom ? new Date(custom).getTime() : NaN

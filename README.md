@@ -80,8 +80,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
   warnings. Every address can be selected, copied, written to, searched for, muted, let straight
   through or blocked from there. Escape or a click elsewhere closes it.
-- **Snooze:** a thread comes back when you say, or when someone replies. Later today is three hours
-  on, and is offered only while that's still today.
+- **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
+  Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
+  the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
+  today is offered only while it's still today, and This evening only before it comes.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
@@ -292,8 +294,8 @@ Done differently:
   pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to
   Later today at 18:00, Tomorrow at 9:00 and Next week on Monday at 9:00, each changeable. Here Later
-  today is three hours on, offered only while that's still today, then Tomorrow, the weekend and
-  Next week at 9:00, which can't be changed. On a Saturday or Sunday the weekend is next weekend's.
+  today is some hours on (3 to start with) and This evening is its own choice, and each time can be
+  changed in Settings, General. On a Saturday or Sunday the weekend to come is next weekend's.
 
 ## What it doesn't do yet
 

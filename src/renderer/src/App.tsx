@@ -10,7 +10,7 @@ import { Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
-import { FolderMenu, IconButton, Popover, TimeMenu } from './Menus'
+import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
 import { Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
@@ -195,6 +195,7 @@ export function App(): ReactNode {
   }, [profile?.theme])
 
   setClock24(profile?.clock24 ?? true) // before anything below writes a time
+  setLaterTimes(profile?.later)
 
   const unread = (accounts ?? []).reduce((sum, a) => sum + a.unread, 0)
   const soloTitle = SOLO?.kind === 'thread' ? messages[0]?.subject || 'xrnmail' : SOLO ? composing?.subject || 'New message' : null

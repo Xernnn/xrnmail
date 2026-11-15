@@ -6,6 +6,7 @@ import { QUICK_SLOTS } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
+import { cleanLater, DEFAULT_LATER } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
@@ -86,7 +87,8 @@ const DEFAULT_SETTINGS: Settings = {
   startAtLogin: false,
   images: 'ask',
   imagesFrom: [],
-  readAfter: 0
+  readAfter: 0,
+  later: DEFAULT_LATER
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -1761,7 +1763,9 @@ export class MailService {
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
-      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60)
+      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
+      // Only the times named change, so two set one after the other both stay.
+      later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })
     this.deps.changed()
   }

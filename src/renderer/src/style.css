@@ -594,6 +594,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .settings label input, .settings label select, .settings label textarea { color: var(--text); font-size: 14px; }
 .settings label.inline { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
 .settings label.inline select { width: auto; min-width: 150px; padding-block: 6px; }
+.settings .when { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
+.settings .when > span { min-width: 96px; }
+.settings .when select { width: auto; min-width: 120px; padding-block: 6px; }
 .settings label.inline input[type="color"] { width: 44px; height: 30px; padding: 2px; }
 .settings label.check { display: flex; align-items: center; gap: 11px; color: var(--text); font-size: 14px; cursor: pointer; }
 .settings label.check input { appearance: none; flex: none; position: relative; width: 18px; height: 18px; padding: 0; border: 1.5px solid var(--outline); border-radius: 4px; background: var(--bg); cursor: pointer; }
