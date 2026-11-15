@@ -200,6 +200,35 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
   expect(gmail.mails.find((m) => m.raw.toString().includes('Newest'))?.labels).toContain('\\Inbox')
 })
 
+// Marking the open thread unread used to move the reader on to the next one, as archiving does, and
+// opening that one read it: one thread marked unread, another read without being looked at.
+test('marking the open thread unread closes it, and reads nothing else', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Oldest', 'Middle', 'Newest'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const dot = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject }).locator('.unread-dot')
+  await list.getByText('Middle').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Middle')
+  await expect(dot('Middle')).toHaveCount(0)
+  await page.keyboard.press('U')
+  await expect(dot('Middle')).toBeVisible()
+  await expect(page.locator('.thread-subject')).toHaveCount(0)
+  await page.waitForTimeout(600) // what the reader would have read meanwhile
+  await expect(dot('Oldest')).toBeVisible()
+  await expect(dot('Newest')).toBeVisible()
+  // And from the button over the thread.
+  await list.getByText('Newest').click()
+  await expect(dot('Newest')).toHaveCount(0)
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Mark unread' }).click()
+  await expect(dot('Newest')).toBeVisible()
+  await expect(page.locator('.thread-subject')).toHaveCount(0)
+  await page.waitForTimeout(600)
+  await expect(dot('Middle')).toBeVisible()
+  await expect.poll(() => gmail.mails.filter((m) => m.flags.includes('\\Seen')).length, LONG).toBe(0)
+})
+
 // The refresh that follows a change waits 150 ms, and quitting can close the store and destroy the
 // tray before it comes. When the app took longer than that to go, the refresh still ran, and with
 // unread mail shown it set the image of the destroyed tray, which throws in the main process.

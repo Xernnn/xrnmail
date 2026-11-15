@@ -303,9 +303,12 @@ export function App(): ReactNode {
   const run = useCallback(
     async (refs: ThreadRef[], action: MailAction, label?: string) => {
       if (refs.length === 0) return
-      const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins) || (action.kind === 'unread' && open !== null)
+      const leaves = TAKES_AWAY.includes(action.kind) || (action.kind === 'inbox' && bins)
+      // Marked unread, the open thread closes: moving on to the next would open it, and so read it.
+      const closes = action.kind === 'unread' && open !== null && refs.some((ref) => keyOf(ref) === keyOf(open))
       try {
         if (leaves && !SOLO) leave(refs)
+        if (closes && !SOLO) setOpen(null)
         const token = await window.mail.act(refs, action)
         // Reading it again would only mark it read again, so a window of its own goes with it.
         if (SOLO && action.kind === 'unread') return window.close()
