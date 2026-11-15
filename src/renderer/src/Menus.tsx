@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Calendar, CalendarClock, CalendarDays, Sun, Sunset, type LucideIcon } from 'lucide-react'
+import { laterChoices } from '@shared/later'
 import { longTime } from './format'
 
 export function IconButton(props: { icon: LucideIcon; label: string; on?: boolean; hint?: string; click(): void }): ReactNode {
@@ -34,22 +35,8 @@ export function Popover(props: { close(): void; up?: boolean; right?: boolean; c
   return <div ref={box} className={`popover ${props.up ? 'up' : ''} ${props.right ? 'right' : ''}`}>{props.children}</div>
 }
 
-const HOUR_MS = 3_600_000
-
 const WHEN_ICONS: Record<string, LucideIcon> = {
-  'Later today': Sunset, Tomorrow: Sun, 'This weekend': CalendarDays, 'Next week': Calendar
-}
-
-function laterChoices(now: Date): [string, number][] {
-  const at = (days: number): number => new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, 9).getTime()
-  const toSaturday = (6 - now.getDay() + 7) % 7 || 7
-  const toMonday = (8 - now.getDay()) % 7 || 7
-  return [
-    ['Later today', now.getTime() + 3 * HOUR_MS],
-    ['Tomorrow', at(1)],
-    ['This weekend', at(toSaturday)],
-    ['Next week', at(toMonday)]
-  ]
+  'Later today': Sunset, Tomorrow: Sun, 'This weekend': CalendarDays, 'Next weekend': CalendarDays, 'Next week': Calendar
 }
 
 /** "When?", for snoozing and for sending later. */
