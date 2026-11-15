@@ -668,6 +668,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .popover, .context-menu, .composer, .hits { animation: appear 0.12s var(--ease); }
 .toast { position: fixed; z-index: 30; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; gap: 16px; align-items: center; max-width: min(540px, calc(100vw - 32px)); padding: 10px 18px; border-radius: 12px; background: var(--toast); color: var(--on-toast); box-shadow: var(--shadow); font-size: 13px; animation: rise 0.16s var(--ease); }
 .toast .link { color: var(--toast-link); font-weight: 700; }
+/* With a thread open, the bar of Reply and Forward (72px) is along the foot of the window, and a toast
+   in the middle of the window sat over Reply, where a click meant for it could undo instead. */
+body:has(.reply-bar) .toast { bottom: 96px; }
 
 .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; margin: 0; padding: 16px 20px; font-size: 13px; }
 .settings .keys { padding: 4px 0; }
