@@ -33,7 +33,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
-  the foot of a thread, in the composer.
+  the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
+  it if Settings, General say so. A reply or forward closed as it opened, with nothing written, leaves
+  no draft behind.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
   up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
@@ -41,6 +43,11 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
+  Once the open thread is archived or deleted, the next one opens, or the one before, or the list
+  comes back, as Settings, General say. Marking it unread closes it, so nothing else gets read.
+- **Reading:** a thread is read as it opens, or after a few seconds open, or only when you mark it
+  read (Settings, General), so going down the list to look reads nothing by the way. In Unread the
+  open thread keeps its place while it's read, so `j` goes on to the one below.
 - **Trash and Spam:** read them, restore from them, or delete for good.
 - **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
   there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
@@ -73,7 +80,8 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
   warnings. Every address can be selected, copied, written to, searched for, muted, let straight
   through or blocked from there. Escape or a click elsewhere closes it.
-- **Snooze:** a thread comes back when you say, or when someone replies.
+- **Snooze:** a thread comes back when you say, or when someone replies. Later today is three hours
+  on, and is offered only while that's still today.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
@@ -99,8 +107,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   choose which of its entries show and in what order, each account's own labels or folders among them,
   with New Label or New Folder to make one on the server), recipient chips, side-by-side or
   one-at-a-time reading, one to four lines of preview, and Settings you can search.
-- **Stays with you:** new mail is announced as it lands, the tray shows what's unread, and closing the
-  window keeps it running. Spell check knows your language, plus English and Vietnamese.
+- **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
+  in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
+  The tray shows what's unread, and closing the window keeps it running. Spell check knows your
+  language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says.
 - **xrnhub:** optional, and gets counts only.
 
@@ -201,6 +211,20 @@ Not here, though Edison has them:
 
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
+- From Appearance: the reading pane under the list, the Scaling slider (View's zoom does that here)
+  and Adaptive Coloring, which darkens mail itself in dark mode. Here a message's HTML is shown as
+  its sender drew it, on white.
+- From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
+  have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
+  quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
+  importance markers; and unread counts beside Today and Unread.
+- View original: a message's source, with Download. The source isn't kept on this laptop, so it would
+  be fetched from the server.
+- A message's own ⋮ has Reply all and Forward here. Edison's also has Pin Thread, Trash, Mark as
+  Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
+  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection (Move to Folder, Move to Other,
+  Apply Labels, Pin, Mark as important) isn't here either; a row's right-click menu and dragging to
+  the sidebar do some of it.
 
 Done differently:
 
@@ -241,6 +265,18 @@ Done differently:
   or with Ctrl or Shift, where Edison's phone app holds a finger down.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
+- Of General's choices, Edison's pictures show only the one each is set to. "When mail is Archived or
+  Deleted" shows Open next; Open the one before and Go back to the list are xrnmail's. "Mark as read
+  after" shows Instantly; here there are 1, 2 and 5 seconds, and only when marked. "Default reply
+  behavior" shows Reply All, with the button beside each message drawn as Reply All; here that's
+  what it decides, and the foot of a thread keeps both buttons and the keys keep their own.
+- Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
+  Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
+  everything unread.
+- Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to
+  Later today at 18:00, Tomorrow at 9:00 and Next week on Monday at 9:00, each changeable. Here Later
+  today is three hours on, offered only while that's still today, then Tomorrow, the weekend and
+  Next week at 9:00, which can't be changed. On a Saturday or Sunday the weekend is next weekend's.
 
 ## What it doesn't do yet
 
