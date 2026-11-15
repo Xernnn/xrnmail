@@ -128,6 +128,9 @@ export interface Settings {
   microsoftClientId: string
   /** `panes` reads beside the list, `list` is one thing at a time. */
   layout: 'panes' | 'list'
+  /** What the reader opens once the open thread is archived, deleted or otherwise leaves the list:
+   *  the thread below it, the one above, or nothing, back to the list. */
+  afterRemove: 'next' | 'previous' | 'list'
   /** How many lines of a message a row of the list shows under its subject, none to four. */
   previewLines: number
   /** A thread's files as small cards under its row in the list. */
@@ -401,7 +404,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom'>>
 

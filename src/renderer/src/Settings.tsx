@@ -33,7 +33,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout undo send pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo send pictures images tray background start login',
   notifications: 'new mail tell account mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
@@ -317,6 +317,8 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <Check label="Split the inbox into Focused and Other" on={settings.focused} set={(focused) => save({ focused })} />
         <Choice label="Layout" value={settings.layout} set={(layout) => save({ layout })}
           options={[['panes', 'List and message side by side'], ['list', 'One thing at a time']]} />
+        <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
+          options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
       </section>
       <section>
         <h3>Sending</h3>

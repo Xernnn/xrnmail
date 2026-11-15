@@ -236,6 +236,34 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
   expect(gmail.mails.find((m) => m.raw.toString().includes('Newest'))?.labels).toContain('\\Inbox')
 })
 
+test('Settings choose what opens once a thread is archived or deleted: the next, the one before, or the list', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['First', 'Second', 'Third', 'Fourth', 'Fifth'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(9 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const reading = page.locator('.thread-subject')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('When a thread is archived or deleted')
+  await expect(choice).toHaveValue('next') // Edison's own choice, and what xrnmail always did
+  await choice.selectOption('previous')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await list.getByText('Third').click()
+  await expect(reading).toHaveText('Third')
+  await page.keyboard.press('e')
+  await expect(list.getByText('Third')).toHaveCount(0)
+  await expect(reading).toHaveText('Fourth') // the one above it, newer
+  await page.evaluate(() => window.mail.saveProfile({ afterRemove: 'list' }))
+  await page.waitForTimeout(400)
+  await page.keyboard.press('#')
+  await expect(list.getByText('Fourth')).toHaveCount(0)
+  await expect(reading).toHaveCount(0)
+  await page.reload()
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByLabel('When a thread is archived or deleted')).toHaveValue('list')
+})
+
 // Marking the open thread unread used to move the reader on to the next one, as archiving does, and
 // opening that one read it: one thread marked unread, another read without being looked at.
 test('marking the open thread unread closes it, and reads nothing else', async () => {

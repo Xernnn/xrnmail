@@ -297,16 +297,21 @@ export function App(): ReactNode {
     [list, open]
   )
 
-  /** After a thread leaves the list, the reader moves on to the next one instead of closing. */
+  /** After a thread leaves the list, the reader moves on to the next one, or the one before, or goes
+   *  back to the list, as Settings say. */
+  const afterRemove = profile?.afterRemove ?? 'next'
   const leave = useCallback(
     (gone: ThreadRef[]) => {
       if (!open || !gone.some((ref) => keyOf(ref) === keyOf(open))) return
       const leaving = new Set(gone.map(keyOf))
       const at = list.findIndex((r) => keyOf(r) === keyOf(open))
-      const next = [...list.slice(at + 1), ...list.slice(0, Math.max(at, 0)).reverse()].find((r) => !leaving.has(keyOf(r)))
+      const below = list.slice(at + 1)
+      const above = list.slice(0, Math.max(at, 0)).reverse()
+      const order = afterRemove === 'list' ? [] : afterRemove === 'previous' ? [...above, ...below] : [...below, ...above]
+      const next = order.find((r) => !leaving.has(keyOf(r)))
       setOpen(next ? { account: next.account, thread: next.thread } : null)
     },
-    [list, open]
+    [list, open, afterRemove]
   )
 
   const targets = useCallback((): ThreadRef[] => {
