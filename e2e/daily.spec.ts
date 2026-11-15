@@ -152,6 +152,42 @@ test('an empty new message leaves nothing behind', async () => {
   await expect(page.getByText('Nothing here')).toBeVisible()
 })
 
+// A reply or a forward starts with a subject, someone to send to and what it quotes, so closing one
+// untouched counted as closing something written, and every Reply pressed by mistake left a draft.
+test('a reply or forward closed untouched leaves nothing behind, and a draft opened again stays', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plans', from: 'Mai Tran <mai@example.com>', text: 'Friday?' }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plans').click()
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Plans')
+  await page.waitForTimeout(900) // past the composer's own save
+  await composer(page).getByRole('button', { name: 'Close' }).click()
+  await expect(composer(page)).toHaveCount(0)
+  await page.getByRole('button', { name: 'Forward', exact: true }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Fwd: Plans')
+  await page.keyboard.press('Escape')
+  await expect(composer(page)).toHaveCount(0)
+  await expect(page.getByText('Saved to Drafts')).toHaveCount(0)
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await expect(page.getByText('Nothing here')).toBeVisible()
+
+  // Written in, it's kept; and opened again from Drafts and closed as it was, it stays.
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+  await page.locator('.threads').getByText('Plans').click()
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  await composer(page).getByLabel('Message').fill('Friday works.')
+  await composer(page).getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByText('Saved to Drafts')).toBeVisible()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.locator('.threads').getByText('Re: Plans').click()
+  await expect(composer(page).getByLabel('Message')).toHaveText('Friday works.')
+  await composer(page).getByRole('button', { name: 'Close' }).click()
+  await expect(composer(page)).toHaveCount(0)
+  await expect(page.locator('.threads').getByText('Re: Plans')).toBeVisible()
+})
+
 test('replying to a hostile email: its HTML stays out of the page and out of what is sent', async () => {
   run = await launch()
   const { page, gmail, smtp } = run

@@ -117,6 +117,8 @@ export function App(): ReactNode {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [composing, setComposing] = useState<Draft | null>(null)
+  /** The draft as Reply, Forward or Compose just started it. One opened again from anywhere is another copy. */
+  const [started, setStarted] = useState<Draft | null>(null)
   const [profile, setProfile] = useState<Settings | null>(null)
   const [settings, setSettings] = useState<Tab | null>(null)
   const [help, setHelp] = useState(false)
@@ -355,7 +357,9 @@ export function App(): ReactNode {
       const attempt = { off: false }
       starting.current = attempt
       try {
-        setComposing(await window.mail.startDraft(start))
+        const draft = await window.mail.startDraft(start)
+        setStarted(draft)
+        setComposing(draft)
       } catch (e) {
         if (starting.current === attempt) starting.current = null
         say(problem(e))
@@ -829,7 +833,7 @@ export function App(): ReactNode {
     <>
       {composing && (
         <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          solo={SOLO?.kind === 'draft'} leaving={leaving}
+          solo={SOLO?.kind === 'draft'} leaving={leaving} fresh={composing === started}
           moveOut={(id) => {
             setComposing(null)
             void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))
