@@ -935,6 +935,75 @@ describe('answering an invitation', () => {
   })
 })
 
+describe('drafts on folder servers', () => {
+  const edit = (account: string, subject: string): Parameters<MailService['saveDraft']>[1] =>
+    ({ account, from: '', to: 'ada@example.com', cc: '', bcc: '', subject, html: 'Hi', text: 'Hi', quote: null })
+  const saved = (server: FakeGmail): string[] => server.drafts().map((raw) => /^Subject: (.*)$/m.exec(raw)?.[1]?.trim() ?? '')
+  const pushed = async (): Promise<void> => {
+    clock += 5000
+    await service.tick()
+  }
+
+  it('keeps them in the account\'s Drafts folder, and deletes a copy where it is, not by way of Trash', async () => {
+    await add(Y, yahoo)
+    const draft = await service.startDraft({ kind: 'new', account: Y })
+    service.saveDraft(draft.id, edit(Y, 'Lunch'))
+    await pushed()
+    expect(saved(yahoo)).toEqual(['Lunch'])
+    service.saveDraft(draft.id, edit(Y, 'Lunch on Friday'))
+    await pushed()
+    expect(saved(yahoo)).toEqual(['Lunch on Friday'])
+    expect(yahoo.box('Trash').mails).toEqual([])
+    expect(yahoo.commands.some((c) => c.startsWith('UID EXPUNGE'))).toBe(true)
+  })
+
+  it('finds the copy it made on a server that doesn\'t say where it put it', async () => {
+    const old = await serve('me@old.example', { plain: true, uidplus: false })
+    await add('me@old.example', old, { provider: 'other', imap: { host: 'imap.old.example', port: 993, security: 'tls' }, smtp: { host: 'smtp.old.example', port: 465, security: 'tls' } })
+    const draft = await service.startDraft({ kind: 'new', account: 'me@old.example' })
+    service.saveDraft(draft.id, edit('me@old.example', 'First'))
+    await pushed()
+    service.saveDraft(draft.id, edit('me@old.example', 'Second'))
+    await pushed()
+    expect(saved(old)).toEqual(['Second'])
+  })
+
+  it('makes a Drafts folder for a server that has none', async () => {
+    yahoo.boxes = yahoo.boxes.filter((box) => box.flag !== '\\Drafts')
+    await add(Y, yahoo)
+    const draft = await service.startDraft({ kind: 'new', account: Y })
+    service.saveDraft(draft.id, edit(Y, 'Somewhere to go'))
+    await pushed()
+    expect(yahoo.commands.filter((c) => c.startsWith('CREATE'))).toEqual(['CREATE Drafts'])
+    expect(saved(yahoo)).toEqual(['Somewhere to go'])
+    await service.syncAll()
+    expect(service.drafts()).toHaveLength(1) // its own copy, not brought in again
+  })
+
+  it('moves a draft\'s copy with it when it\'s moved to another account', async () => {
+    await add(G, gmail)
+    await add(Y, yahoo)
+    const draft = await service.startDraft({ kind: 'new', account: G })
+    service.saveDraft(draft.id, edit(G, 'Which one'))
+    await pushed()
+    expect([saved(gmail), saved(yahoo)]).toEqual([['Which one'], []])
+    service.saveDraft(draft.id, edit(Y, 'Which one'))
+    await pushed()
+    expect([saved(gmail), saved(yahoo)]).toEqual([[], ['Which one']])
+  })
+
+  it('leaves the drafts on the server when the account is removed from this laptop', async () => {
+    await add(Y, yahoo)
+    const draft = await service.startDraft({ kind: 'new', account: Y })
+    service.saveDraft(draft.id, edit(Y, 'Stays there'))
+    await pushed()
+    service.removeAccount(Y)
+    await pushed()
+    expect(saved(yahoo)).toEqual(['Stays there'])
+    expect(store.draftCopies(Y)).toEqual([])
+  })
+})
+
 describe('upgrading a profile from the Gmail-only version', () => {
   it('carries on where it was: queued changes reach the server and nothing is fetched twice', async () => {
     const archive = gmail.add(rawMail({ subject: 'Archive me' }), { arrived: new Date(at(7)) })

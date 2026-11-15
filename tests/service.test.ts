@@ -447,6 +447,27 @@ describe('the Summary', () => {
     expect(service.list({ kind: 'summary' }).map((row) => [row.subject, row.summaryAt])[0]).toEqual(['Overnight letter', at(8, 0, 8)])
   })
 
+  it('holds what a sync stores by the rules as they are by then, not as they were when it began', async () => {
+    service.saveBatch({ ...service.settings().batch, live: false, times: ['09:00', '13:00', '17:00'] })
+    gmail.add(rawMail({ subject: 'Fresh deals', from: NEWS, headers: ['List-Unsubscribe: <https://shop.example/u>'] }), { arrived: new Date(at(10, 30)) })
+    clock = at(10, 31)
+    // The sender goes into the Summary while the sync is signing in, after it has begun.
+    const deps = (service as unknown as { deps: ServiceDeps }).deps
+    const open = deps.openSource
+    deps.openSource = (account, login) => {
+      const source = open(account, login)
+      const connect = source.connect.bind(source)
+      source.connect = async () => {
+        await connect()
+        service.saveSummary(SUMMARY)
+      }
+      return source
+    }
+    await service.syncAll()
+    expect(service.overview().summary.held).toBe(1) // not held for the 13:00 batch
+    expect(service.overview().held).toBe(0)
+  })
+
   it('has a side of Subscriptions to itself', async () => {
     service.saveBatch({ ...service.settings().batch, times: [] })
     await arrive('Deals', 9, 0, NEWS)
@@ -458,6 +479,24 @@ describe('the Summary', () => {
     expect(service.subscriptions()).toEqual([])
     expect(service.summarySenders().map((s) => [s.address, s.count])).toEqual([['news@shop.example', 2], ['gone@else.example', 0]])
     expect(subjects('inbox')).toEqual(['More deals', 'Deals']) // what came before it was in the Summary stays where it was
+  })
+
+  it('says how much each sender sends and how much of it is read, and gives each a page of their threads', async () => {
+    service.saveBatch({ ...service.settings().batch, times: [] })
+    await arrive('Old deals', 9, 0, NEWS, -2) // more than a week before the rest
+    await arrive('Deals', 9, 0, NEWS)
+    await arrive('More deals', 9, 10, NEWS)
+    await arrive('Lunch?', 9, 20)
+    service.thread(ME, ref('Deals').thread) // read one
+    const [news] = service.subscriptions()
+    expect(news).toMatchObject({ address: 'news@shop.example', count: 3, read: 1, week: 2 })
+    expect(service.sender(ME, 'NEWS@shop.example')).toMatchObject({ count: 3, read: 1, week: 2, name: 'Shop News' })
+    expect(service.sender(ME, 'nobody@else.example')).toBeNull()
+    expect(service.list({ kind: 'from', account: ME, address: 'news@shop.example' }).map((r) => r.subject)).toEqual(['More deals', 'Deals', 'Old deals'])
+    service.act([ref('More deals')], { kind: 'archive' }) // archived, it's still theirs; in Trash, it isn't
+    service.act([ref('Old deals')], { kind: 'trash' })
+    expect(service.list({ kind: 'from', account: ME, address: 'news@shop.example' }).map((r) => r.subject)).toEqual(['More deals', 'Deals'])
+    expect(service.sender(ME, 'news@shop.example')).toMatchObject({ count: 2, read: 1 })
   })
 })
 
@@ -899,6 +938,18 @@ describe('sending', () => {
     expect(smtp.sent).toHaveLength(1)
   })
 
+  it('says plainly that nothing went when an attachment has gone from the profile, not to check Sent', async () => {
+    const draft = await write()
+    const withFile = service.addFileBytes(draft.id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    rmSync(join(folder, String(draft.id)), { recursive: true, force: true })
+    service.send(draft.id)
+    await later(11_000)
+    expect(smtp.sent).toEqual([])
+    expect(service.drafts()[0]).toMatchObject({ id: draft.id, state: 'failed' })
+    expect(service.drafts()[0]?.error).toContain('nothing was sent')
+    expect(withFile.files).toHaveLength(1)
+  })
+
   it('never retries once the message may have gone', async () => {
     const draft = await write()
     smtp.dropAfterData = true
@@ -1027,6 +1078,226 @@ describe('sending', () => {
     service.removeAccount(ME)
     expect(service.drafts()).toEqual([])
     expect(service.settings().identities).toEqual({})
+  })
+})
+
+describe('drafts on the server', () => {
+  beforeEach(signedIn)
+
+  const edit = { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Plans', html: 'Hello', text: 'Hello', quote: null }
+  const write = async (over: Partial<typeof edit> = {}): Promise<number> => {
+    const draft = await service.startDraft({ kind: 'new' })
+    service.saveDraft(draft.id, { ...edit, ...over })
+    return draft.id
+  }
+  const appends = (): string[] => gmail.commands.filter((c) => c.startsWith('APPEND'))
+  const onServer = (): string[] => gmail.drafts().map((raw) => /^Subject: (.*)$/m.exec(raw)?.[1]?.trim() ?? '')
+  /** As the phone does: a draft saved there, as its own message. */
+  const phone = (subject: string, text: string, headers: string[] = [], attachment?: { name: string; type: string; body: string }): number =>
+    gmail.draft(rawMail({ from: ME, to: 'Ada <ada@example.com>', subject, text, headers, attachment }), { arrived: new Date(clock - 60_000) })
+
+  it('goes up once it has been left alone a moment, not at every keystroke, and keeps out of the threads', async () => {
+    const id = await write()
+    await later(1000)
+    service.saveDraft(id, { ...edit, text: 'Hello there', html: 'Hello there' })
+    await later(3000) // still being written
+    expect(appends()).toEqual([])
+    await later(1500)
+    expect(appends()).toHaveLength(1)
+    expect(onServer()).toEqual(['Plans'])
+    expect(gmail.drafts()[0]).toContain('Hello there')
+    expect(gmail.draftBox.mails[0]?.flags).toEqual(['\\Draft', '\\Seen'])
+    await later(10_000)
+    expect(appends()).toHaveLength(1) // nothing changed since
+    // Gmail has it in All Mail as well, as a draft, which stays out of every list.
+    await service.syncAll()
+    expect(service.list({ kind: 'all' }).map((r) => r.subject)).not.toContain('Plans')
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+  })
+
+  it('replaces its copy when it changes, deleting the old one for good, and goes up within a minute however long the typing lasts', async () => {
+    const id = await write()
+    await later(5000)
+    for (let i = 0; i < 40; i++) {
+      service.saveDraft(id, { ...edit, text: `Hello ${i}`, html: `Hello ${i}` })
+      await later(2000)
+    }
+    expect(appends().length).toBeGreaterThanOrEqual(2) // the first, and one while the typing went on
+    await later(5000)
+    expect(gmail.drafts()).toHaveLength(1)
+    expect(gmail.drafts()[0]).toContain('Hello 39')
+    expect(gmail.box('[Gmail]/Trash').mails).toEqual([]) // moved there and deleted from there, not left for a month
+  })
+
+  it('leaves Drafts when it is sent, comes back with Undo, and is gone once it has gone', async () => {
+    const id = await write()
+    await later(5000)
+    expect(onServer()).toEqual(['Plans'])
+    service.send(id)
+    await later(1000)
+    expect(onServer()).toEqual([]) // on its way, so nothing else can send it too
+    service.unsend(id)
+    await later(5000)
+    expect(onServer()).toEqual(['Plans'])
+    service.send(id)
+    await later(11_000)
+    expect(smtp.sent).toHaveLength(1)
+    expect(onServer()).toEqual([])
+    expect(service.drafts()).toEqual([])
+  })
+
+  it('takes its copy away when it is thrown away, and waits for a connection to do it', async () => {
+    const id = await write()
+    await later(5000)
+    gmail.dropNextConnection = true
+    service.discardDraft(id)
+    await later(1000)
+    expect(onServer()).toEqual(['Plans']) // not reached
+    service = make() // and a restart meanwhile
+    await later(61_000)
+    expect(onServer()).toEqual([])
+  })
+
+  it('works offline, and catches up once the server can be reached', async () => {
+    gmail.dropNextConnection = true
+    const id = await write()
+    await later(5000)
+    expect(onServer()).toEqual([])
+    service.saveDraft(id, { ...edit, subject: 'Plans, again' })
+    await later(61_000)
+    expect(onServer()).toEqual(['Plans, again'])
+  })
+
+  it('takes nothing up that has nothing in it', async () => {
+    await service.startDraft({ kind: 'new' })
+    await later(70_000)
+    expect(appends()).toEqual([])
+  })
+
+  it('carries its attachments, as sending would', async () => {
+    const id = await write()
+    service.addFileBytes(id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    await later(5000)
+    expect(gmail.drafts()[0]).toContain('filename=plan.txt')
+    expect(gmail.drafts()[0]).toContain(Buffer.from('the plan').toString('base64'))
+  })
+
+  it('brings in a draft written on the phone, which can be carried on and sent here', async () => {
+    phone('From the phone', 'Count me in.\n\nOn Mon, Ada wrote:\n> Coming on Friday?', ['In-Reply-To: <friday@example.com>'], { name: 'map.txt', type: 'text/plain', body: 'turn left' })
+    await service.syncAll()
+    const [draft] = service.drafts()
+    expect(draft).toMatchObject({ subject: 'From the phone', to: '"Ada" <ada@example.com>', text: 'Count me in.', from: '', inReplyTo: '<friday@example.com>', state: 'draft' })
+    expect(draft?.quote).toMatchObject({ kind: 'reply', asIs: true, text: 'On Mon, Ada wrote:\n> Coming on Friday?' })
+    expect(draft?.files.map((f) => [f.name, f.size])).toEqual([['map.txt', 9]])
+    await service.syncAll()
+    expect(service.drafts()).toHaveLength(1) // read once
+    await later(70_000)
+    expect(appends()).toEqual([]) // unchanged here, so nothing goes back up
+    // Carried on here, it replaces the phone's copy, and goes as it was quoted.
+    service.saveDraft(draft?.id ?? 0, { ...edit, to: draft?.to ?? '', subject: 'From the phone', text: 'Count me in. Bringing cake.', html: 'Count me in. Bringing cake.', quote: draft?.quote ?? null })
+    await later(5000)
+    expect(gmail.drafts()).toHaveLength(1)
+    expect(gmail.drafts()[0]).toContain('Bringing cake')
+    service.send(draft?.id ?? 0)
+    await later(11_000)
+    expect(smtp.sent[0]?.raw).toContain('Bringing cake.')
+    expect(smtp.sent[0]?.raw).toContain('> Coming on Friday?')
+    expect(smtp.sent[0]?.raw).not.toContain('> > Coming') // quoted once, not twice
+    expect(smtp.sent[0]?.raw).toContain('filename=map.txt')
+    expect(onServer()).toEqual([])
+  })
+
+  it('takes the phone\'s version of a draft that was not changed here, and goes when the phone sends it', async () => {
+    const id = await write()
+    await later(5000)
+    const [ours] = gmail.draftBox.mails
+    gmail.remove(ours?.uid ?? 0, gmail.draftBox.path) // the phone saving it again: the old copy goes...
+    phone('Plans', 'Hello, from the bus') // ...and a new one comes
+    await service.syncAll()
+    expect(service.drafts().map((d) => d.text)).toEqual(['Hello, from the bus'])
+    expect(service.drafts()[0]?.id).not.toBe(id)
+    gmail.remove(gmail.draftBox.mails[0]?.uid ?? 0, gmail.draftBox.path) // sent from the phone
+    await service.syncAll()
+    expect(service.drafts()).toEqual([])
+  })
+
+  it('keeps both when a draft was changed here and on the phone, and keeps what was typed here when the phone threw it away', async () => {
+    const id = await write()
+    await later(5000)
+    service.saveDraft(id, { ...edit, text: 'Hello from the laptop', html: 'Hello from the laptop' })
+    gmail.remove(gmail.draftBox.mails[0]?.uid ?? 0, gmail.draftBox.path)
+    phone('Plans', 'Hello from the phone')
+    await service.syncAll()
+    expect(service.drafts().map((d) => d.text).sort()).toEqual(['Hello from the laptop', 'Hello from the phone'])
+    await later(5000)
+    expect(gmail.drafts().map((raw) => /Hello from the \w+/.exec(raw)?.[0]).sort()).toEqual(['Hello from the laptop', 'Hello from the phone'])
+    // Thrown away on the phone while it was being changed here: it stays, and goes up again.
+    const laptop = service.drafts().find((d) => d.text === 'Hello from the laptop')
+    service.saveDraft(laptop?.id ?? 0, { ...edit, text: 'Hello again', html: 'Hello again' })
+    const copy = gmail.draftBox.mails.find((m) => m.raw.toString().includes('Hello from the laptop'))
+    gmail.remove(copy?.uid ?? 0, gmail.draftBox.path)
+    await service.syncAll()
+    expect(service.drafts().map((d) => d.text)).toContain('Hello again')
+    await later(5000)
+    expect(gmail.drafts().some((raw) => raw.includes('Hello again'))).toBe(true)
+  })
+
+  it('leaves a draft that is open in a composer as it is, and settles it once it is let go', async () => {
+    const id = await write()
+    await later(5000)
+    service.holdDraft(id, true)
+    gmail.remove(gmail.draftBox.mails[0]?.uid ?? 0, gmail.draftBox.path)
+    await service.syncAll()
+    expect(service.drafts().map((d) => d.id)).toEqual([id])
+    service.holdDraft(id, false)
+    await service.syncAll()
+    expect(service.drafts()).toEqual([])
+  })
+
+  it('finds its copies again by Message-ID when the Drafts folder is renumbered', async () => {
+    const id = await write()
+    await later(5000)
+    gmail.draftBox.uidValidity = 9
+    await service.syncAll()
+    expect(service.drafts().map((d) => d.id)).toEqual([id]) // not brought in a second time
+    service.saveDraft(id, { ...edit, subject: 'Plans, renumbered' })
+    await later(5000)
+    expect(onServer()).toEqual(['Plans, renumbered'])
+  })
+
+  it('reads the Drafts folder without changing anything there', async () => {
+    phone('From the phone', 'Hi')
+    gmail.commands = []
+    await service.syncAll()
+    expect(service.drafts()).toHaveLength(1)
+    expect(gmail.writes()).toEqual([])
+    expect(gmail.commands.some((c) => c.startsWith('EXAMINE') && c.includes('[Gmail]/Drafts'))).toBe(true)
+  })
+
+  it('leaves a draft with more attached than could be sent from here on the server, and fetches it once', async () => {
+    phone('Huge', 'See attached', [], { name: 'big.bin', type: 'application/octet-stream', body: 'x'.repeat(20 * 1024 * 1024) })
+    await service.syncAll()
+    expect(service.drafts()).toEqual([])
+    const before = gmail.commands.length
+    await service.syncAll()
+    expect(gmail.commands.slice(before).filter((c) => /BODY\.PEEK\[\]/.test(c))).toEqual([]) // not downloaded again
+    expect(onServer()).toEqual(['Huge'])
+  })
+
+  it('leaves a draft saved before the keeping window began on the server', async () => {
+    gmail.draft(rawMail({ from: ME, subject: 'Ancient', text: 'Old' }), { arrived: new Date(clock - 400 * 86_400_000) })
+    await service.syncAll()
+    expect(service.drafts()).toEqual([])
+    expect(onServer()).toEqual(['Ancient'])
+  })
+
+  it('shows a message Gmail no longer has as a draft, as when the phone sends one it saved', async () => {
+    const uid = gmail.add(rawMail({ from: ME, to: 'ada@example.com', subject: 'Was a draft' }), { arrived: past(1), labels: ['\\Draft'], flags: ['\\Seen'] })
+    await service.syncAll()
+    expect(service.list({ kind: 'all' }).map((r) => r.subject)).not.toContain('Was a draft')
+    gmail.change(uid, ['\\Sent'], ['\\Seen'])
+    await service.syncAll()
+    expect(service.list({ kind: 'sent' }).map((r) => r.subject)).toContain('Was a draft')
   })
 })
 
@@ -1426,6 +1697,43 @@ describe('settings', () => {
     service.saveProfile({ imagesFrom: ['News@Shop.example', 'news@shop.example', 'not an address'] })
     expect(service.settings().imagesFrom).toEqual(['news@shop.example'])
   })
+
+  it('changes only what a save names, so a page that is behind puts nothing back', () => {
+    service.saveBatch({ live: false, times: ['09:00'], vip: ['boss@work.example'], earlyPerDay: 2 })
+    service.saveBatch({ times: ['09:00', '17:00'] }) // from a page that never heard of the boss
+    expect(service.settings().batch).toEqual({ live: false, times: ['09:00', '17:00'], vip: ['boss@work.example'], earlyPerDay: 2 })
+    service.saveSummary({ senders: ['news@shop.example'], every: 'weekly', day: 3, time: '18:00', chosen: true })
+    service.saveSummary({ time: '07:30' })
+    expect(service.settings().summary).toEqual({ senders: ['news@shop.example'], every: 'weekly', day: 3, time: '07:30', chosen: true })
+  })
+
+  it('puts senders into a list one at a time, with the rest of it as it is then', () => {
+    for (const list of ['muted', 'blocked', 'imagesFrom'] as const) {
+      service.editSenders(list, ['Ada@Example.com'], true)
+      service.editSenders(list, ['@shop.example', 'not an address'], true)
+      service.editSenders(list, ['ada@example.com'], true) // already there
+      expect(service.settings()[list]).toEqual(['ada@example.com', '@shop.example'])
+      service.editSenders(list, ['ADA@example.com'], false)
+      expect(service.settings()[list]).toEqual(['@shop.example'])
+    }
+    service.editSenders('vip', ['ada@example.com'], true)
+    service.editSenders('summary', ['news@shop.example'], true)
+    service.editSenders('summary', ['letters@post.example'], true)
+    expect(service.settings().summary.senders).toEqual(['news@shop.example', 'letters@post.example'])
+    expect(service.settings().batch.vip).toEqual(['ada@example.com'])
+    service.editSenders('summary', ['ada@example.com'], true) // the Summary and straight through pull opposite ways
+    expect(service.settings().batch.vip).toEqual([])
+  })
+
+  it('saves one account\'s identity without touching another\'s, and never one for an account that has gone', async () => {
+    await signedIn()
+    const mine = { name: 'Me', signature: 'Regards', aliases: [], color: '', notify: true }
+    service.saveProfile({ identities: { [ME]: mine } })
+    service.saveProfile({ identities: { 'gone@example.com': { ...mine, name: 'Gone' } } })
+    expect(service.settings().identities).toEqual({ [ME]: mine })
+    service.saveProfile({ theme: 'dark' })
+    expect(service.settings().identities).toEqual({ [ME]: mine })
+  })
 })
 
 describe('the first sync', () => {
@@ -1512,6 +1820,15 @@ describe('new mail as it lands', () => {
     told()
     await new Promise((resolve) => setTimeout(resolve, WATCH_SETTLE_MS + 400))
     await eventually(() => expect(passes() - before).toBe(2))
+    service.stopWatching()
+  })
+
+  it('closes a watch that couldn\'t open the inbox, so failed tries don\'t pile up connections', async () => {
+    await signedIn()
+    gmail.refuseOpen.add('INBOX')
+    service.watchAll()
+    await eventually(() => expect(gmail.commands.filter((c) => c.startsWith('EXAMINE "INBOX"') || c === 'EXAMINE INBOX')).toHaveLength(1))
+    await eventually(() => expect(gmail.connections).toBe(0)) // Gmail allows fifteen, and this tried every minute
     service.stopWatching()
   })
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   Avatars, bimiLogo, gravatarHash, isFreeMail, MAX_RASTER, MAX_SVG, organization, sniff, webSources, type Picture, type PictureSources
 } from '@main/avatars'
@@ -249,6 +249,47 @@ describe('keeping faces', () => {
       expect(second.faces(['mai@example.com', 'nobody@example.org'], true)['mai@example.com']).toMatchObject({ logo: false })
       await second.idle()
       expect(sources.asked).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads and deletes only pictures it named itself, whatever its index on disk says', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xrnmail-avatars-'))
+    const outside = mkdtempSync(join(tmpdir(), 'xrnmail-outside-'))
+    try {
+      writeFileSync(join(outside, 'secret.png'), PNG)
+      const damaged = {
+        'p:mai@example.com': { at: 0, until: 10 * DAY, file: `../${basename(outside)}/secret.png`, type: 'image/png' },
+        'p:bo@example.com': { at: 0, until: 10 * DAY, file: '0123456789abcdef0123456789abcdef.png', type: 'text/html' }
+      }
+      writeFileSync(join(dir, 'index.json'), JSON.stringify(damaged))
+      const sources = made({ 'mai@example.com': png })
+      const avatars = new Avatars({ dir, sources, now: () => DAY })
+      expect(avatars.faces(['mai@example.com', 'bo@example.com'], false)).toEqual({ 'mai@example.com': null, 'bo@example.com': null })
+      avatars.want(['mai@example.com']) // what replaces it would have deleted the old file
+      await avatars.idle()
+      expect(readFileSync(join(outside, 'secret.png'))).toEqual(PNG)
+      expect(sources.asked).toEqual(['photo:mai@example.com']) // and it was looked up as unknown
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('looks a face up again when its picture has gone from the folder, instead of waiting out its month', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'xrnmail-avatars-'))
+    try {
+      const first = new Avatars({ dir, sources: made({ 'mai@example.com': png }), now: () => 0 })
+      first.want(['mai@example.com'])
+      await first.idle()
+      for (const file of readdirSync(dir)) if (file.endsWith('.png')) rmSync(join(dir, file))
+      const sources = made({ 'mai@example.com': png })
+      const second = new Avatars({ dir, sources, now: () => DAY })
+      expect(second.faces(['mai@example.com'], true)['mai@example.com']).toBeNull()
+      await second.idle()
+      expect(sources.asked).toEqual(['photo:mai@example.com'])
+      expect(second.faces(['mai@example.com'], false)['mai@example.com']).toMatchObject({ logo: false })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -218,10 +218,15 @@ export interface Subscription {
   account: string
   name: string
   address: string
+  /** Messages from them kept here. */
   count: number
   latest: number
   /** The newest message, which holds the way out. */
   message: number
+  /** Of those, the ones read, here or anywhere else: Edison's open rate is this over [count]. */
+  read: number
+  /** Of those, the ones that came in the last seven days. */
+  week: number
 }
 
 export interface ThreadRef {
@@ -322,6 +327,8 @@ export type ListQuery =
   | { kind: 'label'; account: string; label: string }
   | { kind: 'search'; text: string }
   | { kind: 'assistant'; section: AssistantSection }
+  /** A sender's page: their threads on one account. */
+  | { kind: 'from'; account: string; address: string }
 
 /** A change to mail in Gmail, made because the person asked for it. */
 export type MailAction =
@@ -343,6 +350,8 @@ export interface Quote {
   intro: string
   html: string | null
   text: string
+  /** Quoted already, by the device that wrote the draft this came in with, so it goes as it is. */
+  asIs?: boolean
 }
 
 export type DraftState = 'draft' | 'queued' | 'sending' | 'failed'
@@ -382,6 +391,13 @@ export type UnsubscribeResult = { kind: 'done' | 'opened' } | { kind: 'draft'; d
 
 export type Rsvp = 'ACCEPTED' | 'TENTATIVE' | 'DECLINED'
 
+/** The lists of senders that are added to and taken from one at a time: straight through, the
+ *  Summary, muted, blocked, and those whose pictures load by themselves. */
+export type SenderList = 'vip' | 'summary' | 'muted' | 'blocked' | 'imagesFrom'
+export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', 'blocked', 'imagesFrom']
+
+/** Only what's named changes. Each account named in `identities` has its identity replaced, and the
+ *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'undoSeconds' | 'theme' | 'focused' | 'layout' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
@@ -415,9 +431,13 @@ export interface MailApi {
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
   settings(): Promise<Settings>
-  saveBatch(batch: BatchSettings): Promise<void>
-  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the batches. */
-  saveSummary(summary: SummarySettings): Promise<void>
+  /** Only what's named changes, so a page that's behind can't undo what it hasn't heard of. */
+  saveBatch(batch: Partial<BatchSettings>): Promise<void>
+  /** Who's in the Summary and when it lands. What it holds moves to the new time, or out to the
+   *  batches. Only what's named changes. */
+  saveSummary(summary: Partial<SummarySettings>): Promise<void>
+  /** Senders into one of the lists of them, or out of it, with the rest of the list as it is then. */
+  editSenders(list: SenderList, addresses: string[], on: boolean): Promise<void>
   /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
   summarySenders(): Promise<Subscription[]>
   saveBackfill(days: number): Promise<void>
@@ -440,6 +460,8 @@ export interface MailApi {
   subscriptions(): Promise<Subscription[]>
   /** Senders already unsubscribed from. Ones with no mail left here come with a count of 0 and no account. */
   unsubscribed(): Promise<Subscription[]>
+  /** One sender on one account, for their page; null when nothing from them is here. */
+  sender(account: string, address: string): Promise<Subscription | null>
   /** Everything from a sender goes to Trash. Returns what undoes it. */
   clearSender(account: string, address: string): Promise<number>
   /** Keeps a sender on one side of the inbox, for what they've sent and will send. */
@@ -478,6 +500,9 @@ export interface MailApi {
   onLeaving(listener: () => void): () => void
   startDraft(start: DraftStart): Promise<Draft>
   saveDraft(id: number, edit: DraftEdit): Promise<void>
+  /** A composer has this draft open, or has let it go. While one has, what the server says about the
+   *  draft leaves it as it is here. */
+  holdDraft(id: number, on: boolean): Promise<void>
   discardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>

@@ -192,6 +192,12 @@ export function Composer(props: {
 
   useEffect(soon, [account, from, to, cc, bcc, subject])
 
+  // While it's open here, what the server says about the draft leaves it as it is.
+  useEffect(() => {
+    void window.mail.holdDraft(draft.id, true)
+    return () => void window.mail.holdDraft(draft.id, false)
+  }, [draft.id])
+
   useEffect(() => () => {
     if (timer.current) void save()
   }, [save])

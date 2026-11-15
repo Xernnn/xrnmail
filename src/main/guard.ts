@@ -75,3 +75,13 @@ export function handle(channel: string, listener: (...args: never[]) => unknown)
     return (listener as (...values: unknown[]) => unknown)(...args)
   })
 }
+
+/** The same, for a request that has to know which page asked: what it holds is let go of when that
+ *  page goes, however it goes. */
+export function handleFrom(channel: string, listener: (sender: WebContents, ...args: never[]) => unknown): void {
+  ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+    const url = event.senderFrame?.url ?? ''
+    if (!isAppUrl(url)) throw new Error(`Refused ${channel}`)
+    return (listener as (sender: WebContents, ...values: unknown[]) => unknown)(event.sender, ...args)
+  })
+}

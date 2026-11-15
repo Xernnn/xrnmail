@@ -5,18 +5,18 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:f
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, Server, SummarySettings, SwipeAction, Template, ThreadRef
+  Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
-import { QUICK_SLOTS } from '@shared/types'
+import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
-import { allowImages, devServerUrl, handle, lockDownContents, lockDownNetwork } from './guard'
+import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
@@ -195,31 +195,42 @@ function listQuery(value: unknown): ListQuery {
   }
   if (q['kind'] === 'label') return { kind: 'label', account: text(q['account']), label: text(q['label']) }
   if (q['kind'] === 'search') return { kind: 'search', text: text(q['text'], 500) }
+  if (q['kind'] === 'from') return { kind: 'from', account: text(q['account'], 320), address: text(q['address'], 320) }
   throw new Error('Bad request')
 }
 
-function batchSettings(value: unknown): BatchSettings {
+const texts = (value: unknown, max: number, each: number): string[] => {
+  if (!Array.isArray(value) || value.length > max) throw new Error('Bad request')
+  return value.map((item) => text(item, each))
+}
+
+/** Only what's there: a change names what it changes, and the rest stays as saved. */
+function batchSettings(value: unknown): Partial<BatchSettings> {
   const b = (value ?? {}) as Record<string, unknown>
-  if (!Array.isArray(b['times']) || !Array.isArray(b['vip'])) throw new Error('Bad request')
-  return {
-    live: b['live'] === true,
-    times: b['times'].map((t) => text(t, 8)),
-    vip: b['vip'].map((v) => text(v, 320)),
-    earlyPerDay: number(b['earlyPerDay'])
-  }
+  const patch: Partial<BatchSettings> = {}
+  if (b['live'] !== undefined) patch.live = b['live'] === true
+  if (b['times'] !== undefined) patch.times = texts(b['times'], 50, 8)
+  if (b['vip'] !== undefined) patch.vip = texts(b['vip'], 500, 320)
+  if (b['earlyPerDay'] !== undefined) patch.earlyPerDay = number(b['earlyPerDay'])
+  return patch
 }
 
 /** The main process decides what's allowed: `saveSummary` cleans the rest. */
-function summarySettings(value: unknown): SummarySettings {
+function summarySettings(value: unknown): Partial<SummarySettings> {
   const s = (value ?? {}) as Record<string, unknown>
-  if (!Array.isArray(s['senders']) || s['senders'].length > 500) throw new Error('Bad request')
-  return {
-    senders: s['senders'].map((v) => text(v, 320)),
-    every: s['every'] === 'weekly' ? 'weekly' : 'daily',
-    time: text(s['time'], 8),
-    day: number(s['day']),
-    chosen: s['chosen'] === true
-  }
+  const patch: Partial<SummarySettings> = {}
+  if (s['senders'] !== undefined) patch.senders = texts(s['senders'], 500, 320)
+  if (s['every'] !== undefined) patch.every = s['every'] === 'weekly' ? 'weekly' : 'daily'
+  if (s['time'] !== undefined) patch.time = text(s['time'], 8)
+  if (s['day'] !== undefined) patch.day = number(s['day'])
+  if (s['chosen'] !== undefined) patch.chosen = s['chosen'] === true
+  return patch
+}
+
+function senderList(value: unknown): SenderList {
+  const found = SENDER_LISTS.find((name) => name === value)
+  if (!found) throw new Error('Bad request')
+  return found
 }
 
 const SIMPLE_ACTIONS = ['archive', 'inbox', 'trash', 'spam', 'read', 'unread', 'star', 'unstar', 'forever'] as const
@@ -249,7 +260,8 @@ function quote(value: unknown): Quote | null {
     kind: q['kind'],
     intro: text(q['intro'], 4000),
     html: q['html'] === null ? null : text(q['html'], MAX_BODY),
-    text: text(q['text'], MAX_BODY)
+    text: text(q['text'], MAX_BODY),
+    ...(q['asIs'] === true ? { asIs: true } : {})
   }
 }
 
@@ -388,6 +400,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))
   handle('saveSummary', (summary: unknown) => service.saveSummary(summarySettings(summary)))
   handle('summarySenders', () => service.summarySenders())
+  handle('editSenders', (name: unknown, addresses: unknown, on: unknown) => service.editSenders(senderList(name), texts(addresses, 500, 320), on === true))
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())
@@ -407,6 +420,7 @@ function register(service: MailService, avatars: Avatars): void {
   })
   handle('subscriptions', () => service.subscriptions())
   handle('unsubscribed', () => service.unsubscribed())
+  handle('sender', (account: unknown, address: unknown) => service.sender(text(account, 320), text(address, 320)))
   handle('clearSender', (account: unknown, address: unknown) => service.clearSender(text(account, 320), text(address, 320)))
   handle('setFocus', (address: unknown, focused: unknown) => service.setFocus(text(address, 320), focused === true))
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))
@@ -479,6 +493,23 @@ function register(service: MailService, avatars: Avatars): void {
   handle('createFolder', (account: unknown, name: unknown) => service.createFolder(text(account, 320), text(name, 500)))
   handle('startDraft', (start: unknown) => service.startDraft(draftStart(start)))
   handle('saveDraft', (id: unknown, edit: unknown) => service.saveDraft(number(id), draftEdit(edit)))
+  // A page that goes, crashed or closed, lets go of the drafts its composers had open.
+  const held = new Map<number, number[]>()
+  handleFrom('holdDraft', (sender: Electron.WebContents, id: unknown, on: unknown) => {
+    const draft = number(id)
+    if (!held.has(sender.id)) {
+      held.set(sender.id, [])
+      sender.once('destroyed', () => {
+        for (const each of held.get(sender.id) ?? []) service.holdDraft(each, false)
+        held.delete(sender.id)
+      })
+    }
+    const mine = held.get(sender.id) ?? []
+    if (on === true) mine.push(draft)
+    else if (mine.includes(draft)) mine.splice(mine.indexOf(draft), 1)
+    else return
+    service.holdDraft(draft, on === true)
+  })
   handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }

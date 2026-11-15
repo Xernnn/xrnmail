@@ -2,7 +2,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 
 /**
  * A small IMAP server, so the real client library runs against something real over a real socket.
- * By default it speaks Gmail's dialect: everything in All Mail, with labels, and Trash and Spam apart.
+ * By default it speaks Gmail's dialect: everything in All Mail, with labels, and Trash, Spam and Drafts apart.
  * With `plain` it's any other mail service: real folders, and none of Gmail's extensions. The options
  * below turn off what servers differ on. `commands` keeps everything it was sent, which is how the
  * tests prove xrnmail never asks for a change.
@@ -44,6 +44,8 @@ export interface FakeMail {
   thread: bigint
   gmailId: bigint
   modseq: number
+  /** On Gmail, a draft is in All Mail too, labelled \\Draft: its UID there, which goes when it does. */
+  mirror?: number
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -88,6 +90,8 @@ export class FakeGmail {
   refuseWrites = false
   /** Folders whose SEARCH is answered NO, as Gmail does when it's short of time. */
   refuseSearch = new Set<string>()
+  /** Folders, by the name they're asked for by, that won't be opened just now. */
+  refuseOpen = new Set<string>()
   /** What was moved out of All Mail, by the folder it went to. */
   moved: { uid: number; to: string }[] = []
   /** Gmail's documentation shows \\Inbox bare, and real sessions show it quoted. */
@@ -111,7 +115,7 @@ export class FakeGmail {
           ...(options.noArchiveFolder ? [] : [box('Archive', '\\Archive')]),
           ...(options.folders ?? []).map((path) => box(path))
         ]
-      : [box('[Gmail]/All Mail', '\\All'), box('[Gmail]/Trash', '\\Trash'), box('[Gmail]/Spam', '\\Junk')]
+      : [box('[Gmail]/All Mail', '\\All'), box('[Gmail]/Trash', '\\Trash'), box('[Gmail]/Spam', '\\Junk'), box('[Gmail]/Drafts', '\\Drafts')]
   }
 
   private get home(): FakeBox {
@@ -133,6 +137,21 @@ export class FakeGmail {
 
   set uidValidity(value: number) {
     this.home.uidValidity = value
+  }
+
+  /** Where drafts are kept: [Gmail]/Drafts, or Drafts. */
+  get draftBox(): FakeBox {
+    return (this.boxes.find((b) => b.flag === '\\Drafts') ?? this.box('Drafts'))
+  }
+
+  /** As another device saving a draft. */
+  draft(raw: string | Buffer, options: Partial<Pick<FakeMail, 'arrived' | 'thread'>> = {}): number {
+    return this.add(raw, { ...options, box: this.draftBox.path, flags: ['\\Draft', '\\Seen'] })
+  }
+
+  /** The drafts kept on the server now, as their text. */
+  drafts(): string[] {
+    return this.draftBox.mails.map((m) => m.raw.toString('utf8'))
   }
 
   box(path: string): FakeBox {
@@ -169,7 +188,16 @@ export class FakeGmail {
       modseq: this.modseq
     })
     this.tellIdlers(box, `* ${box.mails.length} EXISTS`)
+    if (!this.options.plain && box.flag === '\\Drafts') {
+      const saved = box.mails.at(-1) as FakeMail
+      saved.mirror = this.add(saved.raw, { arrived: saved.arrived, labels: ['\\Draft'], flags: saved.flags, thread: saved.thread })
+    }
     return uid
+  }
+
+  /** A mail leaving its folder takes its All Mail copy with it, as a Gmail draft does. */
+  private gone(mail: FakeMail): void {
+    if (mail.mirror !== undefined) this.remove(mail.mirror)
   }
 
   /** As another device changing a message: whoever waits in IDLE on its folder hears the new flags. */
@@ -188,7 +216,9 @@ export class FakeGmail {
   remove(uid: number, path?: string): void {
     const box = path ? this.box(path) : this.home
     const index = box.mails.findIndex((m) => m.uid === uid)
+    const mail = box.mails[index]
     box.mails = box.mails.filter((m) => m.uid !== uid)
+    if (mail) this.gone(mail)
     this.modseq++
     if (index >= 0) this.tellIdlers(box, `* ${index + 1} EXPUNGE`)
   }
@@ -322,6 +352,7 @@ export class FakeGmail {
         socket.write(`* ${full} (\\Sent \\HasNoChildren) "/" "[Gmail]/Sent Mail"\r\n`)
         socket.write(`* ${full} (\\Trash \\HasNoChildren) "/" "[Gmail]/Trash"\r\n`)
         socket.write(`* ${full} (\\Junk \\HasNoChildren) "/" "[Gmail]/Spam"\r\n`)
+        socket.write(`* ${full} (\\Drafts \\HasNoChildren) "/" "[Gmail]/Drafts"\r\n`)
         socket.write(`* ${full} (\\HasChildren \\Noselect) "/" "[Gmail]"\r\n`)
         socket.write(`* ${full} (\\Flagged \\HasNoChildren) "/" "[Gmail]/Starred"\r\n`)
         for (const label of this.labels) socket.write(`* ${full} (\\HasNoChildren) "/" ${quoted(label)}\r\n`)
@@ -333,6 +364,7 @@ export class FakeGmail {
       case 'SELECT': {
         const name = /"([^"]+)"|(\S+)$/.exec(rest.slice(full.length + 1).replace(/ \(.*\)$/, ''))
         const path = name?.[1] ?? name?.[2] ?? ''
+        if (this.refuseOpen.has(path)) return void socket.write(`${tag} NO [UNAVAILABLE] Try again later\r\n`)
         const box = path === this.allMail || (path === 'INBOX' && !this.options.plain) ? this.home : this.boxes.find((b) => b.path === path)
         if (!box) return void socket.write(`${tag} NO no such mailbox\r\n`)
         const session = socket as Socket & { readOnly?: boolean; selected?: FakeBox }
@@ -357,15 +389,18 @@ export class FakeGmail {
         const path = /^APPEND "?([^"\s]+)"?/.exec(rest)?.[1] ?? ''
         if (!this.mayWrite(socket, tag)) return undefined
         const box = this.box(path)
-        const uid = this.add(Buffer.from(literal ?? '', 'latin1'), { box: path, flags: /\\Seen/.test(rest) ? ['\\Seen'] : [] })
+        const flags = /\(([^)]*)\)/.exec(rest)?.[1]?.split(' ').filter((flag) => flag.startsWith('\\')) ?? []
+        const uid = this.add(Buffer.from(literal ?? '', 'latin1'), { box: path, flags })
         return ok(`[APPENDUID ${box.uidValidity} ${uid}] APPEND done`)
       }
       case 'EXPUNGE':
       case 'UID EXPUNGE': {
         const box = this.selected(socket)
         for (let index = box.mails.length - 1; index >= 0; index--) {
-          if (box.mails[index]?.flags.includes('\\Deleted')) {
+          const mail = box.mails[index]
+          if (mail?.flags.includes('\\Deleted')) {
             box.mails.splice(index, 1)
+            this.gone(mail)
             socket.write(`* ${index + 1} EXPUNGE\r\n`)
           }
         }
@@ -455,6 +490,7 @@ export class FakeGmail {
       }
       if (copy) continue
       from.mails.splice(index, 1)
+      this.gone(mail)
       this.moved.push({ uid: mail.uid, to })
       socket.write(`* ${index + 1} EXPUNGE\r\n`)
     }
@@ -471,9 +507,13 @@ export class FakeGmail {
     const since = /SINCE (\S+)/i.exec(rest)
     const from = since?.[1] ? parseSearchDate(since[1].replace(/"/g, '')) : null
     const wanted = /HEADER "?MESSAGE-ID"? "?([^"]+)"?/i.exec(rest)?.[1]
-    const hits = this.selected(socket).mails
+    const box = this.selected(socket)
+    const uids = /\bUID (\S+)/i.exec(rest.replace(/^UID SEARCH /i, ''))?.[1]
+    const top = box.mails.at(-1)?.uid ?? 0
+    const hits = box.mails
       .filter((m) => !from || m.arrived >= from)
       .filter((m) => !wanted || m.raw.toString('latin1').includes(wanted))
+      .filter((m) => !uids || inRange(m.uid, uids, top))
       .map((m) => m.uid)
     socket.write(`* SEARCH ${hits.join(' ')}\r\n${tag} OK SEARCH done\r\n`)
   }

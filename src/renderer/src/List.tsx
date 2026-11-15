@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode, type WheelEvent } from 'react'
 import { plainName } from '@shared/names'
+import { openRate, sortSenders, type SenderOrder } from '@shared/senders'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
@@ -203,27 +204,51 @@ export function DraftRow(props: { draft: Draft; account?: AccountView; open(): v
   )
 }
 
+const keyOfSender = (item: Subscription): string => `${item.account}/${item.address}`
+
+const ORDERS: [SenderOrder, string][] = [['most', 'Most mail'], ['read', 'Open rate'], ['name', 'Name']]
+
 /** Everyone mailing you in bulk, biggest first, with the way out and the Summary next to each; or, on
- *  the other sides, the ones already left, and the ones whose mail waits for the Summary. */
+ *  the other sides, the ones already left, and the ones whose mail waits for the Summary. Each row
+ *  says how much of a sender's mail gets read, and opens their page. Several can be picked, by their
+ *  tick boxes or with Ctrl or Shift, and put into the Summary or taken out of it together, as
+ *  Edison's bar at the foot of the page does. */
 export function Subscriptions(props: {
   version: number
   side: 'subscribed' | 'left' | 'summary'
   unsubscribe(message: number): void
   clear(item: Subscription): void
   /** Into the Summary, or out of it. */
-  summarize(item: Subscription, on: boolean): void
+  summarize(items: Subscription[], on: boolean): void
+  /** A sender's own page. */
+  open(item: Subscription): void
   /** What sits over the list on its side. */
   top?: ReactNode
+  /** The accounts, to show one's alone when there are several. */
+  accounts: AccountView[]
 }): ReactNode {
   const { side } = props
-  const [items, setItems] = useState<Subscription[] | null>(null)
+  const [found, setItems] = useState<Subscription[] | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [order, setOrder] = useState<SenderOrder>('most')
+  const [account, setAccount] = useState('')
   useEffect(() => {
     let current = true
     const asked = side === 'left' ? window.mail.unsubscribed() : side === 'summary' ? window.mail.summarySenders() : window.mail.subscriptions()
     void asked.then((found) => { if (current) setItems(found) })
     return () => { current = false }
   }, [props.version, side])
-  if (items === null) return props.top ?? null
+  useEffect(() => setPicked(new Set()), [side])
+  if (found === null) return props.top ?? null
+  // Senders with nothing here have no account, and stay in every account's list.
+  const items = sortSenders(found.filter((item) => !account || !item.account || item.account === account), order)
+  // Only what's still listed can be picked: one taken into the Summary drops off the list.
+  const chosen = items.filter((item) => picked.has(keyOfSender(item)))
+  const pick = (item: Subscription): void => setPicked((now) => {
+    const next = new Set(now)
+    if (!next.delete(keyOfSender(item))) next.add(keyOfSender(item))
+    return next
+  })
   const empty = items.length === 0 && (
     side === 'left' ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
       : side === 'summary' ? <Empty icon={Newspaper} title="Nobody in your Summary" note="Add senders from Subscribed, and their mail comes together at the time you choose." />
@@ -231,29 +256,122 @@ export function Subscriptions(props: {
   )
   const count = (item: Subscription): string =>
     item.count === 0 ? 'Nothing from them is left here' : `${item.count === 1 ? '1 message' : `${item.count} messages`} · ${shortTime(item.latest)}`
+  const together = (on: boolean): void => {
+    props.summarize(chosen, on)
+    setPicked(new Set())
+  }
   return (
     <>
       {props.top}
+      {found.length > 1 && (
+        <div className="subscription-tools">
+          <label className="inline">
+            Sort by
+            <select aria-label="Sort by" value={order} onChange={(e) => setOrder(e.target.value as SenderOrder)}>
+              {ORDERS.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
+            </select>
+          </label>
+          {props.accounts.length > 1 && (
+            <label className="inline">
+              Account
+              <select aria-label="Account" value={account} onChange={(e) => setAccount(e.target.value)}>
+                <option value="">All</option>
+                {props.accounts.map((a) => <option key={a.email} value={a.email}>{a.email}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
       {empty}
-      {items.map((item) => (
-        <div className="subscription" key={`${item.account}/${item.address}`}>
-          <Avatar name={item.name} address={item.address} size={44} lookUp />
-          <div className="grow">
-            <strong>{item.name || item.address}</strong>
-            <div className="muted note">{item.address}</div>
-            <div className="muted note">{count(item)}</div>
-            <div className="subscription-links">
-              {side === 'subscribed' && <button className="link" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
-              {side === 'subscribed' && <button className="link" aria-label={`Add ${item.address} to Summary`} onClick={() => props.summarize(item, true)}>Add to Summary</button>}
-              {side === 'summary' && <button className="link" aria-label={`Remove ${item.address} from Summary`} onClick={() => props.summarize(item, false)}>Remove from Summary</button>}
+      {items.map((item) => {
+        const key = keyOfSender(item)
+        const name = item.name || item.address
+        return (
+          <div className={picked.has(key) ? 'subscription picked' : 'subscription'} key={key}>
+            {side !== 'left' && (
+              <input type="checkbox" className={chosen.length > 0 ? 'pick shown' : 'pick'} aria-label={`Select ${item.address}`} checked={picked.has(key)} onChange={() => pick(item)} />
+            )}
+            <Avatar name={item.name} address={item.address} size={44} lookUp />
+            <div className="grow">
+              {item.count > 0 && item.account ? (
+                <button className="subscription-open" aria-label={`Open ${name}`}
+                  onClick={(e) => (e.ctrlKey || e.metaKey || e.shiftKey) && side !== 'left' ? pick(item) : props.open(item)}>
+                  <strong>{name}</strong>
+                </button>
+              ) : <strong>{name}</strong>}
+              <div className="muted note">{item.address}</div>
+              <div className="muted note">{count(item)}</div>
+              <div className="subscription-links">
+                {side === 'subscribed' && <button className="link" aria-label={`Unsubscribe from ${item.address}`} onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
+                {side === 'subscribed' && <button className="link" aria-label={`Add ${item.address} to Summary`} onClick={() => props.summarize([item], true)}>Add to Summary</button>}
+                {side === 'summary' && <button className="link" aria-label={`Remove ${item.address} from Summary`} onClick={() => props.summarize([item], false)}>Remove from Summary</button>}
+              </div>
+            </div>
+            <div className="subscription-actions">
+              {item.count > 0 && <span className="open-rate" title={`${item.read} of ${item.count} read`}>{openRate(item)}%</span>}
+              {item.count > 0 && <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>}
             </div>
           </div>
-          <div className="subscription-actions">
-            {item.count > 0 && <button className="pill danger" aria-label={`Delete all from ${item.address}`} onClick={() => props.clear(item)}>Delete all</button>}
+        )
+      })}
+      {chosen.length > 0 && <div className="bulk-room" aria-hidden="true" />}
+      {chosen.length > 0 && (
+        <div className="bulk" role="toolbar" aria-label="Selected senders">
+          <div className="bulk-top">
+            <strong className="grow">{chosen.length} selected</strong>
+            <button className="bulk-pill" onClick={() => setPicked(new Set(items.filter((item) => item.count > 0 || side === 'summary').map(keyOfSender)))}>Select All ({items.length})</button>
+            <button className="bulk-pill" onClick={() => setPicked(new Set())}>Cancel</button>
+          </div>
+          <div className="bulk-tools">
+            {side === 'subscribed' && <button className="bulk-action" onClick={() => together(true)}><Newspaper size={16} aria-hidden="true" /> Add to Summary</button>}
+            {side === 'summary' && <button className="bulk-action" onClick={() => together(false)}><Newspaper size={16} aria-hidden="true" /> Remove from Summary</button>}
           </div>
         </div>
-      ))}
+      )}
     </>
+  )
+}
+
+/** Edison's page for one sender: how much they send, how much of it is read, and what to do about
+ *  them. Their threads are the list under it. */
+export function SenderCard(props: {
+  item: Subscription
+  /** Whose mail waits for the Summary. */
+  inSummary: boolean
+  /** Left behind already. */
+  left: boolean
+  back(): void
+  unsubscribe(message: number): void
+  clear(item: Subscription): void
+  summarize(items: Subscription[], on: boolean): void
+}): ReactNode {
+  const { item } = props
+  const facts: [string, string][] = [
+    [String(item.count), item.count === 1 ? 'email here' : 'emails here'],
+    [String(item.week), 'in the last week'],
+    [`${openRate(item)}%`, 'read']
+  ]
+  return (
+    <div className="sender-card">
+      <button className="link sender-back" onClick={props.back}>‹ Subscriptions</button>
+      <div className="sender-who">
+        <Avatar name={item.name} address={item.address} size={56} lookUp />
+        <div className="grow">
+          <strong>{item.name || item.address}</strong>
+          <div className="muted note">{item.address}</div>
+        </div>
+      </div>
+      <dl className="sender-facts" aria-label={`How ${item.name || item.address} sends`}>
+        {facts.map(([value, what]) => <div key={what}><dt>{value}</dt><dd>{what}</dd></div>)}
+      </dl>
+      <div className="sender-actions">
+        {!props.left && <button className="pill" onClick={() => props.unsubscribe(item.message)}>Unsubscribe</button>}
+        {props.inSummary
+          ? <button className="pill" onClick={() => props.summarize([item], false)}>Remove from Summary</button>
+          : <button className="pill" onClick={() => props.summarize([item], true)}>Add to Summary</button>}
+        <button className="pill danger" onClick={() => props.clear(item)}>Delete all</button>
+      </div>
+    </div>
   )
 }
 

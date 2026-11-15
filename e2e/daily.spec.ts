@@ -105,6 +105,42 @@ test('a draft survives closing, and a restart of the page', async () => {
   await expect(page.getByText('Half finished')).toHaveCount(0)
 })
 
+test('drafts are kept in Gmail\'s Drafts: one written here goes up, one written on the phone comes in, and either goes when it is sent', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  const subjects = (): string[] => gmail.drafts().map((raw) => /^Subject: (.*)$/m.exec(raw)?.[1]?.trim() ?? '')
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Subject').fill('Half finished')
+  await box.getByLabel('Message').fill('Some words')
+  await box.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByText('Saved to Drafts')).toBeVisible()
+  await expect.poll(subjects, LONG).toEqual(['Half finished'])
+  expect(gmail.drafts()[0]).toContain('Some words')
+
+  // Written on the phone: it's in Drafts here after the next sync, and goes from here.
+  gmail.draft(rawMail({ from: ME, to: 'Bo <bo@example.com>', subject: 'From the phone', text: 'Count me in.\n\nOn Mon, Bo wrote:\n> Friday?' }), { arrived: earlier(1) })
+  await page.getByRole('button', { name: /^Sync/ }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('From the phone').click()
+  await expect(composer(page).getByLabel('Message')).toHaveText('Count me in.')
+  await expect(composer(page).getByRole('button', { name: 'Remove bo@example.com' })).toBeVisible()
+  await composer(page).getByLabel('Message').pressSequentially(' See you.')
+  await composer(page).getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Count me in. See you.')
+  expect(smtp.sent[0]?.raw).toContain('> Friday?')
+  await expect.poll(subjects, LONG).toEqual(['Half finished'])
+
+  // Thrown away here, it's gone from there too.
+  await page.getByText('Half finished').click()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await expect.poll(subjects, LONG).toEqual([])
+})
+
 test('an empty new message leaves nothing behind', async () => {
   run = await launch()
   const { page } = run
@@ -561,6 +597,66 @@ test('the details under "To: me": who, when, where, what the receiving server fo
   expect(gmail.writes().filter((c) => !c.startsWith('SELECT') && !/\\Seen/.test(c))).toEqual([])
 })
 
+test('the details stay inside the reader on a short window, scrolling inside themselves', async () => {
+  run = await launch({ size: [1180, 480] })
+  const { page, gmail } = run
+  const headers = ['Cc: Linh Pham <linh@example.com>', 'Reply-To: Help <help@shop.example>', 'List-Id: "Shop News" <news.shop.example>', 'List-Unsubscribe: <mailto:leave@shop.example>']
+  // Everything the panel can say, so it's taller than what a short window shows of the thread.
+  const top = [
+    'Delivered-To: me+shop@example.com',
+    'Received: from mail.shop.example (mail.shop.example [192.0.2.1]) by mx.google.com with ESMTPS id 1 (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384)',
+    'Authentication-Results: mx.google.com; dkim=pass header.i=@shop.example; spf=pass smtp.mailfrom=bounce@mail.shop.example; dmarc=pass header.from=shop.example'
+  ].join('\n')
+  const thread = 7_100_000_000_000_000_000n
+  for (let i = 1; i <= 6; i++) {
+    const from = 'Shop support@bank.example <news@shop.example>'
+    gmail.add(`${top}\n${rawMail({ subject: 'Plans', from, text: `Message ${i}`, date: earlier(30 - i), headers })}`, { arrived: earlier(10 - i), thread, flags: ['\\Seen'] })
+  }
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.locator('.threads').getByText('Plans').click()
+  const open = page.locator('.message.open').last()
+  await expect(open).toContainText('Message 6')
+  await open.getByRole('button', { name: /^To:/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Message details' })
+  await expect(panel).toContainText('Written to')
+  const inside = async (): Promise<{ top: number; bottom: number; visibleTop: number; visibleBottom: number; scrolls: boolean }> =>
+    panel.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      const seen = (el.closest('.messages') as HTMLElement).getBoundingClientRect()
+      return { top: box.top, bottom: box.bottom, visibleTop: seen.top, visibleBottom: Math.min(seen.bottom, window.innerHeight), scrolls: el.scrollHeight > el.clientHeight }
+    })
+  await expect.poll(async () => { const at = await inside(); return at.bottom <= at.visibleBottom }).toBe(true)
+  const at = await inside()
+  expect(at.top).toBeGreaterThanOrEqual(at.visibleTop)
+  if (at.scrolls) {
+    // What doesn't fit is in reach by scrolling the panel, not the window.
+    await panel.evaluate((el) => { el.scrollTop = el.scrollHeight })
+    const last = await panel.locator('dd').last().boundingBox()
+    expect((last?.y ?? 0) + (last?.height ?? 0)).toBeLessThanOrEqual(at.bottom + 1)
+  }
+})
+
+test('a stranger\'s very long name and address wrap, in the warning and the details, and never push the thread sideways', async () => {
+  run = await launch({ size: [1180, 760] })
+  const { page, gmail } = run
+  const name = 'Bartholomew-Maximilian Wolfeschlegelsteinhausenbergerdorff the Extraordinarily Long-Named'
+  const address = `${'x'.repeat(70)}.long@${'sub.'.repeat(12)}example.com`
+  const replies = `${'r'.repeat(90)}@example.org`
+  gmail.add(rawMail({ subject: 'Long', from: `"${name}" <${address}>`, headers: [`Reply-To: ${replies}`] }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.locator('.threads .subject', { hasText: 'Long' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: replies })).toBeVisible()
+  const sideways = (): Promise<number> => page.locator('.messages').evaluate((el) => el.scrollWidth - el.clientWidth)
+  expect(await sideways()).toBe(0) // the warning naming the Reply-To used to run off to the right
+  await page.locator('.message.open').getByRole('button', { name: /^To:/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Message details' })
+  await expect(panel).toContainText(replies)
+  expect(await panel.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
+  expect(await sideways()).toBe(0)
+})
+
 test('a place in the sidebar can be right-clicked to mark all of it read', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -813,7 +909,12 @@ test('a composer of its own closed with nothing in it leaves no draft, and Undo 
   await solo.getByRole('button', { name: 'Undo' }).click() // the window waited for this
   await expect(there.getByLabel('Subject')).toHaveValue('Too soon')
   expect(smtp.sent).toHaveLength(0)
-  await solo.keyboard.press('Escape') // closed with words in it: kept in Drafts, and the window goes
+  // Closed with words in it: kept in Drafts, and the window goes. By its Close button: Escape needs
+  // the composer to have the keyboard, which a busy test machine hadn't always given it yet, and the
+  // window can go before the key is let go of, which Playwright takes for a failure.
+  const gone = solo.waitForEvent('close')
+  await there.getByRole('button', { name: 'Close' }).click({ noWaitAfter: true }).catch(() => undefined)
+  await gone
   await expect.poll(() => app.windows().length).toBe(1)
   await expect.poll(() => page.evaluate(async () => (await window.mail.drafts()).map((d) => [d.subject, d.state]))).toEqual([['Too soon', 'draft']])
 })
@@ -880,6 +981,32 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
   expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
+})
+
+test('Edit Menu: every entry\'s whole name fits beside its switch and arrows, in both themes', async () => {
+  // A window short enough for the list to scroll, as most are once an account has labels: the
+  // scrollbar takes its width from the names.
+  run = await launch({ size: [1280, 640] })
+  const { page, gmail } = run
+  gmail.labels = ['Receipts', 'Travel plans', 'Work', 'Family', 'School']
+  gmail.add(rawMail({ subject: 'One' }), { arrived: earlier(5) })
+  await signIn(run)
+  const side = page.locator('.sidebar')
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate((chosen) => window.mail.saveProfile({ theme: chosen }), theme)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await side.locator('.sidebar-foot .status').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+    await expect(side.getByRole('button', { name: 'Done' })).toBeVisible()
+    expect((await side.boundingBox())?.width).toBe(250) // the width it starts at
+    expect(await side.locator('.sidebar-scroll').evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true)
+    // A name that's cut is wider than the room it has: "Recently Seen" came out as "Recently S…".
+    const cut = await side.locator('.nav-edit > label .grow').evaluateAll((names) =>
+      names.filter((name) => name.scrollWidth > name.clientWidth).map((name) => name.textContent))
+    expect(cut).toEqual([])
+    await expect(side.getByRole('button', { name: 'Move Recently Seen up' })).toBeVisible()
+    await side.getByRole('button', { name: 'Cancel' }).click()
+  }
 })
 
 test('Edit Menu: an account\'s own labels are hidden and moved there, and New Label makes one on the server', async () => {
@@ -1310,6 +1437,49 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   await row.hover()
   await expect(row.locator('.row-actions')).toHaveCount(0)
   await expect(row.locator('time')).toBeVisible()
+})
+
+test('two settings changed one straight after the other both stick, and so do two senders put into the Summary', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const headers = ['List-Unsubscribe: <https://list.example/u>']
+  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Letter', from: 'Post <news@post.example>', headers }), { arrived: earlier(2) })
+  await signIn(run)
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await settings.getByRole('button', { name: 'Customize Actions' }).click()
+  await expect(settings.getByLabel('Action 4')).toHaveValue('read')
+  // Both in the same moment, before the first could be saved and read back. Each used to be built
+  // from the settings as they were read before either, so the second put the first one back.
+  await page.evaluate(() => {
+    const choose = (label: string, value: string): void => {
+      const select = [...document.querySelectorAll<HTMLSelectElement>('.settings-page select')].find((s) => s.labels[0]?.textContent?.startsWith(label))
+      if (!select) throw new Error(`no ${label}`)
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value)
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    choose('Action 1', 'snooze')
+    choose('Action 4', 'none')
+  })
+  await expect(settings.getByLabel('Action 1')).toHaveValue('snooze')
+  await expect(settings.getByLabel('Action 4')).toHaveValue('none')
+  await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).quickActions).toEqual(['snooze', 'flag', 'trash', 'none'])
+  await settings.getByRole('button', { name: 'Done' }).click()
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await settings.getByRole('button', { name: 'Customize Actions' }).click()
+  await expect(settings.getByLabel('Action 1')).toHaveValue('snooze')
+  await expect(settings.getByLabel('Action 4')).toHaveValue('none')
+  await settings.getByRole('button', { name: 'Done' }).click()
+
+  await page.evaluate(() => window.mail.saveSummary({ chosen: true }))
+  await page.getByRole('button', { name: 'Subscriptions' }).click()
+  await expect(page.getByRole('button', { name: 'Add news@post.example to Summary' })).toBeVisible()
+  await page.evaluate(() => {
+    for (const who of ['hi@shop.example', 'news@post.example']) document.querySelector<HTMLButtonElement>(`button[aria-label="Add ${who} to Summary"]`)?.click()
+  })
+  await expect(page.getByText('No subscriptions')).toBeVisible()
+  await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).summary.senders.slice().sort()).toEqual(['hi@shop.example', 'news@post.example'])
 })
 
 test('settings can be searched', async () => {

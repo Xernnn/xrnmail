@@ -219,3 +219,37 @@ export async function attachmentsOf(source: Buffer): Promise<WholeAttachment[]> 
     .filter((a) => !a.related)
     .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
 }
+
+/** A draft from the account's Drafts folder: the person's own, written on another device, or this
+ *  laptop's own copy. Its words are kept as text, so nothing of its HTML reaches the composer. */
+export interface ParsedDraft {
+  messageId: string
+  from: Address
+  to: Address[]
+  cc: Address[]
+  bcc: Address[]
+  subject: string
+  text: string
+  inReplyTo: string
+  references: string
+  /** Its files, not the pictures placed in its HTML. Cut drafts list none, since what's there of them is broken. */
+  files: WholeAttachment[]
+}
+
+export async function parseDraft(source: Buffer, cut = false): Promise<ParsedDraft> {
+  const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
+  const html = typeof mail.html === 'string' ? mail.html : ''
+  const text = mail.text ?? (html ? readableHtml(html) : '')
+  return {
+    messageId: mail.messageId ?? '',
+    from: addresses(mail.from)[0] ?? { name: '', address: '' },
+    to: addresses(mail.to),
+    cc: addresses(mail.cc),
+    bcc: addresses(mail.bcc),
+    subject: mail.subject ?? '',
+    text: text.slice(0, MAX_TEXT),
+    inReplyTo: mail.inReplyTo ?? '',
+    references: [mail.references ?? []].flat().join(' '),
+    files: cut ? [] : (mail.attachments ?? []).filter((a) => !a.related).map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
+  }
+}

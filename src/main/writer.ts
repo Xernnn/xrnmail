@@ -1,6 +1,7 @@
 import type { ImapFlow } from 'imapflow'
 import type { MailAction } from '@shared/types'
-import { imapClient, mailboxesOf, type ImapConfig, type MailboxRef, type MailboxRole } from './source'
+import { draftsOf, imapClient, mailboxesOf, type ImapConfig, type MailboxRef, type MailboxRole } from './source'
+import type { DraftCopy } from './store'
 
 /** Where a move left things. Without [map] the server didn't say what the new UIDs are. */
 export interface Moved {
@@ -22,13 +23,18 @@ export interface MailWriter {
   /** Makes a folder, or on Gmail a label, from the parts of its path. Answers with the path the server
    *  gave it, which joins the parts with its own separator. One that's there already is answered too. */
   createFolder(parts: string[]): Promise<string>
+  /** Puts a draft in the Drafts folder, made if there's none, and says where it went. */
+  saveDraft(raw: Buffer, messageId: string): Promise<DraftCopy>
+  /** Deletes a draft's copy for good, found by its Message-ID when the folder has been renumbered.
+   *  One that's gone already is fine. */
+  deleteDraft(copy: DraftCopy): Promise<void>
   close(): Promise<void>
 }
 
 /** The server said no. Unlike a lost connection, trying the same thing later won't help. */
 export class Refused extends Error {}
 
-const FOLDER_NAMES: Partial<Record<MailboxRole, string>> = { archive: 'Archive', trash: 'Trash', junk: 'Junk', sent: 'Sent' }
+const FOLDER_NAMES: Partial<Record<MailboxRole, string>> = { archive: 'Archive', trash: 'Trash', junk: 'Junk', sent: 'Sent', drafts: 'Drafts' }
 
 /** Servers cap how long a command line can be (RFC 7162 asks clients to stay under 8192 octets), and
  *  "Delete all" from a busy sender names thousands of messages. 500 UIDs fit in about 5.5 KB. */
@@ -52,7 +58,10 @@ export class ImapWriter implements MailWriter {
   async connect(): Promise<void> {
     await this.client.connect()
     this.gmail = this.client.capabilities.has('X-GM-EXT-1')
-    this.boxes = mailboxesOf(await this.client.list(), this.gmail)
+    const listed = await this.client.list()
+    this.boxes = mailboxesOf(listed, this.gmail)
+    const drafts = draftsOf(listed)
+    if (drafts) this.boxes.push(drafts)
   }
 
   private byRole(role: MailboxRole): MailboxRef | undefined {
@@ -164,6 +173,71 @@ export class ImapWriter implements MailWriter {
       lock.release()
     }
     if (!(await this.client.append(sent.path, raw, ['\\Seen']))) throw new Refused('append')
+  }
+
+  /** The copies of a message in the folder open now with this Message-ID. */
+  private async withId(messageId: string): Promise<number[]> {
+    if (!messageId) return []
+    const found = await this.client.search({ header: { 'Message-ID': messageId } }, { uid: true })
+    if (found === false) throw new Refused('search')
+    return Array.isArray(found) ? found : []
+  }
+
+  /** [uid], if the folder open now still has it: a copy another device deleted is no one's business. */
+  private async present(uid: number): Promise<number[]> {
+    const found = await this.client.search({ uid: String(uid) }, { uid: true })
+    if (found === false) throw new Refused('search')
+    return Array.isArray(found) ? found.filter((each) => each === uid) : []
+  }
+
+  /** \\Draft says what it is, and \\Seen keeps it from counting as unread anywhere. */
+  async saveDraft(raw: Buffer, messageId: string): Promise<DraftCopy> {
+    const drafts = await this.ensure('drafts')
+    const added = await this.client.append(drafts.path, raw, ['\\Draft', '\\Seen'])
+    if (!added) throw new Refused('append')
+    if (added.uid && added.uidValidity) return { uid: added.uid, validity: String(added.uidValidity), messageId }
+    // Without UIDPLUS the server doesn't say, so it's looked for: the newest copy with this Message-ID.
+    const lock = await this.client.getMailboxLock(drafts.path)
+    try {
+      const uid = Math.max(0, ...(await this.withId(messageId)))
+      const validity = String(this.client.mailbox ? this.client.mailbox.uidValidity : '')
+      if (!uid || !validity) throw new Refused('append')
+      return { uid, validity, messageId }
+    } finally {
+      lock.release()
+    }
+  }
+
+  /** Gmail moves what's deleted from Drafts into Trash, where it would sit for a month, so there it's
+   *  moved to Trash and deleted from Trash, which is for good. Elsewhere it's deleted where it is. */
+  async deleteDraft(copy: DraftCopy): Promise<void> {
+    const drafts = this.boxes.find((box) => box.role === 'drafts')
+    if (!drafts) return // no Drafts folder: nothing of it is there
+    const lock = await this.client.getMailboxLock(drafts.path)
+    let moved: { to: string; uids: number[] } | null = null
+    try {
+      const same = this.client.mailbox && String(this.client.mailbox.uidValidity) === copy.validity
+      const uids = same ? await this.present(copy.uid) : await this.withId(copy.messageId)
+      if (uids.length === 0) return
+      const range = uids.join(',')
+      const trash = this.gmail ? this.byRole('trash') : undefined
+      if (!trash) {
+        if (!(await this.client.messageDelete(range, { uid: true }))) throw new Refused('delete')
+        return
+      }
+      const result = await this.client.messageMove(range, trash.path, { uid: true })
+      if (!result) throw new Refused('move')
+      moved = { to: trash.path, uids: [...(result.uidMap?.values() ?? [])] }
+    } finally {
+      lock.release()
+    }
+    const bin = await this.client.getMailboxLock(moved.to)
+    try {
+      const uids = moved.uids.length > 0 ? moved.uids : await this.withId(copy.messageId)
+      if (uids.length > 0 && !(await this.client.messageDelete(uids.join(','), { uid: true }))) throw new Refused('delete')
+    } finally {
+      bin.release()
+    }
   }
 
   async createFolder(parts: string[]): Promise<string> {

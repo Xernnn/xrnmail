@@ -34,6 +34,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
   the foot of a thread, in the composer.
+- **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
+  Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
+  up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
+  catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
@@ -49,8 +53,12 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   account's inbox whole, with nothing set aside, and its count is all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message.
-- **Subscriptions:** everyone mailing you in bulk, with Unsubscribe, Add to Summary and Delete all next
-  to each, and the ones left behind and the ones in the Summary on sides of their own.
+- **Subscriptions:** everyone mailing you in bulk, with how much of each one's mail gets read, and
+  Unsubscribe, Add to Summary and Delete all next to each. Sorted by who sends most, by how much is
+  read, or by name, and for one account or all. Pick several to put them into the Summary at once
+  (or take them out), and open a sender for their page: how much they send, how much came in the
+  last week, how much is read, what to do about them, and their mail. The ones left behind and the
+  ones in the Summary have sides of their own.
 - **The Subscription Summary:** chosen senders' new mail waits, and lands together, daily or weekly at
   the time you pick (the first sender added asks; Settings, Summary changes it or turns it off).
   Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
@@ -191,8 +199,6 @@ warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
 
-- In Subscriptions, picking several senders at once to add to the Summary, and a page for each sender
-  with how much they send and how much of it gets opened.
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 
@@ -211,7 +217,7 @@ Done differently:
 - How the Summary and batches sit together is xrnmail's, since Edison has no batches. A sender in the
   Summary waits for its time, not the next batch, and does with batches off; Deliver now is for the
   batch and leaves it waiting. Letting a sender straight through takes them out of it, and adding one
-  to it takes them off that list. Its mail stays in your service's inbox: only this laptop shows it
+  to it takes them off that list; an address in one beats its @domain in the other. Its mail stays in your service's inbox: only this laptop shows it
   apart.
 - The Inbox set is from Inbox's own Shift+? list, as people who used it wrote it down, since Google's
   help page only ever said to press Shift+?. Apple's page leaves out deleting, flagging and searching,
@@ -225,6 +231,14 @@ Done differently:
   each account's own inbox: All Inboxes shows every account's mail together, Other included.
 - Edison finds faces on servers of its own. Here they come from Gravatar, BIMI and DuckDuckGo's icons,
   asked from this laptop, and a sender with a warning keeps their initials.
+- A draft from your service's Drafts, written on the phone say, brings its words in as plain text and
+  what it quotes as it was quoted, since its HTML is the service's and can carry a stranger's. A draft
+  changed on two devices before either heard of the other is kept twice, so neither's words are lost.
+  Edison doesn't say what it does then.
+- A sender's figures are counted from the mail kept on this laptop (90 days by default), and "read"
+  is read anywhere, by what your mail service says, since nothing here can know what was opened.
+  Edison works out its open rate on its own servers. Picking several is by the tick box beside each,
+  or with Ctrl or Shift, where Edison's phone app holds a finger down.
 - Recently Seen is a reading of its name. Edison's sidebar has it, after All Sent, in every picture,
   and nothing it publishes says what it lists. Here it's a history of the threads opened.
 
@@ -232,7 +246,6 @@ Done differently:
 
 - The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
   real ones, Outlook's sign-in most of all.
-- Drafts stay on this laptop, and don't appear in your service's Drafts.
 - No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It

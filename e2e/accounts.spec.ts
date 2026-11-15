@@ -301,6 +301,59 @@ test('subscriptions list who mails in bulk, and a sender can be cleared with Und
   await expect(page.getByText('2 messages')).toBeVisible()
 })
 
+test('subscriptions: how much of each sender is read, several put into the Summary at once, and a page for each sender', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const headers = ['List-Unsubscribe: <https://list.example/u>']
+  gmail.add(rawMail({ subject: 'Deals one', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(24 * 9), flags: ['\\Seen'] }) // more than a week ago
+  gmail.add(rawMail({ subject: 'Deals two', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(20) })
+  gmail.add(rawMail({ subject: 'Deals three', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(10) })
+  gmail.add(rawMail({ subject: 'Letter', from: 'Post <news@post.example>', headers }), { arrived: earlier(5), flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'Tips', from: 'Tips <tips@daily.example>', headers }), { arrived: earlier(4) })
+  await signIn(run)
+  await page.getByRole('button', { name: 'Subscriptions' }).click()
+  const shop = page.locator('.subscription', { hasText: 'hi@shop.example' })
+  await expect(shop.locator('.open-rate')).toHaveText('33%') // one of three read
+  await expect(page.locator('.subscription', { hasText: 'news@post.example' }).locator('.open-rate')).toHaveText('100%')
+  const names = page.locator('.subscription strong')
+  await expect(names).toHaveText(['Shop', 'Tips', 'Post']) // the most mail first
+  await page.getByLabel('Sort by').selectOption('read')
+  await expect(names).toHaveText(['Post', 'Shop', 'Tips'])
+  await page.getByLabel('Sort by').selectOption('name')
+  await expect(names).toHaveText(['Post', 'Shop', 'Tips'])
+  await page.getByLabel('Sort by').selectOption('most')
+
+  // Two picked by their tick boxes, and put into the Summary from the bar at the foot.
+  await shop.hover()
+  await page.getByLabel('Select hi@shop.example').check()
+  await page.getByLabel('Select tips@daily.example').check()
+  const bar = page.getByRole('toolbar', { name: 'Selected senders' })
+  await expect(bar).toContainText('2 selected')
+  await bar.getByRole('button', { name: 'Add to Summary' }).click()
+  await page.getByRole('dialog', { name: 'When your Summary arrives' }).getByRole('button', { name: 'Schedule' }).click()
+  await expect(page.getByText('2 senders go into your Summary')).toBeVisible()
+  await expect(bar).toHaveCount(0)
+  await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).summary.senders.slice().sort()).toEqual(['hi@shop.example', 'tips@daily.example'])
+  await expect(page.locator('.subscription')).toHaveCount(1) // only the one left out stays on this side
+  await page.getByRole('group', { name: 'Sides of Subscriptions' }).getByRole('button', { name: 'Summary' }).click()
+  await expect(page.locator('.subscription')).toHaveCount(2)
+
+  // A sender's page: how much they send, how much is read, what to do, and their threads.
+  await page.getByRole('button', { name: 'Open Shop' }).click()
+  await expect(page.locator('.view-title')).toHaveText('Shop')
+  const card = page.locator('.sender-card')
+  await expect(card.getByRole('definition')).toHaveText(['emails here', 'in the last week', 'read'])
+  await expect(card.getByRole('term')).toHaveText(['3', '2', '33%'])
+  await expect(card.getByRole('button', { name: 'Remove from Summary' })).toBeVisible()
+  await expect(page.locator('.threads .thread .subject')).toHaveText(['Deals three', 'Deals two', 'Deals one'])
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Subscriptions' })).toHaveAttribute('aria-current', 'page')
+  await page.locator('.threads').getByText('Deals two').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Deals two')
+  await expect(card.getByRole('term')).toHaveText(['3', '2', '67%']) // opening it read it
+  await card.getByRole('button', { name: '‹ Subscriptions' }).click()
+  await expect(page.getByRole('group', { name: 'Sides of Subscriptions' }).getByRole('button', { name: 'Summary' })).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('the Summary: a sender goes in from Subscriptions, its mail waits for the time chosen, and lands together apart from the inbox', async () => {
   run = await launch()
   const { page, gmail } = run

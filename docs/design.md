@@ -9,6 +9,7 @@ server (IMAP) ──> source.ts ──> sync.ts ──> store.ts (SQLite) ──
 
 page ──> service.ts ──> store.ts, at once ──> pending queue ──> writer.ts ──> server (IMAP)
                    └──> drafts ──> sender.ts ──> server (SMTP)
+                          └──> draft copies ──> writer.ts ──> the account's Drafts (IMAP)
 ```
 
 `service.ts` holds everything the app does, with the clock and the network passed in, so whole days
@@ -104,6 +105,8 @@ is all Undo and "send later" are. `tick()` sends what's due.
 - `SmtpSender` connects and signs in as its own step first, since that's the one failure that proves
   nothing left. nodemailer reports a connection lost after the message was handed over the same way as
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
+- A message that can't be put together, an attachment gone from the profile say, fails before
+  anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
 - Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
   attempt, so a crash comes back the same way instead of as a retry.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
@@ -111,8 +114,73 @@ is all Undo and "send later" are. `tick()` sends what's due.
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
   then, never as it was when the round began.
 
-Drafts stay on this laptop. Attachments are copied into the profile when chosen, so a message scheduled
-for later doesn't depend on where the file was.
+Attachments are copied into the profile when chosen, so a message scheduled for later doesn't depend
+on where the file was.
+
+## Drafts on the server
+
+A draft is kept here first, as before: the composer saves it within a second of typing, offline or
+not, and that copy is the one that's sent. It's also kept in the account's Drafts folder, the one
+marked `\Drafts` (on Gmail, `[Gmail]/Drafts`, which Gmail shows as Drafts on the web and the phone),
+as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what comes down;
+`service.ts` decides when.
+
+- **What goes up** is the whole message as it would go: the words, the signature, what it quotes,
+  its attachments and its Bcc, with `\Draft` and `\Seen`, so another device can carry on with it or
+  send it as it is. Nobody has to be on it yet. A new message with nothing in it isn't kept there.
+- **When.** Once it has been left alone for four seconds, or once it has been changing for a minute,
+  so typing doesn't send every keystroke and a long stretch of it is still kept. Saving what's there
+  already changes nothing, so closing a composer untouched sends nothing up. On the account's own
+  lane, like changes to mail, and only through the writer.
+- **Replacing a copy** is APPEND first, then the old copy deleted by its UID, so there's never a
+  moment with none. The UID comes from the server's APPENDUID, or without UIDPLUS from the newest copy
+  with the Message-ID just given, which is new for each version. Gmail moves what's deleted from
+  Drafts into Trash and keeps it a month, so there the old copy is moved to Trash and deleted from
+  Trash, which is for good; elsewhere it's deleted where it is. A server with no Drafts folder gets one.
+- **A copy that has to go** (the draft was sent, thrown away, moved to another account or emptied)
+  is noted in `draft_copies` and goes as soon as the server can be reached, like the pending queue:
+  offline, or after a restart, nothing is lost. Refused three times, it's let go of and said.
+- **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
+  draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
+  or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
+  scheduled is never on the server as a draft.
+- **Coming down.** Each sync reads the Drafts folder, read-only like the rest (`EXAMINE`,
+  `BODY.PEEK`), after the mail. A copy it doesn't know, saved within the keeping window, comes in as
+  a draft here, with its files. One with more than can be sent from here (about 18 MB of files) stays
+  on the server, as one older than the keeping window does: brought in without its files and changed
+  here, it would go back up without them. Its words go into the composer as text: the copy's HTML is the server's, may hold a
+  stranger's quoted HTML, and never reaches the page. What it quotes is kept apart, as a reply's quote
+  is, and goes out as it was quoted, not quoted again; the account's own signature comes off the end
+  of the words, so a draft that went up from here and came back isn't signed twice.
+- **Each draft here knows its copy**: the UID, the folder's UIDVALIDITY when it was had, its
+  Message-ID, and which version of the draft it was made from (`pushed`). A renumbered folder finds
+  its copies again by Message-ID instead of bringing them in twice.
+
+### A draft changed in two places
+
+There's no safe way to merge two edits of the same words, and choosing by the clock would throw
+away what someone typed, on the word of two devices' clocks. So the rule is that nothing typed is
+lost, and a change made in one place only is taken as it is:
+
+- **Changed here only:** the laptop's version replaces the copy.
+- **Changed on the other device only:** Gmail's phone app saves a draft by replacing its message, so
+  the copy this laptop knew goes and a new one comes. The draft here hasn't changed since its copy
+  went up, so it goes, and the new copy comes in as the draft: the other device's version wins.
+- **Changed in both:** the copy this laptop knew has gone, and the draft here has changed since. It
+  stays, and goes up as a draft of its own; the other device's comes in beside it. The person sees
+  both and throws one away.
+- **Sent or thrown away elsewhere:** the copy goes and nothing replaces it. Unchanged here, the draft
+  goes too. Changed here meanwhile, it stays and goes up again: an edit is never thrown away, even if
+  that leaves a draft of something already sent.
+- **Open in a composer:** what the server says leaves it alone until the composer lets it go
+  (`holdDraft`, released when its page goes, however it goes). A composer would otherwise be editing
+  a draft that had been deleted under it, or write its own words over the other device's.
+
+Draft ids are never given out twice (`AUTOINCREMENT`), since drafts now come and go behind the page's
+back and a page holding an old id would otherwise mean a new draft by it.
+
+On Gmail every draft is in All Mail too, labelled `\Draft`, and kept hidden there, as before. A
+message that loses the label (the phone sending a draft it saved can do that) shows from then on.
 
 ## Sync
 
@@ -133,6 +201,10 @@ stopping the rest.
   from an account that was no longer there, and nothing would ever take it out.
 - `UIDVALIDITY` changing means every stored UID in that folder now points at the wrong message, so that
   folder starts over, keeping the moment holding began.
+- When a message lands is worked out as it's stored, from the settings as they are then, not as they
+  were when the pass began: signing in and fetching can take seconds, and a sender put into the
+  Summary, let through or blocked meanwhile, or mail going live, must hold what the pass stores
+  after it. `retime` sees only what's already stored.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
@@ -153,7 +225,8 @@ to go again afterwards, because what changed may have missed it. The watch has i
 a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
 it again, as it does after anything else on that connection. A lost connection is retried after a
 minute, and the three-minute passes carry on regardless, so watching can fail without anything being
-missed.
+missed. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
+left open, every minute's try added one, until the service refused the account for having too many.
 
 Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
 no batch times, so nothing waits for a batch and the next delivery is none, which hides the delivery
@@ -230,10 +303,12 @@ sender can write what they like there.
 
 `holdOf` decides a message's moment, in this order: mail that never waits (from before the account,
 not in the inbox, your own) is there at once; a sender in the Summary waits for its next time, daily
-or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch. The
-Summary comes before straight through because it's the narrower choice (an address against a whole
-@domain, say), and the two lists are kept apart for the same address: adding to one takes it off the
-other.
+or on its weekday; one let straight through doesn't wait; everyone else waits for the next batch.
+Named in both lists, the narrower naming wins: an address in one beats its @domain in the other, so
+a newsletter domain can wait for the Summary while one writer there comes straight through, and the
+other way round. The same address can't be in both, since adding to one takes it off the other; from
+settings older than that, the Summary wins. Times are on the clock, so a Summary lands at its time
+on the day after a change of clocks, and one set for an hour that's skipped lands an hour later.
 
 A message held for the Summary is marked (`summary`), and stays marked once it lands, so a Summary is
 simply the marked messages with the same `release_at`. The inbox and its counts leave marked mail out,
@@ -306,6 +381,12 @@ picture, 7 for none, 6 hours after a lookup failed. A company is asked about onc
 senders. Free mail domains and your own addresses get no logo. An account's chosen photo is kept
 the same way, with no expiry, and wins over its Gravatar on every address of that account.
 
+The index is only believed as far as it's the cache's own: an entry naming any file but one of the
+cache's own picture names (32 hex characters and a known extension), or a type it doesn't know, is
+left out, so a damaged or planted index can't have a file read from elsewhere or deleted when the
+face is looked up again. A picture gone from the folder is forgotten, and looked up again when next
+wanted, rather than showing initials until its month is out.
+
 Each lookup tells someone something, so the rules are about when and how:
 
 - **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
@@ -376,7 +457,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   labels), the gathered folders in Edison's order, then the Assistant's lists. Right-clicking a place
   offers to mark all of it read, which asks the store for the whole list, not the rows on screen.
   Right-clicking anywhere offers Edit Menu: those last two lists turn into switches that can be
-  moved, by their arrows or by dragging, each within its own list. The choice is a setting
+  moved, by their arrows or by dragging, each within its own list. The arrows sit one over the
+  other so a name keeps its room: side by side, with the scrollbar a list with labels has, they cut
+  "Recently Seen" and "Bills & Receipts" short at the sidebar's own width. The choice is a setting
   (`shared/sidebar.ts`). It's made whole each time it's read, so an entry a later version adds turns
   up after the one it follows, shown, in a choice saved before it existed. Each account's own labels
   or folders are switches there too, kept by account in the same setting: an order among siblings,
@@ -398,7 +481,9 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   edge, six pixels wide so it reads at a glance; the reader puts the same bar beside the subject. A swipe is a short one or a long one each way: `swipeAction` decides from
   how far the row went.
 - `Reader.tsx`: flat messages under the thread's actions, with Reply, Reply All and Forward on a bar at
-  the foot.
+  the foot. A message's details float under its header, as tall as what's visible of the thread
+  allows and scrolling inside themselves past that; a message near the foot of a short window
+  scrolls up first, with room added at the thread's end for it, so there's space to read them.
 - A thread or a draft can have a window of its own (`showSolo` in the main process, `shared/solo.ts`
   for what its address says). It's `App` again, drawing only the reader or only the composer. The
   main window lets the thread go when it's opened there: two readers would each mark it read
@@ -408,9 +493,21 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
-- `Settings.tsx`: Edison's sections, then xrnmail's own. Each account's name, signature and the rest
-  are held once for every page, so a page opened while a save is on its way can't write old values
-  back.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
+  signature and the rest is held once for every page until the field is left.
+
+Settings are saved as changes, never as a whole copy put back. Each save names only what it changes
+(`saveProfile`, `saveBatch` and `saveSummary` all take part of their settings, and an identity
+replaces that one account's), and senders go into a list or come out of it one at a time
+(`editSenders`), added to the list as the main process has it then, which is the only place that
+changes it. Before this, a page built the whole list, or all four quick actions, from what it last
+read: two changes made in quick succession both started from the same old settings, so the second
+put the first back, and two senders added to the Summary one after the other kept one.
+
+Settings goes through `shared/keeper.ts` as well. A change there is worked out from the settings with
+every change before it already in them, shown at once, and sent after the ones before it. What's read
+back from the main process is shown only when nothing is still on its way, since a reading taken
+before a change would put its old value back on screen for the next change to start from.
 
 What a row offers is all in settings, and `saveProfile` keeps it to what a row can show: none to four
 lines of preview, four quick actions from a fixed list, a swipe action for each of the four swipes.
@@ -432,6 +529,14 @@ of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for it
 Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
 named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
 off the choosing instead of closing Settings.
+
+Subscriptions say how much of each sender's mail is read (`Subscription.read` over `count`, from the
+`\Seen` flag, so read anywhere) and how much came in the last week, counted in the same query that
+lists them. Sorting and showing one account's are done on the page. A sender's page is a list like
+any other (`ListQuery` `from`: their threads on one account, wherever they are but Trash and Spam)
+under a card that reads their figures again (`sender`) each time anything changes. Several senders
+go into the Summary or out of it as one `editSenders`, so the first one in asks when it should land
+once, and none is lost to another.
 
 "Archive" in the sidebar is its own list: mail out of the inbox, out of Trash and Spam, and without the
 Sent label. All Mail is still everything.

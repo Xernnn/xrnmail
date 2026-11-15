@@ -16,7 +16,9 @@ export interface SyncOptions {
   account: string
   email: string
   backfillDays: number
-  rules: BatchRules
+  /** When mail lands. As a function, it's asked again for each message, so a change made while the
+   *  pass is under way holds what the pass stores after it. */
+  rules: BatchRules | (() => BatchRules)
   now: number
   /** Told after each chunk, so the list fills as it goes on a first sync. */
   progress?: (done: number, total: number) => void
@@ -73,7 +75,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
   }
   const labels = labelsOf(box, remote.labels, gmail)
   const sorted = options.sort?.(mail) ?? { focused: true, facts: null }
-  const hold = holdOf({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, options.rules)
+  const rules = typeof options.rules === 'function' ? options.rules() : options.rules
+  const hold = holdOf({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, rules)
   return {
     account: options.account,
     box: box.id,
