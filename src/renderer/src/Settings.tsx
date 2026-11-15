@@ -36,7 +36,7 @@ const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
-  appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
+  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
   signatures: 'signature sign',
@@ -462,6 +462,7 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
         <h3>Theme</h3>
         <Choice label="Theme" value={settings.theme} set={(theme) => save({ theme })}
           options={[['light', 'Light'], ['dark', 'Dark'], ['system', 'Same as the system']]} />
+        <Check label="Darken mail made for a white page, when the look is dark" on={settings.darkMail} set={(darkMail) => save({ darkMail })} />
       </section>
       <section>
         <h3>Sidebar</h3>

@@ -1,7 +1,8 @@
 import DOMPurify from 'dompurify'
-import { Ellipsis, ImageOff, ShieldCheck } from 'lucide-react'
+import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { splitQuoted } from '@shared/quoted'
+import { darkenDocument } from './darken'
 
 /**
  * Shows a stranger's HTML. It's sanitised here, then shown in a frame that may not run scripts,
@@ -69,11 +70,12 @@ const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"]{
 /** Installed fonts only: the frame may load nothing, so the app's own copy of MiSans can't reach it. */
 const FRAME_FONTS = `"MiSans Latin","MiSans","Noto Sans","Segoe UI",Roboto,"Helvetica Neue",Arial,"Liberation Sans",sans-serif`
 
-function frameDocument(clean: string, images: boolean, dark: boolean): string {
+function frameDocument(clean: string, images: boolean, dark: boolean, designed: boolean): string {
   const remote = images ? ' http: https:' : ''
   const policy = `default-src 'none'; img-src data:${remote}; style-src 'unsafe-inline'; font-src data:`
-  // Plain mail takes on the card it sits in; designed mail keeps the white page it was made for.
-  const blends = !DESIGNED.test(clean)
+  // Plain mail takes on the card it sits in; designed mail keeps the white page it was made for,
+  // unless a dark window darkens it once it's loaded.
+  const blends = !designed
   const look = !blends ? 'body{background:#fff;color:#1c1b1a}'
     : dark ? 'html{color-scheme:dark}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}'
     : 'body{background:transparent;color:#1d2025}a{color:#1a5fd0}'
@@ -105,18 +107,31 @@ interface BodyProps {
   trust?(sender: string): void
   /** Whole quotes stay put in a forward, where they're what was sent. */
   keepQuoted?: boolean
+  /** In a dark window, mail made for a white page is darkened, unless Settings say not to. */
+  darken?: boolean
 }
 
-function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted }: BodyProps): ReactNode {
+function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darken = true }: BodyProps): ReactNode {
   const [images, setImages] = useState(false)
   const [quoteOpen, setQuoteOpen] = useState(false)
+  /** This message shown in its own colours after all, and whether darkening it changed anything. */
+  const [original, setOriginal] = useState(false)
+  const [darkened, setDarkened] = useState(false)
   const frame = useRef<HTMLIFrameElement>(null)
   const watcher = useRef<ResizeObserver | null>(null)
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
   const dark = useMemo(isDark, [clean])
+  const designed = useMemo(() => DESIGNED.test(clean), [clean])
   const showQuoted = quoteOpen || !hasQuote
+  const darkening = dark && designed && darken && !original
+  const source = frameDocument(clean, images, dark, designed)
+  // While it's being darkened the frame stays out of sight, so its white page never flashes up: it's
+  // shown once this very page, in these colours, has loaded.
+  const look = `${original}:${source}`
+  const [shown, setShown] = useState('')
+  const painted = !darkening || shown === look
 
   const show = async (): Promise<void> => {
     await window.mail.allowRemoteImages(true)
@@ -141,6 +156,12 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted }: Bod
       el.style.height = `${Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height))}px`
     }
     fit()
+    try {
+      if (darkening) setDarkened(darkenDocument(doc))
+    } catch {
+      // Left in its own colours: it's still shown.
+    }
+    setShown(look)
     watcher.current?.disconnect()
     watcher.current = new ResizeObserver(fit)
     watcher.current.observe(doc.body)
@@ -159,9 +180,10 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted }: Bod
     doc.addEventListener('mouseleave', () => onPeek(null))
   }
 
+  const recolouring = dark && designed && darken && (original || darkened)
   return (
     <>
-      {(removed > 0 || (hasRemote && !images)) && (
+      {(removed > 0 || (hasRemote && !images) || recolouring) && (
         <div className="body-notes">
           {hasRemote && !images && (
             <>
@@ -175,14 +197,21 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted }: Bod
               <ShieldCheck size={14} aria-hidden="true" /> {removed === 1 ? '1 tracker removed' : `${removed} trackers removed`}
             </span>
           )}
+          {recolouring && (
+            <span className="recolour">
+              <Palette size={14} aria-hidden="true" />
+              <button className="link" onClick={() => setOriginal(!original)}>{original ? 'Darken colours' : 'Show original colours'}</button>
+            </span>
+          )}
         </div>
       )}
       <iframe
+        key={original ? 'original' : 'own'}
         ref={frame}
         title="Message"
-        className="body-frame"
+        className={painted ? 'body-frame' : 'body-frame painting'}
         sandbox="allow-same-origin"
-        srcDoc={frameDocument(clean, images, dark)}
+        srcDoc={source}
         onLoad={loaded}
       />
       {hasQuote && <QuoteToggle open={quoteOpen} toggle={() => setQuoteOpen(!quoteOpen)} />}

@@ -115,7 +115,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
   The tray shows what's unread, and closing the window keeps it running. Spell check knows your
   language, plus English and Vietnamese.
-- **Light or dark**, or whatever the system says.
+- **Light or dark**, or whatever the system says. In the dark, mail made for a white page is darkened
+  to match: light backgrounds go dark and dark text light, each keeping its colour, while pictures,
+  anything drawn on a picture, and mail that's dark already stay as sent. Each message has Show
+  original colours, and Settings, Appearance can turn it off.
 - **xrnhub:** optional, and gets counts only.
 
 ## Using it
@@ -215,9 +218,8 @@ Not here, though Edison has them:
 
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
-- From Appearance: the reading pane under the list, the Scaling slider (View's zoom does that here)
-  and Adaptive Coloring, which darkens mail itself in dark mode. Here a message's HTML is shown as
-  its sender drew it, on white.
+- From Appearance: the reading pane under the list, and the Scaling slider (View's zoom does that
+  here).
 - From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
   have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
   quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
@@ -277,6 +279,9 @@ Done differently:
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.
+- Edison's Adaptive Coloring is Darken mail made for a white page here (Settings, Appearance), with
+  Show original colours on each message darkened. How Edison darkens isn't published; here the
+  colours are moved one by one, never the pictures.
 - On the bar under a selection, Labels adds a label to every thread picked (taking one off is a
   thread at a time), and labels and folders need the threads to be from one account. Move to Other
   and Move to Focused keep each picked thread's sender on that side, since that's how Focused and

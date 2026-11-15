@@ -210,7 +210,7 @@ function Message(props: {
       <div className="message-body">
         <Cautions message={m} />
         {m.facts && <FactCard message={m} facts={m.facts} rsvp={rsvp} />}
-        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust}
+        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust} darken={settings?.darkMail !== false}
           keepQuoted={FORWARDED.test(m.subject)} />
         {m.attachments.length > 0 && <Attachments message={m} say={say} />}
         {m.truncated && <p className="muted note message-note">Too big to keep whole here.</p>}

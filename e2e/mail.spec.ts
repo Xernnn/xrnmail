@@ -252,6 +252,70 @@ test('images stay blocked on the next message', async () => {
   await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
 })
 
+/** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */
+const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+const LIGHT_RECEIPT = `<table id="card" width="100%" bgcolor="#ffffff" style="border:1px solid #dddddd"><tr><td style="color:#222222;font-family:Arial">
+  <img id="logo" src="${PIXEL}" width="40" height="40" alt="Logo"><h2>Thanks for your order</h2>
+  <p id="total">Total: <b>245,000 VND</b></p><a id="track" href="https://shop.example/t" style="color:#1a5fd0">Track it</a></td></tr></table>`
+const DARK_LETTER = '<div id="night" style="background:#111111;color:#dddddd;padding:20px"><h1 style="color:#ffffff">Tonight</h1><p>Three stories.</p></div>'
+
+test('in a dark window, mail made for a white page is darkened, pictures and dark mail are left, and either can be seen as sent', async () => {
+  run = await launch({ colorScheme: 'dark' })
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Your order', from: 'Shop <orders@shop.example>', html: LIGHT_RECEIPT }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Night edition', from: 'Linh Pham <linh@example.com>', html: DARK_LETTER }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const frame = page.locator('iframe.body-frame')
+  const look = (selector: string): Promise<{ bg: string; color: string; border: string; style: string | null }> =>
+    frame.evaluate((f: HTMLIFrameElement, s) => {
+      const doc = f.contentDocument as Document
+      const el = doc.querySelector(s) as Element
+      const style = (doc.defaultView as Window).getComputedStyle(el)
+      return { bg: style.backgroundColor, color: style.color, border: style.borderTopColor, style: el.getAttribute('style') }
+    }, selector)
+  /** 0 for black to 255 for white, near enough. */
+  const light = (css: string): number => {
+    const [r = 0, g = 0, b = 0] = (css.match(/[\d.]+/g) ?? []).map(Number)
+    return (r + g + b) / 3
+  }
+  const original = page.getByRole('button', { name: 'Show original colours' })
+
+  await list.getByText('Your order').click()
+  await expect(original).toBeVisible()
+  const card = await look('#card')
+  expect(light(card.bg)).toBeLessThan(40)
+  expect(light(card.border)).toBeGreaterThan(light(card.bg))
+  expect(light((await look('#total')).color)).toBeGreaterThan(180)
+  const track = await look('#track')
+  expect(light(track.color)).toBeGreaterThan(120)
+  expect(Number(track.color.match(/[\d.]+/g)?.[2])).toBeGreaterThan(Number(track.color.match(/[\d.]+/g)?.[0])) // still a blue link
+  expect((await look('#logo')).style).toBeNull() // the picture is as it was
+  await expect(frame).toHaveCSS('opacity', '1')
+
+  await original.click()
+  await expect.poll(async () => (await look('#card')).bg).toBe('rgb(255, 255, 255)')
+  expect((await look('#total')).color).toBe('rgb(34, 34, 34)')
+  await page.getByRole('button', { name: 'Darken colours' }).click()
+  await expect.poll(async () => light((await look('#card')).bg)).toBeLessThan(40)
+
+  await list.getByText('Night edition').click()
+  await expect(page.frameLocator('iframe.body-frame').getByText('Three stories.')).toBeVisible()
+  await expect.poll(async () => (await look('#night')).bg).toBe('rgb(17, 17, 17)')
+  expect(await look('#night')).toMatchObject({ color: 'rgb(221, 221, 221)', style: 'background:#111111;color:#dddddd;padding:20px' })
+  await expect(original).toHaveCount(0) // dark already, it's left as it is
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  await page.getByLabel('Darken mail made for a white page, when the look is dark').uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await list.getByText('Your order').click()
+  await expect(page.frameLocator('iframe.body-frame').getByText('Thanks for your order')).toBeVisible()
+  await expect.poll(async () => (await look('#card')).bg).toBe('rgb(255, 255, 255)')
+  await expect(original).toHaveCount(0)
+})
+
 test('the page has only the bridge, and a page reached by accident gets nothing', async () => {
   run = await launch()
   const { page, gmail, app } = run
