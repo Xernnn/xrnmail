@@ -2,7 +2,7 @@ import DOMPurify from 'dompurify'
 import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { splitQuoted } from '@shared/quoted'
-import { darkenDocument } from './darken'
+import { darkenDocument, UNLOADED_DARK } from './darken'
 import { fitDocument } from './fit'
 
 /**
@@ -65,8 +65,9 @@ const DESIGNED = /<(?:table|img|font|center)\b|\b(?:background|bgcolor)\b|\bcolo
 
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
 
-/** A picture that hasn't been allowed shows as a plain block of its own size, not a broken icon. */
-const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"]{content:url("${BLANK}");background:#e9ecf0;border-radius:4px}`
+/** A picture that hasn't been allowed shows as a plain block of its own size, not a broken icon: pale
+ *  on the white page mail is made for, dark on a dark one (darken.ts sets that once it has darkened). */
+const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"]{content:url("${BLANK}");background:var(--xrn-unloaded,#e9ecf0);border-radius:4px}`
 
 /** Installed fonts only: the frame may load nothing, so the app's own copy of MiSans can't reach it. */
 const FRAME_FONTS = `"MiSans Latin","MiSans","Noto Sans","Segoe UI",Roboto,"Helvetica Neue",Arial,"Liberation Sans",sans-serif`
@@ -78,7 +79,7 @@ function frameDocument(clean: string, images: boolean, dark: boolean, designed: 
   // unless a dark window darkens it once it's loaded.
   const blends = !designed
   const look = !blends ? 'body{background:#fff;color:#1c1b1a}'
-    : dark ? 'html{color-scheme:dark}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}'
+    : dark ? `html{color-scheme:dark;--xrn-unloaded:${UNLOADED_DARK}}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}`
     : 'body{background:transparent;color:#1d2025}a{color:#1a5fd0}'
   return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}</style></head><body>${clean}</body></html>`
 }

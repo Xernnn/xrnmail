@@ -459,6 +459,39 @@ test('a newsletter made 600 pixels wide is drawn smaller to fit a narrow reading
   expect((await measure('#figures')).width).toBe(900)
 })
 
+/** A newsletter with a picture that isn't shown until asked for. */
+const PICTURED = `<table id="card" width="100%" bgcolor="#ffffff"><tr><td style="color:#222222">
+  <img id="hero" src="https://pictures.example/hero.png" width="300" height="120" alt=""><p>Spring sale, this week only.</p></td></tr></table>`
+
+test('a picture not shown yet is a block that suits the page it sits on: dark on a darkened page, pale on a white one', async () => {
+  run = await launch({ colorScheme: 'dark' })
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Spring sale', from: 'Mai Tran <mai@example.com>', html: PICTURED }), { arrived: earlier(3) })
+  await signIn(run)
+  const frame = page.locator('iframe.body-frame')
+  /** 0 for black to 255 for white, near enough, of what's under the picture and of the page round it. */
+  const shades = (): Promise<{ block: number; page: number }> => frame.evaluate((f: HTMLIFrameElement) => {
+    const doc = f.contentDocument as Document
+    const view = doc.defaultView as Window
+    const light = (css: string): number => {
+      const [r = 0, g = 0, b = 0] = (css.match(/[\d.]+/g) ?? []).map(Number)
+      return (r + g + b) / 3
+    }
+    return { block: light(view.getComputedStyle(doc.getElementById('hero') as Element).backgroundColor), page: light(view.getComputedStyle(doc.getElementById('card') as Element).backgroundColor) }
+  })
+  await page.locator('.threads').getByText('Spring sale', { exact: true }).click()
+  await page.frameLocator('iframe.body-frame').getByText('Spring sale, this week only.').waitFor()
+  await expect(page.getByRole('button', { name: 'Show original colours' })).toBeVisible()
+  const darkened = await shades()
+  expect(darkened.page).toBeLessThan(40)
+  expect(darkened.block).toBeLessThan(80) // was the pale #e9ecf0, a white slab on the dark page
+  expect(darkened.block).toBeGreaterThan(darkened.page) // still a block that can be seen
+
+  await page.getByRole('button', { name: 'Show original colours' }).click()
+  await expect.poll(async () => (await shades()).page).toBe(255)
+  expect((await shades()).block).toBeGreaterThan(200) // on the white page it was made for, a pale one
+})
+
 test('the page has only the bridge, and a page reached by accident gets nothing', async () => {
   run = await launch()
   const { page, gmail, app } = run

@@ -10,6 +10,9 @@ const SIDES = ['top', 'right', 'bottom', 'left'] as const
 
 const WHITE: Rgba = [255, 255, 255, 1]
 
+/** What a picture not shown yet looks like on a dark page: a block a little lighter than the page. */
+export const UNLOADED_DARK = '#2c3036'
+
 /** The background showing at a point: the first under it that isn't see-through, or the frame's white
  *  page. A picture, or a part drawn on one, says nothing about the page's colours. */
 function backgroundAt(doc: Document, view: Window, x: number, y: number): Rgba | 'picture' {
@@ -74,6 +77,8 @@ export function darkenDocument(doc: Document): boolean {
   const light = looksLight(doc, view)
   if (light) recolour(Array.from(doc.body.children), view)
   doc.documentElement.style.setProperty('color-scheme', 'dark')
+  // Dark now either way, darkened or dark already, so a picture not shown yet is a dark block too.
+  doc.documentElement.style.setProperty('--xrn-unloaded', UNLOADED_DARK)
   doc.body.style.setProperty('background-color', 'transparent', 'important')
   if (light) doc.body.style.setProperty('color', colourCss(lightText(parseColour(view.getComputedStyle(doc.body).color) ?? WHITE)), 'important')
   return light
