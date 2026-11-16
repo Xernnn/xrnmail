@@ -118,6 +118,9 @@ export interface Settings {
   notifyFocusedOnly: boolean
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
+  /** How long Undo is offered after archiving, deleting, moving and the rest, and how long the change
+   *  waits here before it goes to the server. */
+  undoActionSeconds: number
   /** What the reply button on a message does: answer its sender, or everyone on it. */
   defaultReply: 'reply' | 'replyAll'
   theme: 'system' | 'light' | 'dark'
@@ -417,7 +420,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>> & {
   /** Only the times named. */

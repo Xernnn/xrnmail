@@ -346,6 +346,7 @@ function profile(value: unknown): ProfilePatch {
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
   if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
+  if (p['undoActionSeconds'] !== undefined) patch.undoActionSeconds = number(p['undoActionSeconds'])
   if (p['defaultReply'] === 'reply' || p['defaultReply'] === 'replyAll') patch.defaultReply = p['defaultReply']
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true

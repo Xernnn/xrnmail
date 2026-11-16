@@ -264,6 +264,33 @@ test('Settings choose what opens once a thread is archived or deleted: the next,
   await expect(page.getByLabel('When a thread is archived or deleted')).toHaveValue('list')
 })
 
+test('Settings choose how long Undo stays after archiving or deleting, and the change waits as long for it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Keep me' }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const inInbox = (subject: string): boolean | undefined => gmail.mails.find((m) => m.raw.toString().includes(subject))?.labels.includes('\\Inbox')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Undo archive and delete for')
+  await expect(choice).toHaveValue('5') // as Edison's pictures have it, and as it always was here
+  await choice.selectOption('10')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await list.getByText('Keep me').click()
+  await page.keyboard.press('e')
+  const undo = page.getByRole('status').getByRole('button', { name: 'Undo' })
+  await expect(undo).toBeVisible()
+  await page.waitForTimeout(7000) // past the five seconds it had, and the one more the server waited
+  await expect(undo).toBeVisible()
+  expect(inInbox('Keep me')).toBe(true)
+  await undo.click()
+  await expect(list.getByText('Keep me')).toBeVisible()
+  await page.waitForTimeout(4000)
+  expect(inInbox('Keep me')).toBe(true)
+  expect(gmail.writes().filter((c) => /X-GM-LABELS|MOVE/.test(c))).toEqual([])
+})
+
 // Marking the open thread unread used to move the reader on to the next one, as archiving does, and
 // opening that one read it: one thread marked unread, another read without being looked at.
 test('marking the open thread unread closes it, and reads nothing else', async () => {

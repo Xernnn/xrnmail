@@ -30,8 +30,11 @@ import { Refused, type MailWriter, type Moved } from './writer'
 /** Everything the app does, with the clock and the outside world passed in. */
 
 export const EARLY_WAIT_S = 30
-/** How long Undo has before a change sets off for the server. The page offers it for less than this. */
-export const UNDO_MS = 6_000
+/** How long a change that takes mail away waits past the Undo the page offers, before it sets off
+ *  for the server. */
+const UNDO_GRACE_MS = 1_000
+/** How long that is in all, with Undo as long as Settings start out. */
+export const UNDO_MS = 5_000 + UNDO_GRACE_MS
 const RETRY_MS = 60_000
 const REFUSALS_ALLOWED = 3
 const NOT_SURE_SENT = 'The app stopped while sending this. Check Sent before trying again.'
@@ -59,6 +62,7 @@ const DEFAULT_SETTINGS: Settings = {
   muted: [],
   notifyFocusedOnly: false,
   undoSeconds: 10,
+  undoActionSeconds: 5,
   defaultReply: 'reply',
   theme: 'system',
   darkMail: true,
@@ -819,7 +823,7 @@ export class MailService {
   act(targets: ThreadRef[], action: MailAction): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) ? UNDO_MS : 0
+    const wait = takesAway(action) ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
@@ -1752,6 +1756,7 @@ export class MailService {
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
+      undoActionSeconds: patch.undoActionSeconds === undefined ? settings.undoActionSeconds : clamp(patch.undoActionSeconds, 1, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,
       theme: patch.theme ?? settings.theme,
       darkMail: patch.darkMail ?? settings.darkMail,

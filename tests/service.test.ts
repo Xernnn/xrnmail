@@ -706,6 +706,26 @@ describe('changing mail', () => {
     expect(ids()).toEqual(['Two'])
   })
 
+  it('Undo lasts as long as Settings say, and the change waits that long before it reaches Gmail', async () => {
+    expect(service.settings().undoActionSeconds).toBe(5) // as it always was
+    service.saveProfile({ undoActionSeconds: 20 })
+    expect(service.settings().undoActionSeconds).toBe(20)
+    const token = service.act([ref('One')], { kind: 'archive' })
+    await later(UNDO_MS + 1000)
+    expect(fakeMail('One').labels).toContain('\\Inbox') // still Undo's to call back
+    service.undo(token)
+    service.act([ref('Two')], { kind: 'archive' })
+    await later(19_000)
+    expect(fakeMail('Two').labels).toContain('\\Inbox')
+    await later(3000)
+    expect(fakeMail('Two').labels).not.toContain('\\Inbox')
+    expect(fakeMail('One').labels).toContain('\\Inbox')
+    service.saveProfile({ undoActionSeconds: 99 })
+    expect(service.settings().undoActionSeconds).toBe(30)
+    service.saveProfile({ undoActionSeconds: 0 })
+    expect(service.settings().undoActionSeconds).toBe(1)
+  })
+
   it('undo puts it back and Gmail never hears about it', async () => {
     const token = service.act([ref('One')], { kind: 'archive' })
     service.undo(token)

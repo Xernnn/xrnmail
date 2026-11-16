@@ -42,7 +42,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
-  with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
+  with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
+  General say: what takes mail away waits that long here before the server hears of it). It keeps
+  working offline and catches up.
   Once the open thread is archived or deleted, the next one opens, or the one before, or the list
   comes back, as Settings, General say. Marking it unread closes it, so nothing else gets read.
 - **Reading:** a thread is read as it opens, or after a few seconds open, or only when you mark it
@@ -229,8 +231,7 @@ Not here, though Edison has them:
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 - From Appearance: the Scaling slider (View's zoom does that here).
-- From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
-  have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
+- From General: which of Cc and Bcc a new message shows; whether a reply
   quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
   importance markers; and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
@@ -283,6 +284,9 @@ Done differently:
   after" shows Instantly; here there are 1, 2 and 5 seconds, and only when marked. "Default reply
   behavior" shows Reply All, with the button beside each message drawn as Reply All; here that's
   what it decides, and the foot of a thread keeps both buttons and the keys keep their own.
+- How long Undo lasts after archiving, deleting and moving is 5, 10, 20 or 30 seconds (Settings,
+  General; Edison's pictures show 5). Show only one undo isn't a choice here, because it's how Undo
+  always is: each new one takes the place of the one before, and `z` undoes the one showing.
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.

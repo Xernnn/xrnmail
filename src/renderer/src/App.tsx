@@ -203,9 +203,11 @@ export function App(): ReactNode {
     document.title = soloTitle ?? (unread > 0 ? `(${unread}) xrnmail` : 'xrnmail')
   }, [unread, soloTitle])
 
+  // One with Undo stays as long as Settings say Undo lasts, and the change waits for it.
+  const undoMs = (profile?.undoActionSeconds ?? TOAST_MS / 1000) * 1000
   useEffect(() => {
     if (!toast) return undefined
-    const timer = setTimeout(() => setToast(null), toast.ms ?? TOAST_MS)
+    const timer = setTimeout(() => setToast(null), toast.ms ?? (toast.undo ? undoMs : TOAST_MS))
     return () => clearTimeout(timer)
   }, [toast])
 

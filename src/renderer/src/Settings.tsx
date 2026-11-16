@@ -34,7 +34,7 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen snooze send later today evening tomorrow weekend next week pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all mark read seen snooze send later today evening tomorrow weekend next week pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
@@ -344,6 +344,8 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
           options={[['panes', 'List and message side by side'], ['below', 'Message under the list'], ['list', 'One thing at a time']]} />
         <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
           options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
+        <Choice label="Undo archive and delete for" value={settings.undoActionSeconds} set={(undoActionSeconds) => save({ undoActionSeconds })}
+          options={[5, 10, 20, 30].map((n) => [n, `${n} seconds`])} />
       </section>
       <section>
         <h3>Sending</h3>
