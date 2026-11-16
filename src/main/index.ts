@@ -8,6 +8,7 @@ import type {
   Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
+import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
@@ -178,6 +179,9 @@ const number = (value: unknown): number => {
   return value
 }
 
+/** How much of a message's source View original shows; Save as .eml keeps all of it. */
+const ORIGINAL_SHOWN = 2 * 1024 * 1024
+
 const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
@@ -345,10 +349,10 @@ function profile(value: unknown): ProfilePatch {
   if (p['defaultReply'] === 'reply' || p['defaultReply'] === 'replyAll') patch.defaultReply = p['defaultReply']
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
-  if (p['layout'] === 'panes' || p['layout'] === 'list') patch.layout = p['layout']
+  if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -361,6 +365,10 @@ function profile(value: unknown): ProfilePatch {
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
   if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
+  if (p['later'] && typeof p['later'] === 'object') {
+    const later = p['later'] as Record<string, unknown>
+    patch.later = Object.fromEntries(Object.entries(later).filter(([key]) => key in DEFAULT_LATER).map(([key, value]) => [key, number(value)])) as Partial<LaterTimes>
+  }
   if (Array.isArray(p['imagesFrom'])) patch.imagesFrom = p['imagesFrom'].map((a) => text(a, 320))
   return patch
 }
@@ -403,6 +411,9 @@ function register(service: MailService, avatars: Avatars): void {
   handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
     service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
   handle('clearRecent', () => service.clearRecent())
+  handle('searches', () => service.searches())
+  handle('rememberSearch', (search: unknown) => service.rememberSearch(text(search, 500)))
+  handle('forgetSearch', (search: unknown) => service.forgetSearch(search === null ? null : text(search, 500)))
   handle('settings', () => service.settings())
   handle('saveBatch', (batch: unknown) => service.saveBatch(batchSettings(batch)))
   handle('saveBackfill', (days: unknown) => service.saveBackfill(number(days)))
@@ -450,6 +461,22 @@ function register(service: MailService, avatars: Avatars): void {
     writeFileSync(path, found.content, { mode: 0o600 })
     const failure = await shell.openPath(path)
     if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+  })
+  // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
+  // than a few megabytes of it, and saving writes it as it came.
+  handle('original', async (message: unknown) => {
+    const { bytes } = await service.original(number(message))
+    const cut = bytes.length > ORIGINAL_SHOWN
+    return { text: new TextDecoder().decode(cut ? bytes.subarray(0, ORIGINAL_SHOWN) : bytes), size: bytes.length, cut }
+  })
+  handle('saveOriginal', async (message: unknown) => {
+    const found = await service.original(number(message))
+    const parent = dialogParent()
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }] }
+    const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
+    if (choice.canceled || !choice.filePath) return false
+    writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })
+    return true
   })
   handle('details', (message: unknown) => service.details(number(message)))
   // An address and nothing else: a page gone wrong mustn't be able to put a command on the clipboard

@@ -298,6 +298,16 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .search input::-webkit-search-cancel-button { display: none; }
 .search-clear { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--muted); }
 .search-clear:hover { background: var(--hover); color: var(--text); }
+.recent-searches { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0; padding: 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--text); animation: appear 0.12s var(--ease); }
+.recent-head { display: flex; align-items: center; padding: 4px 8px 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.recent-searches ul { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.recent-searches li { display: flex; align-items: center; gap: 9px; padding: 6px 6px 6px 9px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.recent-searches li > svg { flex: none; color: var(--muted); }
+.recent-searches li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-searches li:hover { background: var(--hover); }
+.recent-searches li.on { background: var(--accent-soft); }
+.recent-searches li .icon { color: var(--muted); opacity: 0; }
+.recent-searches li:hover .icon, .recent-searches li.on .icon { opacity: 1; }
 .tabs { flex: none; display: flex; gap: 22px; padding: 14px 24px 6px; }
 .tab { color: var(--muted); font-size: 15px; }
 .tab:hover { color: var(--text); }
@@ -517,6 +527,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .body-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 12px; padding: 7px 12px; border-radius: 9px; background: var(--surface-2); color: var(--muted); font-size: 12px; }
 .body-notes .link { font-size: 12px; font-weight: 600; }
 .trackers { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.recolour { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.body-frame.painting { opacity: 0; }
 .body-frame { display: block; width: 100%; height: 120px; border: 0; border-radius: 8px; background: transparent; }
 .body-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .body-text.quoted { margin-top: 6px; color: var(--muted); }
@@ -557,6 +569,11 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .confirm-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .sheet header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .sheet h2 { font-size: 16px; }
+.sheet.original { width: min(980px, calc(100vw - 48px)); }
+.original header { gap: 10px; }
+.original-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.original-text { max-height: min(70vh, 720px); margin: 0; padding: 14px 18px; overflow: auto; font: 12px/1.5 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.original-note { padding: 14px 18px; }
 .danger-fill { background: var(--danger); color: #fff; }
 .danger-fill:hover:not(:disabled) { background: var(--danger); filter: brightness(0.94); }
 .context-menu { position: fixed; z-index: 40; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: 210px; padding: 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
@@ -582,6 +599,9 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .settings label input, .settings label select, .settings label textarea { color: var(--text); font-size: 14px; }
 .settings label.inline { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
 .settings label.inline select { width: auto; min-width: 150px; padding-block: 6px; }
+.settings .when { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 14px; }
+.settings .when > span { min-width: 96px; }
+.settings .when select { width: auto; min-width: 120px; padding-block: 6px; }
 .settings label.inline input[type="color"] { width: 44px; height: 30px; padding: 2px; }
 .settings label.check { display: flex; align-items: center; gap: 11px; color: var(--text); font-size: 14px; cursor: pointer; }
 .settings label.check input { appearance: none; flex: none; position: relative; width: 18px; height: 18px; padding: 0; border: 1.5px solid var(--outline); border-radius: 4px; background: var(--bg); cursor: pointer; }
@@ -742,32 +762,36 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
 .app.solo .back { display: none; }
 
 .one-pane .panes { grid-template-columns: minmax(0, 1fr); }
+/* The reader under the list, the line between them dragged up and down. */
+.below .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--list-height) 1px minmax(0, 1fr); }
+.below .resize { cursor: row-resize; }
+.below .resize::before { inset: -3px 0; }
 .one-pane .resize, .one-pane .reader { display: none; }
 .one-pane.reading .list, .one-pane.reading .band { display: none; }
 .one-pane.reading .reader { display: flex; }
 .one-pane .back { display: inline-grid; margin-right: 6px; }
 
-/* The wide list: who, what and when along one line */
+/* The wide list, alone or over the reader: who, what and when along one line */
 
 @media (min-width: 900px) {
-  .one-pane:not(.reading) .thread-card { align-items: center; padding-block: 8px; }
-  .one-pane:not(.reading) .thread { contain-intrinsic-size: auto 60px; }
-  .one-pane:not(.reading) .face { display: block; height: 44px; }
-  .one-pane:not(.reading) .pick { position: absolute; right: -5px; bottom: -3px; }
-  .one-pane:not(.reading) .thread-open { display: flex; align-items: center; gap: 16px; padding-right: 72px; }
-  .one-pane:not(.reading) .thread-top { flex: 0 0 240px; }
-  .one-pane:not(.reading) .thread time { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); padding-left: 0; }
-  .one-pane:not(.reading) .thread-mid { flex: 0 1 auto; max-width: 46%; margin: 0; }
-  .one-pane:not(.reading) .snippet { flex: 1; min-width: 0; -webkit-line-clamp: 1; }
-  .one-pane:not(.reading) .cards { display: none; }
-  .one-pane:not(.reading) .row-actions { top: 50%; transform: translateY(-50%); }
-  .one-pane:not(.reading) .bulk { left: 50%; right: auto; width: 420px; transform: translateX(-50%); animation: none; }
+  .one-pane:not(.reading) .thread-card, .below .thread-card { align-items: center; padding-block: 8px; }
+  .one-pane:not(.reading) .thread, .below .thread { contain-intrinsic-size: auto 60px; }
+  .one-pane:not(.reading) .face, .below .face { display: block; height: 44px; }
+  .one-pane:not(.reading) .pick, .below .pick { position: absolute; right: -5px; bottom: -3px; }
+  .one-pane:not(.reading) .thread-open, .below .thread-open { display: flex; align-items: center; gap: 16px; padding-right: 72px; }
+  .one-pane:not(.reading) .thread-top, .below .thread-top { flex: 0 0 240px; }
+  .one-pane:not(.reading) .thread time, .below .thread time { position: absolute; top: 50%; right: 18px; transform: translateY(-50%); padding-left: 0; }
+  .one-pane:not(.reading) .thread-mid, .below .thread-mid { flex: 0 1 auto; max-width: 46%; margin: 0; }
+  .one-pane:not(.reading) .snippet, .below .snippet { flex: 1; min-width: 0; -webkit-line-clamp: 1; }
+  .one-pane:not(.reading) .cards, .below .cards { display: none; }
+  .one-pane:not(.reading) .row-actions, .below .row-actions { top: 50%; transform: translateY(-50%); }
+  .one-pane:not(.reading) .bulk, .below .bulk { left: 50%; right: auto; width: 420px; transform: translateX(-50%); animation: none; }
 }
 
 @media (max-width: 1040px) {
   .app { --side-width: 210px; }
   .view-title { font-size: 22px; }
-  .panes { grid-template-columns: minmax(0, 1fr); }
+  .panes, .below .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .resize, .reader { display: none; }
   .app.reading { grid-template-columns: minmax(0, 1fr); }
   .app.reading .sidebar, .app.reading .list, .app.reading .band { display: none; }

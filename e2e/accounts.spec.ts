@@ -75,6 +75,17 @@ test('moving, deleting and restoring on a folder server', async () => {
   await page.getByRole('button', { name: 'Move to Inbox' }).first().click()
   await page.getByRole('button', { name: 'Inbox', exact: true }).first().click()
   await expect(page.getByText('Move me').first()).toBeVisible()
+  // Several at once, from the ⋮ on the bar under a selection.
+  plain.add(rawMail({ subject: 'Me too' }), { arrived: earlier(2) })
+  await syncAndSettle(page)
+  await page.getByLabel('Select Move me').check({ force: true })
+  await page.getByLabel('Select Me too').check({ force: true })
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Move to…', exact: true }).click()
+  await bar.getByRole('button', { name: 'Work', exact: true }).click()
+  await expect(page.getByText('Moved to Work: 2 threads')).toBeVisible()
+  await expect.poll(() => plain.box('Work').mails.length, { timeout: 20_000 }).toBe(2)
 })
 
 test('Spam and Trash can be read, and deleting from them is forever only when confirmed', async () => {

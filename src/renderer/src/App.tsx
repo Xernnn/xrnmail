@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Eraser, Flag, History, Inbox, Mail, MailOpen, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX, SlidersHorizontal, Trash2, Undo2, X
+  Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
+  SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
 import type {
   AccountView, Draft, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
@@ -9,7 +10,7 @@ import { Composer } from './Composer'
 import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
-import { IconButton, TimeMenu } from './Menus'
+import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
 import { Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
@@ -41,16 +42,19 @@ const SOLO = soloFrom(window.location.search)
 
 const keyOf = (ref: ThreadRef): string => `${ref.account}/${ref.thread}`
 
-const LIST_WIDTHS = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+interface Span { key: string; low: number; high: number; start: number }
+/** How wide the list is beside the reader, and how tall over it, as last dragged. */
+const LIST_WIDTHS: Span = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
+const LIST_HEIGHTS: Span = { key: 'xrnmail.listHeight', low: 140, high: 900, start: 300 }
 /** More than Trash is ever likely to hold on this laptop. */
 const WHOLE_LIST = 20_000
 
-const savedWidth = (): number => {
+const savedSpan = (span: Span): number => {
   try {
-    const saved = Number(localStorage.getItem(LIST_WIDTHS.key))
-    return saved >= LIST_WIDTHS.low && saved <= LIST_WIDTHS.high ? saved : LIST_WIDTHS.start
+    const saved = Number(localStorage.getItem(span.key))
+    return saved >= span.low && saved <= span.high ? saved : span.start
   } catch {
-    return LIST_WIDTHS.start
+    return span.start
   }
 }
 
@@ -124,6 +128,8 @@ export function App(): ReactNode {
   const [help, setHelp] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [bulkSnooze, setBulkSnooze] = useState(false)
+  /** The bar under a selection's ⋮, and the labels or folders it leads to. */
+  const [bulkMenu, setBulkMenu] = useState<'more' | 'file' | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; row: ThreadRow } | null>(null)
@@ -139,8 +145,14 @@ export function App(): ReactNode {
   const [senderFrom, setSenderFrom] = useState<'subscribed' | 'left' | 'summary'>('subscribed')
   const [version, setVersion] = useState(0)
   const [reads, setReads] = useState(0)
-  const [listWidth, setListWidth] = useState(savedWidth)
+  const [listWidth, setListWidth] = useState(() => savedSpan(LIST_WIDTHS))
+  const [listHeight, setListHeight] = useState(() => savedSpan(LIST_HEIGHTS))
   const searchBox = useRef<HTMLInputElement>(null)
+  /** The searches made lately, which the empty search box offers while it has the focus, and which of
+   *  them the arrow keys are on. */
+  const [searches, setSearches] = useState<string[]>([])
+  const [searchFocus, setSearchFocus] = useState(false)
+  const [searchPick, setSearchPick] = useState(-1)
   const listAsked = useRef(0)
   const anchor = useRef<number | null>(null)
   /** A draft on its way to the composer, which Esc can still call off. */
@@ -155,6 +167,11 @@ export function App(): ReactNode {
   }), [])
 
   useEffect(() => window.mail.onChanged(bump), [bump])
+  // A selection let go of takes its bar's menus with it.
+  useEffect(() => { if (picked.size === 0) setBulkMenu(null) }, [picked.size])
+  useEffect(() => {
+    if (!SOLO) void window.mail.searches().then(setSearches).catch(() => undefined)
+  }, [])
   useEffect(() => window.mail.onCompose(setComposing), [])
   // The notice for a new message leads to it, in the inbox it came to.
   useEffect(() => window.mail.onOpenThread((ref) => {
@@ -178,6 +195,7 @@ export function App(): ReactNode {
   }, [profile?.theme])
 
   setClock24(profile?.clock24 ?? true) // before anything below writes a time
+  setLaterTimes(profile?.later)
 
   const unread = (accounts ?? []).reduce((sum, a) => sum + a.unread, 0)
   const soloTitle = SOLO?.kind === 'thread' ? messages[0]?.subject || 'xrnmail' : SOLO ? composing?.subject || 'New message' : null
@@ -208,6 +226,21 @@ export function App(): ReactNode {
   }
 
   const searching = search.trim() !== ''
+  /** A search that was used: finished with Enter, picked again, or a result opened from it. */
+  const keepSearch = (text: string): void => {
+    if (text.trim()) void window.mail.rememberSearch(text).then(setSearches).catch(() => undefined)
+  }
+  const forgetSearch = (text: string | null): void => {
+    void window.mail.forgetSearch(text).then(setSearches).catch(() => undefined)
+  }
+  const pickSearch = (text: string): void => {
+    setSearch(text)
+    setSearchPick(-1)
+    keepSearch(text)
+  }
+  useEffect(() => {
+    if (open && searching) keepSearch(search)
+  }, [open?.account, open?.thread])
   // All Inboxes is every account's inbox whole. Focused and Other belong to each account's own, and
   // to the inbox of the only account there is.
   const allInboxes = view.kind === 'inbox' && !view.account && (accounts?.length ?? 0) > 1
@@ -492,7 +525,8 @@ export function App(): ReactNode {
   const pin = async (refs: ThreadRef[], on: boolean): Promise<void> => {
     try {
       await window.mail.pin(refs, on)
-      setToast({ text: on ? 'Pinned' : 'Unpinned', undo: () => window.mail.pin(refs, !on) })
+      const word = on ? 'Pinned' : 'Unpinned'
+      setToast({ text: refs.length > 1 ? `${word}: ${refs.length} threads` : word, undo: () => window.mail.pin(refs, !on) })
     } catch (error) {
       say(problem(error))
     }
@@ -590,6 +624,20 @@ export function App(): ReactNode {
   const keepSender = async (address: string, focused: boolean): Promise<void> => {
     await window.mail.setFocus(address, focused)
     say(`${address} stays in ${focused ? 'Focused' : 'Other'}`)
+  }
+
+  /** Focused and Other go by sender, so moving several threads keeps each one's sender on that side. */
+  const keepSenders = async (rows: ThreadRow[], focused: boolean): Promise<void> => {
+    const mine = new Set(own)
+    const senders = [...new Set(rows.map((r) => r.fromAddress.toLowerCase()).filter((a) => a && !mine.has(a)))]
+    setPicked(new Set())
+    if (senders.length === 1) return keepSender(senders[0] ?? '', focused)
+    try {
+      for (const address of senders) await window.mail.setFocus(address, focused)
+      say(`${senders.length} senders stay in ${focused ? 'Focused' : 'Other'}`)
+    } catch (e) {
+      say(problem(e))
+    }
   }
 
   /** A muted sender's mail still arrives; it just isn't announced. */
@@ -766,21 +814,27 @@ export function App(): ReactNode {
 
   const own = useMemo(() => (accounts ?? []).flatMap((a) => [a.email, ...(profile?.identities[a.email]?.aliases ?? [])]).map((a) => a.toLowerCase()), [accounts, profile])
 
+  /** The line between list and reader, dragged: sideways beside it, up and down over it. */
   const resize = (down: PointerEvent): void => {
-    const start = down.clientX
-    const from = listWidth
+    const over = profile?.layout === 'below'
+    const span = over ? LIST_HEIGHTS : LIST_WIDTHS
+    const set = over ? setListHeight : setListWidth
+    const start = over ? down.clientY : down.clientX
+    const from = over ? listHeight : listWidth
+    // Over the reader, the list can't take so much that the reader has no room.
+    const high = over ? Math.min(span.high, window.innerHeight - 260) : span.high
     let now = from
     const moved = (event: globalThis.PointerEvent): void => {
-      now = Math.max(LIST_WIDTHS.low, Math.min(LIST_WIDTHS.high, from + event.clientX - start))
-      setListWidth(now)
+      now = Math.round(Math.max(span.low, Math.min(high, from + (over ? event.clientY : event.clientX) - start)))
+      set(now)
     }
     const done = (): void => {
       window.removeEventListener('pointermove', moved)
       window.removeEventListener('pointerup', done)
       try {
-        localStorage.setItem(LIST_WIDTHS.key, String(now))
+        localStorage.setItem(span.key, String(now))
       } catch {
-        // Only a convenience: next time it starts at its usual width.
+        // Only a convenience: next time it starts at its usual size.
       }
     }
     window.addEventListener('pointermove', moved)
@@ -826,8 +880,16 @@ export function App(): ReactNode {
   const done = progress.reduce((sum, p) => sum + p.done, 0)
   const total = progress.reduce((sum, p) => sum + p.total, 0)
   const single = profile?.layout === 'list'
+  const below = profile?.layout === 'below'
   const lines = profile?.previewLines ?? 2
-  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
+  const showRecent = searchFocus && !searching && searches.length > 0
+  // What the bar under a selection's ⋮ works on: labels and folders are one account's own.
+  const pickedRows = list.filter((r) => picked.has(keyOf(r)))
+  const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
+  const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
+  const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  const onOther = active.kind === 'inbox' && active.focus === 'other'
+  const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', below ? 'below' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
     ? { left: profile.swipeLeft, leftLong: profile.swipeLeftLong, right: profile.swipeRight, rightLong: profile.swipeRightLong }
     : NO_SWIPES
@@ -902,7 +964,7 @@ export function App(): ReactNode {
   if (SOLO) return <div className={`app solo solo-${SOLO.kind}`}>{SOLO.kind === 'thread' && reader}{over}</div>
 
   return (
-    <div className={appClass} style={{ '--list': `${listWidth}px`, '--preview-lines': lines } as CSSProperties}>
+    <div className={appClass} style={{ '--list': `${listWidth}px`, '--list-height': `${listHeight}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
         menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
@@ -919,8 +981,43 @@ export function App(): ReactNode {
           <div className="search">
             <SearchIcon size={16} aria-hidden="true" />
             <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
-              onChange={(e) => setSearch(e.target.value)} />
+              role="combobox" aria-expanded={showRecent} aria-controls="recent-searches" aria-autocomplete="list"
+              aria-activedescendant={showRecent && searchPick >= 0 ? `recent-search-${searchPick}` : undefined}
+              onFocus={() => { setSearchFocus(true); setSearchPick(-1) }}
+              onBlur={() => setSearchFocus(false)}
+              onChange={(e) => { setSearch(e.target.value); setSearchPick(-1) }}
+              onKeyDown={(e) => {
+                if (showRecent && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                  e.preventDefault()
+                  const count = searches.length
+                  setSearchPick((at) => (e.key === 'ArrowDown' ? (at + 1) % count : at <= 0 ? count - 1 : at - 1))
+                } else if (e.key === 'Enter') {
+                  const picked = showRecent ? searches[searchPick] : undefined
+                  if (picked !== undefined) pickSearch(picked)
+                  else keepSearch(search)
+                }
+              }} />
             {searching && <button className="search-clear" aria-label="Clear" onClick={() => setSearch('')}><X size={14} aria-hidden="true" /></button>}
+            {showRecent && (
+              <div className="recent-searches" onMouseDown={(e) => e.preventDefault()}>
+                <div className="recent-head">
+                  <span className="grow">Recent searches</span>
+                  <button className="link" aria-label="Clear recent searches" onClick={() => forgetSearch(null)}>Clear</button>
+                </div>
+                <ul role="listbox" id="recent-searches" aria-label="Recent searches">
+                  {searches.map((text, i) => (
+                    <li key={text} id={`recent-search-${i}`} role="option" aria-selected={i === searchPick} className={i === searchPick ? 'on' : ''}
+                      onClick={() => pickSearch(text)}>
+                      <History size={14} aria-hidden="true" />
+                      <span className="grow">{text}</span>
+                      <button className="icon small" tabIndex={-1} aria-label={`Remove ${text}`} onClick={(e) => { e.stopPropagation(); forgetSearch(text) }}>
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </header>
         <div className="panes">
@@ -1034,6 +1131,39 @@ export function App(): ReactNode {
                     <div className="anchor">
                       <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
                       {bulkSnooze && <TimeMenu title="Snooze until" up right pick={(at) => void snooze(refs, at)} close={() => setBulkSnooze(false)} />}
+                    </div>
+                  )}
+                  {!bins && (
+                    <div className="anchor">
+                      <IconButton icon={MoreVertical} label="More for the selected" click={() => setBulkMenu(bulkMenu ? null : 'more')} />
+                      {bulkMenu === 'more' && (
+                        <Popover up right close={() => setBulkMenu(null)}>
+                          {pickedAccount ? (
+                            <button type="button" className="menu-item" onClick={() => setBulkMenu('file')}>
+                              {pickedAccount.labels ? <Tag size={15} aria-hidden="true" /> : <FolderInput size={15} aria-hidden="true" />}
+                              {pickedAccount.labels ? 'Labels…' : 'Move to…'}
+                            </button>
+                          ) : (
+                            <p className="muted note menu-note">Labels and folders are each account's own: pick threads from one account to file them.</p>
+                          )}
+                          <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); setPicked(new Set()); void pin(refs, !allPinned) }}>
+                            {allPinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />} {allPinned ? 'Unpin' : 'Pin'}
+                          </button>
+                          {profile?.focused && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void keepSenders(pickedRows, onOther) }}>
+                              <Filter size={15} aria-hidden="true" /> {onOther ? 'Move to Focused' : 'Move to Other'}
+                            </button>
+                          )}
+                        </Popover>
+                      )}
+                      {bulkMenu === 'file' && pickedAccount && (
+                        <FolderMenu up right title={pickedAccount.labels ? 'Add a label' : undefined}
+                          folders={pickedAccount.labels ? labelsOf(pickedAccount, overview) : pickedAccount.folders} close={() => setBulkMenu(null)}
+                          pick={(to) => {
+                            setBulkMenu(null)
+                            void (pickedAccount.labels ? run(refs, { kind: 'label', label: to, add: true }, `Labelled ${to}`) : run(refs, { kind: 'move', to }, `Moved to ${to}`))
+                          }} />
+                      )}
                     </div>
                   )}
                 </div>

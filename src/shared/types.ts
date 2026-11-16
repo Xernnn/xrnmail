@@ -1,4 +1,5 @@
 import type { KeyChanges, KeySet } from './keys'
+import type { LaterTimes } from './later'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -120,6 +121,8 @@ export interface Settings {
   /** What the reply button on a message does: answer its sender, or everyone on it. */
   defaultReply: 'reply' | 'replyAll'
   theme: 'system' | 'light' | 'dark'
+  /** In dark mode, mail made for a white page is darkened to match. */
+  darkMail: boolean
   /** Split the inbox into Focused and Other. */
   focused: boolean
   /** Senders kept on one side whatever they look like. */
@@ -130,8 +133,8 @@ export interface Settings {
   /** The application ID Outlook accounts added before each kept its own renew with. Left as it is:
    *  a renewal only works with the ID its account signed in with. */
   microsoftClientId: string
-  /** `panes` reads beside the list, `list` is one thing at a time. */
-  layout: 'panes' | 'list'
+  /** `panes` reads beside the list, `below` under it, and `list` is one thing at a time. */
+  layout: 'panes' | 'below' | 'list'
   /** What the reader opens once the open thread is archived, deleted or otherwise leaves the list:
    *  the thread below it, the one above, or nothing, back to the list. */
   afterRemove: 'next' | 'previous' | 'list'
@@ -166,6 +169,8 @@ export interface Settings {
   images: 'ask' | 'always'
   /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
   readAfter: number
+  /** What Later today, This evening, Tomorrow, the weekend and Next week mean, for snoozing and sending later. */
+  later: LaterTimes
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
 }
@@ -412,9 +417,12 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>>
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>> & {
+  /** Only the times named. */
+  later?: Partial<LaterTimes>
+}
 
 /** What the app's menu and the tray can ask the page to do. */
 export type AppCommand = 'compose' | 'settings' | 'search' | 'help' | 'print' | 'about' | 'summary'
@@ -444,6 +452,12 @@ export interface MailApi {
   thread(account: string, thread: string, bins?: boolean, remember?: boolean, read?: boolean): Promise<MessageView[]>
   /** Recently Seen starts again, empty. */
   clearRecent(): Promise<void>
+  /** The searches made lately, newest first. */
+  searches(): Promise<string[]>
+  /** A search was used, so it goes first; the list as it is now. */
+  rememberSearch(search: string): Promise<string[]>
+  /** One search let go of, or all of them with null; the list as it is now. */
+  forgetSearch(search: string | null): Promise<string[]>
   settings(): Promise<Settings>
   /** Only what's named changes, so a page that's behind can't undo what it hasn't heard of. */
   saveBatch(batch: Partial<BatchSettings>): Promise<void>
@@ -489,6 +503,11 @@ export interface MailApi {
   /** Everything about where a message came from and how. Mail stored before this was kept has its
    *  headers read from the server, once. */
   details(message: number): Promise<MessageDetails>
+  /** A message as the server has it, as text, for View original: the first few megabytes, and how big
+   *  it is in all. */
+  original(message: number): Promise<{ text: string; size: number; cut: boolean }>
+  /** The same, every byte, saved where the person picks. False when they didn't pick anywhere. */
+  saveOriginal(message: number): Promise<boolean>
   /** Puts an email address, and nothing else, on the clipboard. */
   copyAddress(address: string): Promise<void>
   /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the

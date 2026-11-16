@@ -80,8 +80,13 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
   warnings. Every address can be selected, copied, written to, searched for, muted, let straight
   through or blocked from there. Escape or a click elsewhere closes it.
-- **Snooze:** a thread comes back when you say, or when someone replies. Later today is three hours
-  on, and is offered only while that's still today.
+- **View original:** a message's ⋮ shows it as your mail service has it, headers and every part, as
+  plain text (the first 2 MB of it), with Save as .eml for the whole. It's fetched when asked for,
+  since only what's read from a message is kept here.
+- **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
+  Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
+  the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
+  today is offered only while it's still today, and This evening only before it comes.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
@@ -93,6 +98,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   and what's typed in a composer is kept when its window is closed.
 - **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
   `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
+  The empty box offers the last eight searches (finished with Enter, or a result opened from them),
+  picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
+  this laptop.
 - **Faces:** a sender's photo, or their company's logo, where one exists, as in Edison Mail, and
   coloured initials otherwise. Your own accounts show your photo in the sidebar and Settings, from
   Gravatar or one you choose there. Who is asked about whom, and when, is under
@@ -103,15 +111,20 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   in the list do the same.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
-  selection, drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
+  selection (its ⋮ labels or files every thread picked, pins them, or moves them to Other or Focused),
+  drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
   choose which of its entries show and in what order, each account's own labels or folders among them,
-  with New Label or New Folder to make one on the server), recipient chips, side-by-side or
-  one-at-a-time reading, one to four lines of preview, and Settings you can search.
+  with New Label or New Folder to make one on the server), recipient chips, the message beside the
+  list or under it (each split dragged to the size you like, and kept) or one thing at a time, one to
+  four lines of preview, and Settings you can search.
 - **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
   in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
   The tray shows what's unread, and closing the window keeps it running. Spell check knows your
   language, plus English and Vietnamese.
-- **Light or dark**, or whatever the system says.
+- **Light or dark**, or whatever the system says. In the dark, mail made for a white page is darkened
+  to match: light backgrounds go dark and dark text light, each keeping its colour, while pictures,
+  anything drawn on a picture, and mail that's dark already stay as sent. Each message has Show
+  original colours, and Settings, Appearance can turn it off.
 - **xrnhub:** optional, and gets counts only.
 
 ## Using it
@@ -211,21 +224,16 @@ Not here, though Edison has them:
 
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
-- From Appearance: the reading pane under the list, the Scaling slider (View's zoom does that here)
-  and Adaptive Coloring, which darkens mail itself in dark mode. Here a message's HTML is shown as
-  its sender drew it, on white.
+- From Appearance: the Scaling slider (View's zoom does that here).
 - From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
   have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
   quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
   importance markers; and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
-- View original: a message's source, with Download. The source isn't kept on this laptop, so it would
-  be fetched from the server.
-- A message's own ⋮ has Reply all and Forward here. Edison's also has Pin Thread, Trash, Mark as
+- A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
-  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection (Move to Folder, Move to Other,
-  Apply Labels, Pin, Mark as important) isn't here either; a row's right-click menu and dragging to
-  the sidebar do some of it.
+  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Pin and
+  Move to Other here, but not Mark as important (Gmail's importance isn't read here at all).
 
 Done differently:
 
@@ -274,10 +282,23 @@ Done differently:
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.
+- Edison's layouts are Reading Pane Right, Reading Pane Bottom and Full Screen; here they're Layout's
+  side by side, Message under the list, and One thing at a time (Settings, General).
+- View original is a sheet over the window, where Edison's is a window of its own, and Save as .eml
+  is its Download.
+- Edison's Adaptive Coloring is Darken mail made for a white page here (Settings, Appearance), with
+  Show original colours on each message darkened. How Edison darkens isn't published; here the
+  colours are moved one by one, never the pictures.
+- On the bar under a selection, Labels adds a label to every thread picked (taking one off is a
+  thread at a time), and labels and folders need the threads to be from one account. Move to Other
+  and Move to Focused keep each picked thread's sender on that side, since that's how Focused and
+  Other are decided here.
+- Recent searches are as Edison's phone app has them (https://9to5mac.com/?p=837422); its Mac app's
+  pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to
   Later today at 18:00, Tomorrow at 9:00 and Next week on Monday at 9:00, each changeable. Here Later
-  today is three hours on, offered only while that's still today, then Tomorrow, the weekend and
-  Next week at 9:00, which can't be changed. On a Saturday or Sunday the weekend is next weekend's.
+  today is some hours on (3 to start with) and This evening is its own choice, and each time can be
+  changed in Settings, General. On a Saturday or Sunday the weekend to come is next weekend's.
 
 ## What it doesn't do yet
 

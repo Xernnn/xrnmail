@@ -26,6 +26,17 @@ const RECEIPT = `<html><body style="margin:0;background:#f4f4f4"><table width="1
   <table width="100%" cellpadding="6" style="border-top:1px solid #ddd"><tr><td>Cold brew, 2 bottles</td><td align="right">180,000 VND</td></tr><tr><td>Delivery</td><td align="right">65,000 VND</td></tr><tr><td><b>Total</b></td><td align="right"><b>245,000 VND</b></td></tr></table>
   </td></tr></table></td></tr></table></body></html>`
 
+/** A shop's offer: a pale page, a coloured band, a button, and grey small print. */
+const PROMO = `<div style="background:#f3f4f1;padding:24px 0"><table width="560" align="center" bgcolor="#ffffff" cellpadding="0" style="border:1px solid #e3e5df;border-radius:10px;font-family:Helvetica,Arial,sans-serif">
+  <tr><td bgcolor="#ffd84d" style="padding:22px 28px;color:#3a2f00"><b style="font-size:20px">Fresh this weekend</b><br>Strawberries are back, and so is the Sunday market.</td></tr>
+  <tr><td style="padding:22px 28px;color:#2b2d2a"><p>Order by Friday noon and we'll bring it on Saturday morning. Members get 10% off everything green.</p>
+  <p><a href="https://greenmarket.example/shop" style="display:inline-block;padding:10px 18px;border-radius:6px;background:#2f7d32;color:#ffffff;text-decoration:none">Shop the market</a></p>
+  <hr style="border:0;border-top:1px solid #e3e5df"><p style="color:#8a8f86;font-size:12px">You're getting this because you joined Green Market. <a href="https://greenmarket.example/u" style="color:#8a8f86">Unsubscribe</a></p></td></tr></table></div>`
+
+/** A newsletter that's dark already. */
+const DIGEST = `<div style="background:#14161c;color:#c9ccd3;padding:28px;font-family:Georgia,serif"><h1 style="color:#ffffff;margin-top:0">The night digest</h1>
+  <p>Four long reads for a slow evening, and a photograph of the moon.</p><p><a href="https://nightowl.example/read" style="color:#f5b942">Start reading</a></p></div>`
+
 const REPLY_HTML = `<div dir="ltr">Works for me. Let's keep it to thirty minutes, and I'll send the notes after.</div>
   <br><div class="gmail_quote"><div class="gmail_attr">On Tue, Mai Tran wrote:</div>
   <blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><div>Can we move the review to Thursday?</div></blockquote></div>`
@@ -56,6 +67,8 @@ function fill(gmail: FakeGmail): void {
   gmail.add(rawMail({ subject: 'Your account is locked', from: '"support@bigbank.example" <x@bank-login.example>', text: 'Sign in now.', headers: ['Authentication-Results: mx; dmarc=fail'] }), { arrived: ago(8) })
   for (const hours of [9, 33, 57]) gmail.add(rawMail({ subject: 'Deals this week', from: 'Deals <deals@shop.example>', text: 'Save now.', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: ago(hours) })
   gmail.add(rawMail({ subject: 'Old invoice', text: 'Thrown out.', from: 'Mai Tran <mai@example.com>' }), { box: '[Gmail]/Trash', arrived: ago(40) })
+  gmail.add(rawMail({ subject: 'Fresh this weekend', from: 'Green Market <hello@greenmarket.example>', html: PROMO }), { arrived: ago(20), flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'The night digest', from: 'Night Owl <owl@nightowl.example>', html: DIGEST }), { arrived: ago(21), flags: ['\\Seen'] })
 }
 
 /** Made-up faces: photos for some people, logos for some companies, nothing for the rest. */
@@ -117,6 +130,23 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.frameLocator('iframe.body-frame').getByText('Thanks for your order').waitFor()
     await new Promise((resolve) => setTimeout(resolve, 300))
     await page.screenshot({ path: `${folder}/${colorScheme}-receipt.png` })
+    if (colorScheme === 'dark') {
+      await page.getByRole('button', { name: 'Show original colours' }).click()
+      await page.getByRole('button', { name: 'Darken colours' }).waitFor()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await page.screenshot({ path: `${folder}/dark-receipt-original.png` })
+      await page.getByRole('button', { name: 'Darken colours' }).click()
+    }
+    await page.getByText('Fresh this weekend').first().click()
+    await page.frameLocator('iframe.body-frame').getByText('Strawberries are back').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-promo.png` })
+    await page.getByText('The night digest').first().click()
+    await page.frameLocator('iframe.body-frame').getByText('Four long reads').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await page.screenshot({ path: `${folder}/${colorScheme}-digest.png` })
+    await page.getByText('Order 48213 confirmed').first().click()
+    await page.frameLocator('iframe.body-frame').getByText('Thanks for your order').waitFor()
     await page.locator('.message.open').getByRole('button', { name: /^To:/ }).click()
     await page.getByRole('dialog', { name: 'Message details' }).getByText('Written to', { exact: true }).waitFor()
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -141,9 +171,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'General' }).click()
     await page.getByLabel('Layout').selectOption('list')
     await page.getByRole('button', { name: 'Done' }).click()
-    await page.getByRole('button', { name: 'Back' }).click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await new Promise((resolve) => setTimeout(resolve, 300))
     await page.screenshot({ path: `${folder}/${colorScheme}-wide-list.png` })
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByLabel('Layout').selectOption('below')
+    await page.getByRole('button', { name: 'Done' }).click()
+    await page.locator('.threads').getByText('Trip to Da Lat').first().click()
+    await page.locator('.messages').getByText('Bus leaves').waitFor()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await page.screenshot({ path: `${folder}/${colorScheme}-below.png` })
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByLabel('Layout').selectOption('panes')
     await page.getByRole('button', { name: 'Done' }).click()
@@ -250,9 +287,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: `${folder}/${colorScheme}-two-accounts.png` })
     await run.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(760, 700))
     await new Promise((resolve) => setTimeout(resolve, 400))
-    await page.getByRole('button', { name: 'Back' }).waitFor()
+    await page.getByRole('button', { name: 'Back', exact: true }).waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-narrow-reader.png` })
-    await page.getByRole('button', { name: 'Back' }).click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.locator('.thread').first().waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-narrow-list.png` })
     await run.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 840))

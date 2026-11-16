@@ -912,6 +912,19 @@ describe('attachments', () => {
     await expect(service.attachment(id, 0)).rejects.toThrow("That message isn't here any more.")
   })
 
+  it('fetches a message as the server has it for View original, named for its subject, without reading it', async () => {
+    const raw = rawMail({ subject: 'Notes / plans', headers: ['X-Mailer: Made Up 1.0'], attachment: { name: 'notes.txt', type: 'text/plain', body: 'hello file' } })
+    gmail.add(raw, { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Notes / plans')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    const found = await service.original(message?.id ?? 0)
+    expect(found.name).toBe('Notes / plans.eml') // made safe for a file name where it's saved
+    expect(found.bytes.toString().replace(/\r\n/g, '\n')).toBe(raw.replace(/\r\n/g, '\n'))
+    expect(gmail.commands).not.toContain('TOUCHED-SEEN')
+    await expect(service.original(123_456)).rejects.toThrow("That message isn't here any more.")
+  })
+
   it('lists, opens and forwards every file of a message too big to keep whole', async () => {
     const files = ['a', 'b', 'c'].map((c) => ({ name: `${c}.pdf`, type: 'application/pdf', body: c.repeat(2.5 * 1024 * 1024) }))
     gmail.add(rawMail({ subject: 'Scans', attachments: files }), { arrived: past(30) })

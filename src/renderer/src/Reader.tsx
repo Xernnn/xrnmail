@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink,
+  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
@@ -10,6 +10,7 @@ import { Avatar, Empty, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
+import { Original } from './Original'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 
 const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
@@ -136,6 +137,8 @@ function Message(props: {
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
   const [menu, setMenu] = useState(false)
+  /** View original is open for this message. */
+  const [source, setSource] = useState(false)
   const [details, setDetails] = useState(false)
   const toggleButton = useRef<HTMLButtonElement>(null)
   // Closed by Escape or a click elsewhere, it hands the focus back to what opened it.
@@ -198,10 +201,14 @@ function Message(props: {
                 <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('forward', m.id) }}>
                   <Forward size={15} aria-hidden="true" /> Forward
                 </button>
+                <button type="button" className="menu-item" onClick={() => { setMenu(false); setSource(true) }}>
+                  <FileCode size={15} aria-hidden="true" /> View original
+                </button>
               </Popover>
             )}
           </div>
         )}
+        {source && <Original message={m.id} subject={m.subject} close={() => setSource(false)} />}
         {details && (
           <Details message={m} account={props.account} own={own} actions={props.actions} close={closeDetails}
             cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={() => props.unsubscribe(m.id)} />
@@ -210,7 +217,7 @@ function Message(props: {
       <div className="message-body">
         <Cautions message={m} />
         {m.facts && <FactCard message={m} facts={m.facts} rsvp={rsvp} />}
-        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust}
+        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust} darken={settings?.darkMail !== false}
           keepQuoted={FORWARDED.test(m.subject)} />
         {m.attachments.length > 0 && <Attachments message={m} say={say} />}
         {m.truncated && <p className="muted note message-note">Too big to keep whole here.</p>}

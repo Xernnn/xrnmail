@@ -7,7 +7,8 @@ import {
 } from '@shared/types'
 import { SettingsKeeper, type SettingsChange } from '@shared/keeper'
 import type { Question } from './Common'
-import { problem } from './format'
+import { clock, problem } from './format'
+import type { LaterTimes } from '@shared/later'
 import {
   COMMANDS, FIXED, holder, KEY_SETS, keyName, keysOf, rebound, reset, spell, unbindable, type KeyChanges, type KeyCommand, type KeySet
 } from '@shared/keys'
@@ -33,10 +34,10 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen snooze send later today evening tomorrow weekend next week pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
-  appearance: 'theme look dark light icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
+  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
   signatures: 'signature sign',
@@ -308,15 +309,39 @@ function useIdentities(settings: Settings, change: Change): Identities {
   }
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+/** An hour of the day as the clock setting writes it: 07:00, or 7:00 AM. */
+const hourName = (hour: number): string => clock(new Date(2000, 0, 1, hour).getTime())
+const hours = (from: number, to: number): [number, string][] => Array.from({ length: to - from + 1 }, (_, i) => [from + i, hourName(from + i)])
+
+/** One of the snooze times: a day for those that have one, and an hour. */
+function When(props: { label: string; day?: [number, number[]]; hour: [number, [number, string][]]; set(change: Partial<{ day: number; hour: number }>): void }): ReactNode {
+  return (
+    <div className="inline when">
+      <span>{props.label}</span>
+      {props.day && (
+        <select aria-label={`${props.label}, day`} value={props.day[0]} onChange={(e) => props.set({ day: Number(e.target.value) })}>
+          {props.day[1].map((day) => <option key={day} value={day}>{DAY_NAMES[day]}</option>)}
+        </select>
+      )}
+      <select aria-label={`${props.label}, time`} value={props.hour[0]} onChange={(e) => props.set({ hour: Number(e.target.value) })}>
+        {props.hour[1].map(([hour, name]) => <option key={hour} value={hour}>{name}</option>)}
+      </select>
+    </div>
+  )
+}
+
 function General(props: { settings: Settings; save: Save }): ReactNode {
   const { settings, save } = props
+  const later = settings.later
+  const setLater = (change: Partial<LaterTimes>): void => save({ later: change })
   return (
     <>
       <section>
         <h3>Inbox</h3>
         <Check label="Split the inbox into Focused and Other" on={settings.focused} set={(focused) => save({ focused })} />
         <Choice label="Layout" value={settings.layout} set={(layout) => save({ layout })}
-          options={[['panes', 'List and message side by side'], ['list', 'One thing at a time']]} />
+          options={[['panes', 'List and message side by side'], ['below', 'Message under the list'], ['list', 'One thing at a time']]} />
         <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
           options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
       </section>
@@ -332,6 +357,17 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <Check label="Load the pictures in a message without asking" on={settings.images === 'always'} set={(on) => save({ images: on ? 'always' : 'ask' })} />
         <Choice label="Mark a thread read" value={settings.readAfter} set={(readAfter) => save({ readAfter })}
           options={[[0, 'As soon as it opens'], [1, 'After 1 second'], [2, 'After 2 seconds'], [5, 'After 5 seconds'], [-1, 'Only when I mark it read']]} />
+      </section>
+      <section>
+        <h3>Snooze and send later</h3>
+        <Choice label="Later today" value={later.laterHours} set={(laterHours) => setLater({ laterHours })}
+          options={Array.from({ length: 8 }, (_, i): [number, string] => [i + 1, i === 0 ? '1 hour from now' : `${i + 1} hours from now`])} />
+        <When label="This evening" hour={[later.evening, hours(15, 23)]} set={({ hour }) => setLater({ evening: hour })} />
+        <When label="Tomorrow" hour={[later.tomorrow, hours(5, 13)]} set={({ hour }) => setLater({ tomorrow: hour })} />
+        <When label="This weekend" day={[later.weekendDay, [6, 0]]} hour={[later.weekend, hours(5, 14)]}
+          set={({ day, hour }) => setLater(day === undefined ? { weekend: hour } : { weekendDay: day })} />
+        <When label="Next week" day={[later.weekDay, [1, 2, 3, 4, 5, 6, 0]]} hour={[later.week, hours(5, 14)]}
+          set={({ day, hour }) => setLater(day === undefined ? { week: hour } : { weekDay: day })} />
       </section>
       <section>
         <h3>This laptop</h3>
@@ -462,6 +498,7 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
         <h3>Theme</h3>
         <Choice label="Theme" value={settings.theme} set={(theme) => save({ theme })}
           options={[['light', 'Light'], ['dark', 'Dark'], ['system', 'Same as the system']]} />
+        <Check label="Darken mail made for a white page, when the look is dark" on={settings.darkMail} set={(darkMail) => save({ darkMail })} />
       </section>
       <section>
         <h3>Sidebar</h3>

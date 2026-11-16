@@ -458,6 +458,47 @@ test('nothing refreshes once quitting has closed the store', async () => {
   rmSync(folder, { recursive: true, force: true })
 })
 
+test('the reading pane can sit under the list, as tall as it is dragged to, and stays so', async () => {
+  run = await launch({ size: [1280, 840] })
+  const { page, gmail } = run
+  for (const [i, subject] of ['Alpha', 'Bravo', 'Charlie'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const box = async (selector: string): Promise<{ x: number; y: number; width: number; height: number }> => {
+    const found = await page.locator(selector).first().boundingBox()
+    if (!found) throw new Error(`${selector} isn't on screen`)
+    return found
+  }
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByLabel('Layout').selectOption('below')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.locator('.threads').getByText('Bravo').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Bravo')
+  await expect.poll(async () => Math.round((await box('.reader')).x)).toBe(Math.round((await box('section.list')).x))
+  const [list, handle, reader] = [await box('section.list'), await box('.resize'), await box('.reader')]
+  expect(Math.round(list.x)).toBe(Math.round(reader.x)) // one over the other, as wide
+  expect(Math.round(list.width)).toBe(Math.round(reader.width))
+  expect(handle.y).toBeGreaterThanOrEqual(list.y + list.height - 1)
+  expect(reader.y).toBeGreaterThanOrEqual(handle.y + handle.height - 1)
+  expect(handle.width).toBeGreaterThan(handle.height)
+  // Dragged down, the list grows by as much.
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 100, { steps: 5 })
+  await page.mouse.up()
+  const taller = await box('section.list')
+  expect(Math.round(taller.height - list.height)).toBe(100)
+  await page.reload()
+  await page.locator('.threads').getByText('Bravo').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Bravo')
+  expect(Math.round((await box('section.list')).height)).toBe(Math.round(taller.height))
+  expect(Math.round((await box('.reader')).x)).toBe(Math.round(list.x))
+  // And back beside it, at the width it had.
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByLabel('Layout').selectOption('panes')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(async () => (await box('.reader')).x).toBeGreaterThan(list.x + 300)
+})
+
 test('the window: a title and search over list and reader, and the sidebar in its order', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -882,6 +923,50 @@ test('selecting several and acting on them together', async () => {
   await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length, LONG).toBe(0)
 })
 
+test('the ⋮ on the bar under a selection labels, pins and moves to Other every thread picked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Alpha', from: 'Ann <ann@example.com>' }), { arrived: earlier(5), labels: ['\\Inbox', 'Receipts'] })
+  gmail.add(rawMail({ subject: 'Beta', from: 'Bob <bob@example.com>' }), { arrived: earlier(4) })
+  gmail.add(rawMail({ subject: 'Gamma', from: 'Cy <cy@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  const list = page.locator('.threads')
+  const pickTwo = async (): Promise<void> => {
+    await page.getByLabel('Select Beta').check({ force: true })
+    await page.getByLabel('Select Gamma').check({ force: true })
+    await expect(page.getByText('2 selected')).toBeVisible()
+  }
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: /^Labels/ }).click()
+  await bar.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await expect(page.getByText('Labelled Receipts: 2 threads')).toBeVisible()
+  await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('Receipts')).length, LONG).toBe(3)
+  await expect(bar).toHaveCount(0) // done with, the selection goes
+
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Pin', exact: true }).click()
+  await expect(page.getByText('Pinned: 2 threads')).toBeVisible()
+  await page.getByRole('button', { name: 'Pinned', exact: true }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma', 'Beta'])
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+
+  await pickTwo()
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Move to Other', exact: true }).click()
+  await expect(page.getByText('2 senders stay in Other')).toBeVisible()
+  await expect(list.locator('.thread .subject')).toHaveText(['Alpha'])
+  await page.getByRole('button', { name: /^Other/ }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma', 'Beta'])
+  await page.getByLabel('Select Beta').check({ force: true })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: 'Move to Focused', exact: true }).click()
+  await expect(page.getByText('bob@example.com stays in Focused')).toBeVisible()
+  await expect(list.locator('.thread .subject')).toHaveText(['Gamma'])
+})
+
 test('keys keep working after ticking a checkbox, and act on the selection', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -922,6 +1007,44 @@ test('snoozing takes a thread away until its time, and it can be found meanwhile
   await expect(page.locator('.threads').getByText('Later please')).toBeVisible()
 })
 
+test('Settings say what Tomorrow, the weekend and Next week mean, for snoozing and for sending later', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Later please' }), { arrived: earlier(5) })
+  await signIn(run)
+  const day = (offset: number, hour: number): Date => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, hour)
+  }
+  const toTuesday = (2 - new Date().getDay() + 7) % 7 || 7
+  const dayName = (at: Date): string => at.toLocaleDateString([], { weekday: 'short' })
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByLabel('Tomorrow, time')).toHaveValue('9')
+  await page.getByLabel('Tomorrow, time').selectOption('7')
+  await page.getByLabel('Next week, day').selectOption('2')
+  await page.getByLabel('Next week, time').selectOption('8')
+  await page.getByLabel('Later today').selectOption('1')
+  await expect.poll(() => page.evaluate(async () => (await window.mail.settings()).later))
+    .toMatchObject({ tomorrow: 7, weekDay: 2, week: 8, laterHours: 1, evening: 18, weekendDay: 6, weekend: 9 })
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+
+  await page.getByText('Later please').click()
+  await page.keyboard.press('b')
+  const tomorrow = page.getByRole('button', { name: /^Tomorrow/ })
+  await expect(tomorrow).toContainText(`${dayName(day(1, 7))}`)
+  await expect(tomorrow).toContainText('07:00')
+  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText(`${dayName(day(toTuesday, 8))}`)
+  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText('08:00')
+  await tomorrow.click()
+  await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+  await expect.poll(() => page.evaluate(async () => (await window.mail.list({ kind: 'snoozed' }))[0]?.snoozedUntil)).toBe(day(1, 7).getTime())
+
+  await page.getByRole('button', { name: 'Compose' }).click()
+  await page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Send later' }).click()
+  await expect(page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: /^Tomorrow/ })).toContainText('07:00')
+})
+
 test('flags and labels reach Gmail', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -956,6 +1079,36 @@ test('attachments: saved exactly, opened only when safe', async () => {
   await page.getByRole('button', { name: /^totally-a-photo/ }).click()
   await expect(page.getByText('Save this kind of file first')).toBeVisible()
   expect(await run.openedFiles()).toHaveLength(1)
+})
+
+test('View original shows a message as the server has it, as text, and saves it as .eml', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p>Hello <b id="planted">there</b></p><img src=x onerror="document.title=\'pwned\'">'
+  gmail.add(rawMail({ subject: 'Plans: Friday', from: 'Mai Tran <mai@example.com>', html, headers: ['X-Mailer: Made Up 1.0'], attachment: { name: 'plan.txt', type: 'text/plain', body: 'step one' } }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plans: Friday').click()
+  await page.locator('.message.open').getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('button', { name: 'View original' }).click()
+  const sheet = page.getByRole('dialog', { name: 'Original: Plans: Friday' })
+  const source = sheet.locator('pre')
+  await expect(source).toContainText('X-Mailer: Made Up 1.0')
+  await expect(source).toContainText('Subject: Plans: Friday')
+  await expect(source).toContainText('<b id="planted">there</b>') // its HTML as text, never as a page
+  await expect(source).toContainText(Buffer.from('step one').toString('base64'))
+  expect(await sheet.locator('#planted, img').count()).toBe(0)
+  await page.keyboard.press('e') // the app's keys wait while it's open
+  await expect(page.locator('.threads').getByText('Plans: Friday')).toBeVisible()
+  await sheet.getByRole('button', { name: 'Save as .eml' }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  const saved = readFileSync(run.savedTo, 'utf8')
+  expect(saved).toContain('X-Mailer: Made Up 1.0')
+  expect(saved.replace(/\r\n/g, '\n')).toBe(gmail.mails[0]?.raw.toString().replace(/\r\n/g, '\n'))
+  await page.keyboard.press('Escape')
+  await expect(sheet).toHaveCount(0)
+  expect(await page.title()).toBe('xrnmail')
+  expect(await run.opened()).toEqual([])
+  expect(await run.openedFiles()).toEqual([])
 })
 
 // U+202E shows the rest of a name backwards, so a program could pass for a picture.

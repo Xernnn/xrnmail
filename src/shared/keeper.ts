@@ -47,8 +47,12 @@ export function applied(settings: Settings, change: SettingsChange): Settings {
     if (list === 'summary') return { ...settings, summary: { ...settings.summary, senders: editedSenders(settings.summary.senders, addresses, on) } }
     return { ...settings, [list]: editedSenders(settings[list], addresses, on) }
   }
-  const { identities, ...rest } = change.profile
-  return { ...settings, ...rest, identities: identities ? { ...settings.identities, ...identities } : settings.identities }
+  const { identities, later, ...rest } = change.profile
+  return {
+    ...settings, ...rest,
+    identities: identities ? { ...settings.identities, ...identities } : settings.identities,
+    later: later ? { ...settings.later, ...later } : settings.later
+  }
 }
 
 export class SettingsKeeper {

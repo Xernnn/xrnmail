@@ -5,6 +5,8 @@ import type {
 import { QUICK_SLOTS } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
+import { cleanSearches, withSearch } from '@shared/searches'
+import { cleanLater, DEFAULT_LATER } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
@@ -21,7 +23,7 @@ import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './saf
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
-import type { DraftCopy, DraftLink, Located, PendingAction, Store } from './store'
+import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
 
@@ -59,6 +61,7 @@ const DEFAULT_SETTINGS: Settings = {
   undoSeconds: 10,
   defaultReply: 'reply',
   theme: 'system',
+  darkMail: true,
   focused: true,
   alwaysFocused: [],
   alwaysOther: [],
@@ -84,7 +87,8 @@ const DEFAULT_SETTINGS: Settings = {
   startAtLogin: false,
   images: 'ask',
   imagesFrom: [],
-  readAfter: 0
+  readAfter: 0,
+  later: DEFAULT_LATER
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -925,6 +929,30 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** The searches made lately, newest first, for the empty search box to offer. */
+  searches(): string[] {
+    try {
+      return cleanSearches(JSON.parse(this.store.meta('searches') ?? '[]'))
+    } catch {
+      return []
+    }
+  }
+
+  /** A search was used: it goes first. */
+  rememberSearch(text: string): string[] {
+    return this.keepSearches(withSearch(this.searches(), text))
+  }
+
+  /** One search let go of, or with none named, all of them. */
+  forgetSearch(text: string | null): string[] {
+    return this.keepSearches(text === null ? [] : this.searches().filter((kept) => kept !== text))
+  }
+
+  private keepSearches(list: string[]): string[] {
+    this.store.setMeta('searches', JSON.stringify(list))
+    return list
+  }
+
   /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
   pin(targets: ThreadRef[], on: boolean): void {
     const now = this.deps.now()
@@ -1032,6 +1060,22 @@ export class MailService {
   /** Fetched whole on demand: attachments aren't kept here. Their list is, and if it was made from a
    *  cut copy, it's made again from this. */
   private async wholeAttachments(id: number): Promise<WholeAttachment[]> {
+    const { whole } = await this.wholeMessage(id)
+    if (!whole) throw new Error("That attachment isn't in the message any more.")
+    const found = await attachmentsOf(whole)
+    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
+    return found
+  }
+
+  /** A message as the server has it, every byte, for View original and Save as .eml. Only what's
+   *  read from it is kept here, so it's fetched each time it's asked for. */
+  async original(id: number): Promise<{ name: string; bytes: Buffer }> {
+    const { message, whole } = await this.wholeMessage(id)
+    if (!whole) throw new Error("That message isn't on the server any more.")
+    return { name: `${message.subject.trim() || 'Message'}.eml`, bytes: whole }
+  }
+
+  private async wholeMessage(id: number): Promise<{ message: MessageDetail; whole: Buffer | null }> {
     const message = this.store.message(id, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
     let source: MailSource | null = null
@@ -1049,10 +1093,7 @@ export class MailService {
     } finally {
       await source?.close().catch(() => undefined)
     }
-    if (!whole) throw new Error("That attachment isn't in the message any more.")
-    const found = await attachmentsOf(whole)
-    this.store.wholeFiles(id, found.map(({ name, type, content }) => ({ name, type, size: content.length })))
-    return found
+    return { message, whole }
   }
 
   /** A stranger's header picks the address, so the app only ever sends the fixed request the
@@ -1713,6 +1754,7 @@ export class MailService {
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,
       theme: patch.theme ?? settings.theme,
+      darkMail: patch.darkMail ?? settings.darkMail,
       focused: patch.focused ?? settings.focused,
       layout: patch.layout ?? settings.layout,
       afterRemove: patch.afterRemove ?? settings.afterRemove,
@@ -1734,7 +1776,9 @@ export class MailService {
       startAtLogin: patch.startAtLogin ?? settings.startAtLogin,
       images: patch.images ?? settings.images,
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
-      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60)
+      readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
+      // Only the times named change, so two set one after the other both stay.
+      later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })
     this.deps.changed()
   }
