@@ -45,9 +45,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
   General say: what takes mail away waits that long here before the server hears of it). It keeps
-  working offline and catches up.
-  Once the open thread is archived or deleted, the next one opens, or the one before, or the list
-  comes back, as Settings, General say. Marking it unread closes it, so nothing else gets read.
+  working offline and catches up. On Gmail, threads it thinks matter carry its importance marker, and
+  can be marked important or not from the ⋮ over a thread or under a selection. Once the open thread
+  is archived or deleted, the next one opens, or the one before, or the list comes back, as Settings,
+  General say. Marking it unread closes it, so nothing else gets read.
 - **Reading:** a thread is read as it opens, or after a few seconds open, or only when you mark it
   read (Settings, General), so going down the list to look reads nothing by the way. In Unread the
   open thread keeps its place while it's read, so `j` goes on to the one below. A thread reads oldest
@@ -234,13 +235,13 @@ Not here, though Edison has them:
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 - From Appearance: the Scaling slider (View's zoom does that here).
-- From General: which of Cc and Bcc a new message shows; replies opening in a window of their own; Gmail's
-  importance markers; and a count beside Unread, which here is the inbox's unread and would only
+- From General: which of Cc and Bcc a new message shows; replies opening in a window of their own;
+  and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
 - A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
-  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Pin and
-  Move to Other here, but not Mark as important (Gmail's importance isn't read here at all).
+  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Mark as
+  important or not important (on Gmail), Pin and Move to Other here.
 
 Done differently:
 
@@ -303,6 +304,10 @@ Done differently:
   thread at a time), and labels and folders need the threads to be from one account. Move to Other
   and Move to Focused keep each picked thread's sender on that side, since that's how Focused and
   Other are decided here.
+- Gmail's importance markers are a small grey tag after a row's subject, which Settings, Appearance
+  can hide, and only Gmail threads have them. Mark as important and Mark as not important are on the ⋮
+  over a thread and the ⋮ on the bar under a selection, not on a message's own ⋮, because Gmail marks
+  a whole conversation. Like a flag, the mark itself shows it's done: there's no toast with Undo.
 - Recent searches are as Edison's phone app has them (https://9to5mac.com/?p=837422); its Mac app's
   pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to

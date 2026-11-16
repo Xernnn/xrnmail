@@ -37,7 +37,7 @@ const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
-  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
+  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
   signatures: 'signature sign',
@@ -520,6 +520,7 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
         <Choice label="Preview lines" value={settings.previewLines} set={(previewLines) => save({ previewLines })}
           options={[[0, 'None'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]} />
         <Check label="Show a thread's files as cards under its row" on={settings.attachmentCards} set={(attachmentCards) => save({ attachmentCards })} />
+        <Check label="Show Gmail's importance markers in the list" on={settings.importanceMarks} set={(importanceMarks) => save({ importanceMarks })} />
         <Check label="Use the 24-hour clock" on={settings.clock24} set={(clock24) => save({ clock24 })} />
       </section>
     </>

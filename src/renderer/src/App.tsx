@@ -3,11 +3,12 @@ import {
   Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
   SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
-import type {
-  AccountView, Draft, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
+import {
+  IMPORTANT, type AccountView, type Draft, type DraftStart, type ListQuery, type MailAction, type MessageView, type Overview, type Rsvp, type Settings, type Subscription,
+  type SummarySettings, type SwipeAction, type ThreadRef, type ThreadRow
 } from '@shared/types'
 import { Composer } from './Composer'
-import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
+import { Confirm, ContextMenu, Empty, ImportantMark, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
@@ -890,6 +891,8 @@ export function App(): ReactNode {
   const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
   const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
   const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  // Importance is Gmail's, so it's offered only for threads that are all on Gmail.
+  const pickedGmail = pickedRows.length > 0 && pickedRows.every((r) => accounts.find((a) => a.email === r.account)?.labels)
   const onOther = active.kind === 'inbox' && active.focus === 'other'
   const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', below ? 'below' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
@@ -1087,7 +1090,7 @@ export function App(): ReactNode {
                 <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true}
+                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true} importance={profile?.importanceMarks ?? true}
                   open={() => setOpen({ account: row.account, thread: row.thread })}
                   pick={(event) => togglePick(row, index, event.shiftKey)}
                   act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
@@ -1147,6 +1150,16 @@ export function App(): ReactNode {
                             </button>
                           ) : (
                             <p className="muted note menu-note">Labels and folders are each account's own: pick threads from one account to file them.</p>
+                          )}
+                          {pickedGmail && pickedRows.some((r) => !r.important) && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void run(refs, { kind: 'label', label: IMPORTANT, add: true }) }}>
+                              <ImportantMark size={15} /> Mark as important
+                            </button>
+                          )}
+                          {pickedGmail && pickedRows.some((r) => r.important) && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void run(refs, { kind: 'label', label: IMPORTANT, add: false }) }}>
+                              <ImportantMark size={15} /> Mark as not important
+                            </button>
                           )}
                           <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); setPicked(new Set()); void pin(refs, !allPinned) }}>
                             {allPinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />} {allPinned ? 'Unpin' : 'Pin'}

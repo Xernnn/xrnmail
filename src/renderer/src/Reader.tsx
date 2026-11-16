@@ -5,8 +5,8 @@ import {
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
-import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
-import { Avatar, Empty, KIND_ICONS } from './Common'
+import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
+import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
@@ -318,6 +318,7 @@ export function Reader(props: {
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
   const starred = messages.some((m) => m.flagged)
   const pinned = messages.some((m) => m.pinned)
+  const important = messages.some((m) => m.labels.includes(IMPORTANT))
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
   const person = messages.find((m) => m.from.address && m.from.address !== last.account)
   const sender = person?.from.address
@@ -400,6 +401,13 @@ export function Reader(props: {
             <Popover right close={() => setPanel(null)}>
               {!bins && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
               {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
+              {gmail && !bins && (
+                // As with a flag, the mark itself says it's done: no toast, since an Undo there couldn't
+                // call back a change that has already gone to Gmail.
+                <button type="button" className="menu-item" onClick={() => { setPanel(null); act({ kind: 'label', label: IMPORTANT, add: !important }) }}>
+                  <ImportantMark size={15} /> {important ? 'Mark as not important' : 'Mark as important'}
+                </button>
+              )}
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
               {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}

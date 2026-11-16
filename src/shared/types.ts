@@ -151,6 +151,8 @@ export interface Settings {
   sidebar: SidebarChoice
   /** Icons beside the sidebar's entries. */
   sidebarIcons: boolean
+  /** Gmail's importance markers on rows of the list. */
+  importanceMarks: boolean
   /** Times as 17:30, not 5:30 PM. */
   clock24: boolean
   /** Which set of keys the keyboard answers to: Edison Mail's, Gmail's as xrnmail had them, Apple
@@ -201,6 +203,8 @@ export interface ThreadRow {
   unread: number
   attachment: boolean
   starred: boolean
+  /** Gmail has marked it important (its \\Important label). Only Gmail does. */
+  important: boolean
   /** Set while it's away, and for a while after it comes back. */
   snoozedUntil: number | null
   facts: Facts | null
@@ -355,6 +359,10 @@ export type ListQuery =
   /** A sender's page: their threads on one account. */
   | { kind: 'from'; account: string; address: string }
 
+/** Gmail's label for mail it thinks matters, which its importance markers show. It's added and taken
+ *  off as any label is. */
+export const IMPORTANT = '\\Important'
+
 /** A change to mail in Gmail, made because the person asked for it. */
 export type MailAction =
   | { kind: 'archive' | 'inbox' | 'trash' | 'spam' | 'read' | 'unread' | 'star' | 'unstar' | 'forever' }
@@ -424,7 +432,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder'>> & {
   /** Only the times named. */

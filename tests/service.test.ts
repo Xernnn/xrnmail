@@ -775,6 +775,31 @@ describe('changing mail', () => {
     expect(service.overview().labels).toEqual([{ account: ME, label: 'Work', count: 1 }])
   })
 
+  it('Gmail\'s importance shows on a thread, both ways, and marking it goes to Gmail as its label, offline too', async () => {
+    gmail.add(rawMail({ subject: 'Matters' }), { arrived: past(10), labels: ['\\Inbox', '\\Important'] })
+    await service.syncAll()
+    const important = (subject: string): boolean | undefined => service.list({ kind: 'inbox' }).find((r) => r.subject === subject)?.important
+    expect(important('Matters')).toBe(true)
+    expect(important('One')).toBe(false)
+    expect(service.overview().labels).toEqual([]) // it's Gmail's own, not one of yours
+    // Marked on the phone, it shows here.
+    gmail.change(fakeMail('Two').uid, ['\\Inbox', '\\Important'])
+    await service.syncAll()
+    expect(important('Two')).toBe(true)
+
+    gmail.dropNextConnection = true
+    service.act([ref('One')], { kind: 'label', label: '\\Important', add: true })
+    service.act([ref('Matters')], { kind: 'label', label: '\\Important', add: false })
+    expect(important('One')).toBe(true)
+    expect(important('Matters')).toBe(false)
+    await eventually(() => expect(service.accounts()[0]?.error).toBe("Couldn't reach Gmail."))
+    expect(fakeMail('One').labels).not.toContain('\\Important') // not reached: it waits, and goes again
+    await later(61_000)
+    await eventually(() => expect(fakeMail('One').labels).toContain('\\Important'))
+    await eventually(() => expect(fakeMail('Matters').labels).toEqual(['\\Inbox']))
+    expect(important('One')).toBe(true)
+  })
+
   it('never touches a held message in the thread', async () => {
     gmail.add(rawMail({ subject: 'One' }), { arrived: new Date(clock + 60_000), thread: fakeMail('One').thread })
     await later(120_000)

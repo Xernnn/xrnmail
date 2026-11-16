@@ -27,6 +27,18 @@ export function initials(name: string, address: string): string {
   return letters.toLocaleUpperCase() || '?'
 }
 
+/** Gmail's importance marker: a small arrow-shaped tag, drawn in the page's own colours. With [label]
+ *  it says what it is; without, it's beside words that do. */
+export function ImportantMark(props: { size?: number; label?: string; className?: string }): ReactNode {
+  const size = props.size ?? 13
+  return (
+    <svg className={props.className} width={size} height={size} viewBox="0 0 16 16" fill="currentColor"
+      {...(props.label ? { role: 'img', 'aria-label': props.label } : { 'aria-hidden': true })}>
+      <path d="M1.5 3.5h9.2a1 1 0 0 1 .8.4L14.5 8l-3 4.1a1 1 0 0 1-.8.4H1.5L4.7 8z" />
+    </svg>
+  )
+}
+
 /** A face for someone: their photo or their company's logo where the main process has one, or
  *  initials in a colour that's always the same for the same address. [lookUp] lets it be looked up,
  *  which only lists do; [plain] is initials whatever there is, for mail with a sender warning. */

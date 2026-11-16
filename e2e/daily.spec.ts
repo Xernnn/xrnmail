@@ -1076,6 +1076,50 @@ test('the ⋮ on the bar under a selection labels, pins and moves to Other every
   await expect(list.locator('.thread .subject')).toHaveText(['Gamma'])
 })
 
+test('Gmail\'s importance: a quiet mark in the list, set from the bar under a selection and over a thread, and Appearance can hide it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Rent is due', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(4), labels: ['\\Inbox', '\\Important'] })
+  gmail.add(rawMail({ subject: 'Lunch on Friday', from: 'Linh Pham <linh@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  const mark = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject }).getByRole('img', { name: 'Important', exact: true })
+  const labelsOf = (subject: string): string[] => gmail.mails.find((m) => m.raw.toString().includes(subject))?.labels ?? []
+  await expect(mark('Rent is due')).toBeVisible()
+  await expect(mark('Lunch on Friday')).toHaveCount(0)
+  // Quiet: no bigger than the flag and paperclip beside it, in the list's muted grey.
+  expect((await mark('Rent is due').boundingBox())?.height).toBeLessThanOrEqual(13)
+  expect(await mark('Rent is due').evaluate((el) => getComputedStyle(el).color)).toBe(await list.locator('.snippet').first().evaluate((el) => getComputedStyle(el).color))
+
+  await page.getByLabel('Select Lunch on Friday').check({ force: true })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await expect(bar.getByRole('button', { name: 'Mark as not important' })).toHaveCount(0)
+  await bar.getByRole('button', { name: 'Mark as important' }).click()
+  await expect(mark('Lunch on Friday')).toBeVisible()
+  await expect(bar).toHaveCount(0) // done with, the selection goes
+  await expect.poll(() => labelsOf('Lunch on Friday'), LONG).toContain('\\Important')
+
+  await list.getByText('Rent is due').click()
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Mark as not important' }).click()
+  await expect(mark('Rent is due')).toHaveCount(0)
+  await expect.poll(() => labelsOf('Rent is due'), LONG).toEqual(['\\Inbox'])
+  await expect(page.locator('.thread-head .tag')).toHaveCount(0) // Gmail's own, so not one of the thread's labels
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Mark as important' }).click()
+  await expect(mark('Rent is due')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  const showing = page.getByLabel('Show Gmail\'s importance markers in the list')
+  await expect(showing).toBeChecked()
+  await showing.uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await expect(list.getByRole('img', { name: 'Important', exact: true })).toHaveCount(0)
+})
+
 test('keys keep working after ticking a checkbox, and act on the selection', async () => {
   run = await launch()
   const { page, gmail } = run
