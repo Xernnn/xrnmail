@@ -2175,6 +2175,16 @@ describe('going back over old previews', () => {
     await service.refreshSnippets('1.1')
     expect(service.list({ kind: 'inbox' })[0]?.snippet).toBe('Fresh words.')
   })
+
+  it('remakes them when the way they are made changes, in the same version', async () => {
+    gmail.add(rawMail({ subject: 'Code', text: '<!doctype html><p>Your code is 4821.</p>' }), { arrived: new Date(at(8)) })
+    await signedIn()
+    const row = service.list({ kind: 'inbox' })[0]
+    store.setSnippet(service.thread(ME, row?.thread ?? '')[0]?.id ?? 0, '<!doctype html><p>Your code is 4821.</p>')
+    store.setMeta('snippets', '0.1.0') // as the version before this left it
+    await service.refreshSnippets('0.1.0')
+    expect(service.list({ kind: 'inbox' })[0]?.snippet).toBe('Your code is 4821.')
+  })
 })
 
 describe('quitting', () => {

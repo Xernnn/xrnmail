@@ -74,6 +74,26 @@ describe('previews', () => {
   it('is quick over mail made to be slow', () => {
     quick(() => makeSnippet(`${'On '.repeat(100_000)}wrote:`))
     quick(() => makeSnippet('', `<div>${'<b>x'.repeat(5_000)}</div>`))
+    quick(() => makeSnippet(`<p>${'&#39;'.repeat(100_000)}`))
+    quick(() => makeSnippet(`${'[image: '.repeat(50_000)}`))
+    quick(() => makeSnippet(`${'${'.repeat(100_000)}`))
+  })
+
+  // A plain part that's really the HTML source, as some senders' software writes it, showed its tags.
+  it('reads a plain part that is really HTML as HTML, or the HTML part when there is one', () => {
+    expect(makeSnippet('<!doctype html><html><body><p>Your code is 4821.<br />It works for ten minutes.</p><!-- footer --></body></html>'))
+      .toBe('Your code is 4821. It works for ten minutes.')
+    expect(makeSnippet('<div>Hello</div>', '<p>Hello from the HTML part</p>')).toBe('Hello from the HTML part')
+    expect(makeSnippet('Use <b> for bold, and a < b when it is.')).toBe('Use <b> for bold, and a < b when it is.') // text about tags is text
+  })
+
+  it('decodes what is written as entities, and drops what stands in for pictures', () => {
+    expect(makeSnippet('We&#39;ve got your order &amp; it ships &quot;today&quot;&nbsp;&mdash; thanks.')).toBe('We\'ve got your order & it ships "today" — thanks.')
+    expect(makeSnippet('[image: Shop logo]\nYour receipt [cid:logo@shop]is ready.')).toBe('Your receipt is ready.')
+  })
+
+  it('leaves no empty brackets where links were, and no template a sender forgot to fill in', () => {
+    expect(makeSnippet('Hi ${first_name}, read more ( https://shop.example/a ) or < https://shop.example/b > now.')).toBe('Hi, read more or now.')
   })
 })
 

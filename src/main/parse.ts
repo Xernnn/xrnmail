@@ -155,10 +155,44 @@ const BROWSER_LINE_WITHIN = 400
 const withoutBrowserLine = (text: string): string =>
   text.slice(0, BROWSER_LINE_WITHIN).replace(BROWSER_LINE, ' ') + text.slice(BROWSER_LINE_WITHIN)
 
+/** How snippets are made. Counted up when that changes, so the ones already kept are made again. */
+export const SNIPPET_RULES = 2
+
+/** A plain part that's really HTML source, as some senders' software writes one: it opens with a tag
+ *  or a doctype, or has a few of the tags only markup has. Words about a tag or two are still words. */
+const OPENS_AS_HTML = /^\s{0,200}<(?:!doctype|!--|html|head|body|div|p|table|meta|style)\b/i
+const MARKUP = /<(?:\/?(?:p|div|br|span|table|tbody|tr|td|a|img|html|body|head|style|font|center)\b[^<>]{0,300}>|!--)/gi
+function looksLikeHtml(text: string): boolean {
+  if (OPENS_AS_HTML.test(text)) return true
+  let tags = 0
+  for (const _ of text.slice(0, 20_000).matchAll(MARKUP)) if (++tags >= 3) return true
+  return false
+}
+
+/** What a plain part writes as entities, as if it were HTML: "We&#39;ve", "&amp;". */
+const ENTITY = /&(?:#(\d{1,7})|#x([\da-f]{1,6})|([a-z]{2,8}));/gi
+const NAMED: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©', reg: '®', trade: '™', zwnj: '', zwj: ''
+}
+const decoded = (text: string): string => text.replace(ENTITY, (whole, decimal?: string, hex?: string, name?: string) => {
+  if (name) return NAMED[name.toLowerCase()] ?? whole
+  const code = decimal ? Number(decimal) : parseInt(hex ?? '', 16)
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ' '
+})
+
+/** What stands in for a picture in text made from HTML, "[image: Logo]" and "[cid:…]"; a template's
+ *  blank the sender forgot to fill in, "${first_name}"; and brackets left empty once a link has gone. */
+const STAND_INS = /\[(?:image|cid):[^\]\n]{0,200}\]|\$\{[^}\n]{0,80}\}/gi
+const EMPTY_BRACKETS = /\(\s{0,20}\)|\[\s{0,20}\]|<\s{0,20}>/g
+
 /** A line or two about what's new in a message: not what it quotes, and not its machinery. */
 export function makeSnippet(text: string, html: string | null = null): string {
-  const tidy = (words: string): string => withoutBrowserLine(splitQuoted(words).fresh).replace(NOISE, ' ').replace(/\s+/g, ' ').trim()
-  const preview = tidy(text) || (html ? tidy(readableHtml(html)) : '') || text.replace(/\s+/g, ' ').trim()
+  const tidy = (words: string): string => withoutBrowserLine(splitQuoted(words).fresh).replace(STAND_INS, ' ').replace(NOISE, ' ')
+    .replace(EMPTY_BRACKETS, ' ').replace(/\s+/g, ' ').replace(/ ([,.;:!?])/g, '$1').trim()
+  // A plain part that's HTML is read as HTML: the message's own HTML part if it has one, or itself.
+  const plain = looksLikeHtml(text) ? readableHtml(html ?? text) : decoded(text)
+  const preview = tidy(plain) || (html ? tidy(readableHtml(html)) : '') || plain.replace(/\s+/g, ' ').trim()
   return preview.slice(0, SNIPPET)
 }
 

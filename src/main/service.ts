@@ -17,7 +17,7 @@ import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, SNIPPET_RULES, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
 import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
@@ -1577,7 +1577,9 @@ export class MailService {
 
   /** Remakes the previews of mail stored by an older version, in small steps. The tag means it
    *  happens once, and the steps mean a large mailbox doesn't hold everything else up. */
-  async refreshSnippets(tag: string): Promise<void> {
+  async refreshSnippets(version: string): Promise<void> {
+    // Made again for each version, and when the way they're made changes in between.
+    const tag = `${version}+${SNIPPET_RULES}`
     if (this.store.meta('snippets') === tag) return
     let after = 0
     for (;;) {
