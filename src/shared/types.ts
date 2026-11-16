@@ -174,6 +174,8 @@ export interface Settings {
   images: 'ask' | 'always'
   /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
   readAfter: number
+  /** The messages of an open thread from the top down: the first one first, or the newest. */
+  threadOrder: 'oldest' | 'newest'
   /** What Later today, This evening, Tomorrow, the weekend and Next week mean, for snoozing and sending later. */
   later: LaterTimes
   /** Senders whose pictures load without being asked for. */
@@ -424,7 +426,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>> & {
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder'>> & {
   /** Only the times named. */
   later?: Partial<LaterTimes>
 }

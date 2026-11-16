@@ -366,6 +366,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
   if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
+  if (p['threadOrder'] === 'oldest' || p['threadOrder'] === 'newest') patch.threadOrder = p['threadOrder']
   if (p['later'] && typeof p['later'] === 'object') {
     const later = p['later'] as Record<string, unknown>
     patch.later = Object.fromEntries(Object.entries(later).filter(([key]) => key in DEFAULT_LATER).map(([key, value]) => [key, number(value)])) as Partial<LaterTimes>

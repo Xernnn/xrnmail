@@ -50,7 +50,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   comes back, as Settings, General say. Marking it unread closes it, so nothing else gets read.
 - **Reading:** a thread is read as it opens, or after a few seconds open, or only when you mark it
   read (Settings, General), so going down the list to look reads nothing by the way. In Unread the
-  open thread keeps its place while it's read, so `j` goes on to the one below.
+  open thread keeps its place while it's read, so `j` goes on to the one below. A thread reads oldest
+  first, or newest first if Settings, General say so: then the newest is on top, open, with the
+  middle folded below it over the first, and Reply at the foot and `r` still answer the newest.
 - **Trash and Spam:** read them, restore from them, or delete for good.
 - **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
   there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
@@ -232,7 +234,7 @@ Not here, though Edison has them:
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 - From Appearance: the Scaling slider (View's zoom does that here).
-- From General: which of Cc and Bcc a new message shows; conversations newest first; replies opening in a window of their own; Gmail's
+- From General: which of Cc and Bcc a new message shows; replies opening in a window of their own; Gmail's
   importance markers; and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
 - A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as

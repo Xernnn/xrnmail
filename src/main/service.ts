@@ -93,6 +93,7 @@ const DEFAULT_SETTINGS: Settings = {
   images: 'ask',
   imagesFrom: [],
   readAfter: 0,
+  threadOrder: 'oldest',
   later: DEFAULT_LATER
 }
 
@@ -1785,6 +1786,7 @@ export class MailService {
       images: patch.images ?? settings.images,
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
       readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
+      threadOrder: patch.threadOrder === 'oldest' || patch.threadOrder === 'newest' ? patch.threadOrder : settings.threadOrder,
       // Only the times named change, so two set one after the other both stay.
       later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })

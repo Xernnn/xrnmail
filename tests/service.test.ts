@@ -1809,6 +1809,16 @@ describe('settings', () => {
     expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
   })
 
+  it('keeps the order of a thread\'s messages, oldest first to start with, and nothing else', () => {
+    expect(service.settings().threadOrder).toBe('oldest')
+    service.saveProfile({ threadOrder: 'newest' })
+    expect(service.settings().threadOrder).toBe('newest')
+    service.saveProfile({ threadOrder: 'sideways' as never })
+    expect(service.settings().threadOrder).toBe('newest')
+    service.saveProfile({ threadOrder: 'oldest' })
+    expect(service.settings().threadOrder).toBe('oldest')
+  })
+
   it('keeps the list\'s choices within what a row can show', () => {
     expect(service.settings()).toMatchObject({
       previewLines: 2, quickOn: true, quickActions: ['archive', 'flag', 'trash', 'read'],

@@ -325,6 +325,10 @@ export function Reader(props: {
   const folded = !unfolded && messages.length > LONG_THREAD
   const hidden = folded ? messages.slice(1, -2).filter((m) => !open.has(m.id)) : []
   const shown = messages.filter((m) => !hidden.includes(m))
+  // Newest first, the thread reads from the top down the other way, and the fold sits above the first.
+  const newestFirst = settings?.threadOrder === 'newest'
+  const ordered = newestFirst ? [...shown].reverse() : shown
+  const foldAt = newestFirst ? ordered.length - 1 : 1
   const leaving = [...messages].reverse().find((m) => m.unsubscribe)
   const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
   const several = last.to.length + last.cc.length > 1
@@ -426,9 +430,9 @@ export function Reader(props: {
             <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>
           )}
         </div>
-        {shown.map((m, i) => (
+        {ordered.map((m, i) => (
           <div key={m.id} className="message-slot">
-            {hidden.length > 0 && i === 1 && (
+            {hidden.length > 0 && i === foldAt && (
               <button className="fold" onClick={() => setUnfolded(true)}>
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>

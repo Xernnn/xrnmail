@@ -912,6 +912,58 @@ test('Settings choose when an open thread is marked read: at once, after a while
   await expect.poll(() => gmail.mails.filter((m) => m.raw.toString().includes('Alpha') && m.flags.includes('\\Seen')).length, LONG).toBe(0)
 })
 
+test('Settings can show a thread newest first: the newest on top and open, what is folded under it, and Reply still answers the newest', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const people = ['Mai Tran <mai@example.com>', 'Linh Pham <linh@example.com>', 'Bao Le <bao@example.com>']
+  const said = ['Can we meet Monday?', 'Monday is full for me.', 'Tuesday then?', 'Tuesday works.', 'Ten or eleven?', 'Eleven, see you there.']
+  for (const [i, text] of said.entries()) {
+    gmail.add(rawMail({ subject: i === 0 ? 'Meeting' : 'Re: Meeting', from: people[i % 3], text }), { arrived: earlier(10 - i), thread: 55n, flags: i < 4 ? ['\\Seen'] : [] })
+  }
+  // A thread taller than the reader, to be scrolled down before the other is opened.
+  gmail.add(rawMail({ subject: 'Long notes', from: people[0], text: Array.from({ length: 120 }, (_, i) => `Line ${i + 1} of the notes.`).join('\n') }), { arrived: earlier(12) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ readAfter: -1 })) // what's unread stays so, however often it's opened
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const list = page.locator('.threads')
+  const messages = page.locator('.messages')
+  /** The messages from the top down, each by which of [said] it is, and where the fold is. */
+  const order = (): Promise<string[]> => page.locator('.messages .message-slot').evaluateAll((slots, words) => slots.flatMap((slot) => {
+    const text = slot.querySelector('.message')?.textContent ?? ''
+    return [...(slot.querySelector('.fold') ? ['fold'] : []), String(words.findIndex((w) => text.includes(w)))]
+  }), said)
+  await list.getByText(/^(Re: )?Meeting$/).click()
+  await expect.poll(order).toEqual(['0', 'fold', '4', '5']) // oldest first, as it always was
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Messages in a thread')
+  await expect(choice).toHaveValue('oldest')
+  await choice.selectOption('newest')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+
+  await list.getByText('Long notes').click()
+  await expect(page.locator('.body-text')).toContainText('Line 120')
+  await messages.evaluate((box) => { box.scrollTop = box.scrollHeight })
+  expect(await messages.evaluate((box) => box.scrollTop)).toBeGreaterThan(0)
+  await list.getByText(/^(Re: )?Meeting$/).click()
+  await expect.poll(order).toEqual(['5', '4', 'fold', '0'])
+  // What's unread is open, the newest at the top where the reading starts.
+  await expect(page.locator('.message.open')).toHaveCount(2)
+  await expect(page.locator('.message.open').first()).toContainText(said[5] as string)
+  expect(await messages.evaluate((box) => box.scrollTop)).toBe(0)
+  await page.locator('.fold').click()
+  await expect.poll(order).toEqual(['5', '4', '3', '2', '1', '0'])
+  // Reply, at the foot and by its key, answers the newest, wherever it's shown.
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove bao@example.com' })).toBeVisible()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await expect(composer(page)).toHaveCount(0)
+  await page.keyboard.press('r')
+  await expect(composer(page).getByRole('button', { name: 'Remove bao@example.com' })).toBeVisible()
+})
+
 // Opening a thread reads it, so in Unread it left the list the moment it opened: nothing in the list
 // was marked as open, and j, which goes on from the open thread, started again at the top.
 test('in Unread the open thread keeps its place while it is read, and j goes on to the one below', async () => {
