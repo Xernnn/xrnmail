@@ -623,6 +623,22 @@ test('the bar under a selection takes every row, lets go of them, and Trash can 
   expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length).toBe(1)
 })
 
+// A message folded shut showed its raw text: links in brackets, headings in capitals, what it quoted.
+test('a message folded shut in a thread previews what it says, as the list does', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const first = 'WEEKLY PLAN\n\nSee the plan [https://plans.example/q3] before Friday.\n\nOn Mon, Linh Pham wrote:\n> Can you send the plan?'
+  gmail.add(rawMail({ subject: 'Plan', from: 'Mai Tran <mai@example.com>', text: first }), { arrived: earlier(5), thread: 66n, flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'Re: Plan', from: 'Linh Pham <linh@example.com>', text: 'Looks good.' }), { arrived: earlier(4), thread: 66n })
+  await signIn(run)
+  await page.locator('.threads').getByText(/Plan$/).first().click()
+  const shut = page.locator('.message-head.closed')
+  await expect(shut).toHaveCount(1)
+  await expect(shut).toContainText('See the plan before Friday.')
+  await expect(shut).not.toContainText('https://')
+  await expect(shut).not.toContainText('Can you send the plan?')
+})
+
 test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -802,6 +802,7 @@ export class Store {
       date: Number(r['arrived']),
       text: String(r['body_text']),
       html: r['body_html'] == null ? null : String(r['body_html']),
+      snippet: String(r['snippet']),
       attachments: parseList<AttachmentInfo>(r['attachments']),
       truncated: Number(r['truncated']) > 0,
       labels: parseList<string>(r['labels']),

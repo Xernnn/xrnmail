@@ -299,6 +299,8 @@ export interface MessageView {
   date: number
   text: string
   html: string | null
+  /** A line or two of what's new in it, as the list shows: not what it quotes, nor its links. */
+  snippet: string
   attachments: AttachmentInfo[]
   /** Too big to keep whole here: Gmail has the rest. */
   truncated: boolean

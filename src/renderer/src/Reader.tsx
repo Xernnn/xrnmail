@@ -160,7 +160,7 @@ function Message(props: {
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
-            <span className="muted"> {m.text.replace(/\s+/g, ' ').slice(0, 160)}</span>
+            <span className="muted"> {(m.snippet || m.text.replace(/\s+/g, ' ')).slice(0, 160)}</span>
           </span>
           <span className="muted when">{shortTime(m.date)}</span>
         </button>
