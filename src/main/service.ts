@@ -64,6 +64,7 @@ const DEFAULT_SETTINGS: Settings = {
   undoSeconds: 10,
   undoActionSeconds: 5,
   defaultReply: 'reply',
+  quoteReplies: true,
   theme: 'system',
   darkMail: true,
   focused: true,
@@ -1235,7 +1236,8 @@ export class MailService {
       from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
       ...replyTargets(message, own, start.kind === 'replyAll'),
       subject: replySubject(message.subject),
-      quote: quoteOf(message, 'reply'),
+      // Settings can start a reply with nothing quoted. It still answers the message, threaded with it.
+      quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
       inReplyTo: message.messageId,
       references: `${message.references} ${message.messageId}`.trim()
     }))
@@ -1758,6 +1760,7 @@ export class MailService {
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       undoActionSeconds: patch.undoActionSeconds === undefined ? settings.undoActionSeconds : clamp(patch.undoActionSeconds, 1, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,
+      quoteReplies: patch.quoteReplies ?? settings.quoteReplies,
       theme: patch.theme ?? settings.theme,
       darkMail: patch.darkMail ?? settings.darkMail,
       focused: patch.focused ?? settings.focused,

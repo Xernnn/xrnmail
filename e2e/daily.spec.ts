@@ -694,6 +694,36 @@ test('Settings choose what the reply button on a message does: reply, or reply t
   await expect(page.locator('.reply-bar').getByRole('button')).toHaveText(['Reply', 'Forward']) // the foot keeps both, as it was
 })
 
+test('Settings choose whether a reply quotes the message it answers; a forward always carries it', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Lunch', from: 'Mai Tran <mai@example.com>', to: `${ME}, Linh Pham <linh@example.com>`, text: 'Pho or bun cha?' }), { arrived: earlier(4) })
+  await signIn(run)
+  await undoOff(page)
+  const bar = page.locator('.reply-bar')
+  await page.locator('.threads').getByText('Lunch').click()
+  await bar.getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(composer(page).getByRole('button', { name: 'Quoted message' })).toBeVisible() // as it always was
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const quoting = page.getByLabel('Quote the original message in a reply')
+  await expect(quoting).toBeChecked()
+  await quoting.uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await bar.getByRole('button', { name: 'Reply All' }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Lunch')
+  await expect(composer(page).getByRole('button', { name: 'Quoted message' })).toHaveCount(0)
+  await composer(page).getByLabel('Message').fill('Bun cha, at noon.')
+  await composer(page).getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Bun cha, at noon.')
+  expect(smtp.sent[0]?.raw).not.toContain('Pho or bun cha?')
+  await bar.getByRole('button', { name: 'Forward' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Forwarded message' })).toBeVisible()
+})
+
 test('nothing to type into under a thread: replying starts at the buttons at its foot', async () => {
   run = await launch()
   const { page, gmail } = run

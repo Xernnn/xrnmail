@@ -34,8 +34,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
   the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
-  it if Settings, General say so. A reply or forward closed as it opened, with nothing written, leaves
-  no draft behind.
+  it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
+  not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
+  leaves no draft behind.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
   up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
@@ -231,8 +232,7 @@ Not here, though Edison has them:
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 - From Appearance: the Scaling slider (View's zoom does that here).
-- From General: which of Cc and Bcc a new message shows; whether a reply
-  quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
+- From General: which of Cc and Bcc a new message shows; conversations newest first; replies opening in a window of their own; Gmail's
   importance markers; and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
 - A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as

@@ -1115,6 +1115,27 @@ describe('sending', () => {
     expect(raw).toContain('> Hi there')
   })
 
+  it('a reply starts without the message it answers when Settings say so, and a forward always has it', async () => {
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Ada <ada@example.com>', to: `${ME}, Bao <bao@example.com>`, text: 'Pho or bun cha?' }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Lunch')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    const id = message?.id ?? 0
+    expect(service.settings().quoteReplies).toBe(true) // as it always was
+    expect((await service.startDraft({ kind: 'reply', message: id })).quote).toMatchObject({ kind: 'reply', text: expect.stringContaining('Pho or bun cha?') })
+    service.saveProfile({ quoteReplies: false })
+    const reply = await service.startDraft({ kind: 'reply', message: id })
+    expect(reply).toMatchObject({ to: '"Ada" <ada@example.com>', subject: 'Re: Lunch', quote: null })
+    expect(reply.inReplyTo).toMatch(/@example\.com>$/) // still an answer to it, threaded with it
+    expect((await service.startDraft({ kind: 'replyAll', message: id })).quote).toBeNull()
+    expect((await service.startDraft({ kind: 'forward', message: id })).quote).toMatchObject({ kind: 'forward', text: expect.stringContaining('Pho or bun cha?') })
+    service.saveDraft(reply.id, { ...reply, html: 'Bun cha', text: 'Bun cha' })
+    service.send(reply.id)
+    await later(10_000)
+    expect(smtp.sent[0]?.raw).toContain('Bun cha')
+    expect(smtp.sent[0]?.raw).not.toContain('Pho or bun cha?')
+  })
+
   it('a forward carries the attachments', async () => {
     gmail.add(rawMail({ subject: 'Doc', attachment: { name: 'doc.txt', type: 'text/plain', body: 'contents' } }), { arrived: past(30) })
     await service.syncAll()
