@@ -656,6 +656,37 @@ test('the date over a message says its year when it is not this one', async () =
   await expect(page.locator('.message.open .when')).not.toContainText(String(lastYear + 1))
 })
 
+test('an invitation that is over offers no answer, and a bounce offers no Block', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const stamp = (at: number): string => new Date(at).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const ics = (start: number, uid: string): string => [
+    'BEGIN:VCALENDAR', 'METHOD:REQUEST', 'BEGIN:VEVENT', `UID:${uid}@cal.example`, 'SEQUENCE:0', `DTSTART:${stamp(start)}`, `DTEND:${stamp(start + 3_600_000)}`,
+    `SUMMARY:${uid}`, 'ORGANIZER;CN=Mai Tran:mailto:mai@example.com', `ATTENDEE;RSVP=TRUE:mailto:${ME}`, 'END:VEVENT', 'END:VCALENDAR'
+  ].join('\r\n')
+  const invite = (subject: string, start: number, arrived: number): void =>
+    void gmail.add(rawMail({ subject, from: 'Mai Tran <mai@example.com>', attachment: { name: 'invite.ics', type: 'text/calendar', body: ics(start, subject.split(' ')[0] ?? 'x') } }), { arrived: earlier(arrived) })
+  invite('Retro last week', Date.now() - 6 * 86_400_000, 200)
+  invite('Planning next week', Date.now() + 6 * 86_400_000, 2)
+  gmail.add(rawMail({ subject: 'Undelivered Mail Returned to Sender', from: 'Mail Delivery System <MAILER-DAEMON@mail.example.com>', text: 'Your message could not be delivered.' }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false })) // a bounce would be under Other
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const list = page.locator('.threads')
+  const message = page.locator('.message.open')
+  await list.getByText('Planning next week').click()
+  await expect(message.getByRole('button', { name: 'Accept' })).toBeVisible()
+  await list.getByText('Retro last week').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Retro last week')
+  await expect(message.locator('.fact')).toBeVisible() // still shown for what it is
+  await expect(message.getByRole('button', { name: 'Accept' })).toHaveCount(0)
+  await expect(message.getByRole('button', { name: 'Decline' })).toHaveCount(0)
+  await list.getByText('Undelivered Mail Returned to Sender').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Undelivered Mail Returned to Sender')
+  await expect(message.getByText('Your message could not be delivered.')).toBeVisible()
+  await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0)
+})
+
 test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
   run = await launch()
   const { page, gmail } = run

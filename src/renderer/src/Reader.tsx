@@ -15,6 +15,9 @@ import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 
 const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
 
+/** The mail system's own addresses, which send bounces and notices: no person to block. */
+const SYSTEM_SENDER = /^(?:mailer-daemon|postmaster)@/i
+
 export type ReplyKind = 'reply' | 'replyAll' | 'forward'
 export type Panel = 'snooze' | 'labels' | 'more' | null
 
@@ -47,6 +50,9 @@ const FACT_NAMES: Record<Facts['type'], string> = { package: 'Package', travel: 
 function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: number, answer: Rsvp): void }): ReactNode {
   const { message, facts, rsvp } = props
   const Icon = FACT_ICONS[facts.type]
+  // An invitation to something that's over has nothing left to answer.
+  const ends = facts.type === 'event' ? facts.end ?? facts.start : null
+  const over = ends !== null && ends < Date.now()
   return (
     <div className="fact">
       <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><Icon size={17} /></span>
@@ -57,7 +63,7 @@ function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: num
       {facts.type === 'package' && facts.url && (
         <button className="pill strong" onClick={() => void window.mail.openLink(facts.url ?? '')}>Track</button>
       )}
-      {facts.type === 'event' && facts.invite && ANSWERS.map(([answer, word]) => (
+      {facts.type === 'event' && facts.invite && !over && ANSWERS.map(([answer, word]) => (
         <button key={answer} className="pill" onClick={() => rsvp(message.id, answer)}>{word}</button>
       ))}
     </div>
@@ -341,7 +347,7 @@ export function Reader(props: {
   const ordered = newestFirst ? [...shown].reverse() : shown
   const foldAt = newestFirst ? ordered.length - 1 : 1
   const leaving = [...messages].reverse().find((m) => m.unsubscribe)
-  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
+  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()) && !SYSTEM_SENDER.test(m.from.address))
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
   const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
