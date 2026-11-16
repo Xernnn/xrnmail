@@ -66,9 +66,12 @@ const DESIGNED = /<(?:table|img|font|center)\b|\b(?:background|bgcolor)\b|\bcolo
 
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
 
+/** Marks a picture asked for that couldn't be fetched (offline, say), shown as one not asked for is. */
+const FAILED = 'xrn-failed'
+
 /** A picture that hasn't been allowed shows as a plain block of its own size, not a broken icon: pale
  *  on the white page mail is made for, dark on a dark one (darken.ts sets that once it has darkened). */
-const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"]{content:url("${BLANK}");background:var(--xrn-unloaded,#e9ecf0);border-radius:4px}`
+const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"],img.${FAILED}{content:url("${BLANK}");background:var(--xrn-unloaded,#e9ecf0);border-radius:4px}`
 
 /** Installed fonts only: the frame may load nothing, so the app's own copy of MiSans can't reach it. */
 const FRAME_FONTS = `"MiSans Latin","MiSans","Noto Sans","Segoe UI",Roboto,"Helvetica Neue",Arial,"Liberation Sans",sans-serif`
@@ -143,6 +146,9 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   /** This message shown in its own colours after all, and whether darkening it changed anything. */
   const [original, setOriginal] = useState(false)
   const [darkened, setDarkened] = useState(false)
+  /** Pictures asked for that couldn't be fetched, and how often they've been asked for again. */
+  const [failed, setFailed] = useState(0)
+  const [tries, setTries] = useState(0)
   const frame = useRef<HTMLIFrameElement>(null)
   const watcher = useRef<ResizeObserver | null>(null)
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
@@ -157,7 +163,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   // shown once this very page, in these colours, has loaded.
   // Designed mail's page is the same in either look, and darkening changes it once it has loaded, so a
   // look that changes makes the frame again, as Show original colours does.
-  const look = `${original}:${dark}:${source}`
+  const look = `${original}:${dark}:${tries}:${source}`
   const [shown, setShown] = useState('')
   const painted = !darkening || shown === look
 
@@ -192,6 +198,25 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
       // scrollHeight is as laid out, before the zoom draws it smaller.
       el.style.height = `${Math.ceil(Math.max(body.scrollHeight * scale, body.getBoundingClientRect().height))}px`
     }
+    // A picture that couldn't be fetched is a plain block of its size, as before it was asked for,
+    // not a broken icon with its alt text spilling over what's round it. It's counted, and said.
+    let broken = 0
+    if (images) {
+      for (const img of Array.from(doc.images)) {
+        if (!/^(?:https?:)?\/\//i.test(img.getAttribute('src') ?? '')) continue
+        const fail = (): void => {
+          img.classList.add(FAILED)
+          fit()
+        }
+        if (img.complete && img.naturalWidth === 0) {
+          fail()
+          broken++
+        } else {
+          img.addEventListener('error', () => { fail(); setFailed((n) => n + 1) }, { once: true })
+        }
+      }
+    }
+    setFailed(broken)
     fit()
     try {
       if (darkening) setDarkened(darkenDocument(doc))
@@ -222,13 +247,20 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const recolouring = dark && designed && darken && (original || darkened)
   return (
     <>
-      {(removed > 0 || (hasRemote && !images) || recolouring) && (
+      {(removed > 0 || (hasRemote && !images) || failed > 0 || recolouring) && (
         <div className="body-notes">
           {hasRemote && !images && (
             <>
               <ImageOff size={14} aria-hidden="true" />
               <button className="link" onClick={() => void show()}>Show images</button>
               {sender && trust && <button className="link" onClick={() => trust(sender)}>Always from this sender</button>}
+            </>
+          )}
+          {failed > 0 && (
+            <>
+              <ImageOff size={14} aria-hidden="true" />
+              <span className="muted">{failed === 1 ? "1 picture couldn't load" : `${failed} pictures couldn't load`}</span>
+              <button className="link" onClick={() => { setFailed(0); setTries((n) => n + 1) }}>Try again</button>
             </>
           )}
           {removed > 0 && (
@@ -245,7 +277,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
         </div>
       )}
       <iframe
-        key={`${original ? 'original' : 'own'}-${dark ? 'dark' : 'light'}`}
+        key={`${original ? 'original' : 'own'}-${dark ? 'dark' : 'light'}-${tries}`}
         ref={frame}
         title="Message"
         className={painted ? 'body-frame' : 'body-frame painting'}

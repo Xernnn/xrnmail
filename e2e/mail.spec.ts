@@ -347,6 +347,35 @@ test('images stay blocked on the next message', async () => {
   await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
 })
 
+// Offline, Show images left broken-picture icons with their alt text spilling over what was round
+// them, and nothing said why or offered to try again.
+test('pictures that can\'t be fetched stay plain blocks, say so, and can be tried again', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  // Nothing listens on port 1, so each is refused at once, as with no connection at all.
+  const html = '<p>Our new range.</p><img id="one" src="http://127.0.0.1:1/one.png" alt="A very long description of the first picture" width="200" height="80">' +
+    '<img id="two" src="http://127.0.0.1:1/two.png" alt="Logo" width="40" height="40"><p>See you soon.</p>'
+  gmail.add(rawMail({ subject: 'New range', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('New range', { exact: true }).click()
+  const frame = page.locator('iframe.body-frame')
+  await page.frameLocator('iframe.body-frame').getByText('See you soon.').waitFor()
+  const blocks = (): Promise<{ width: number; height: number; content: string }[]> => frame.evaluate((f: HTMLIFrameElement) =>
+    Array.from((f.contentDocument as Document).images).map((img) => {
+      const box = img.getBoundingClientRect()
+      return { width: box.width, height: box.height, content: (f.contentWindow as Window).getComputedStyle(img).content }
+    })).catch(() => [])
+  const before = await blocks()
+  await page.getByRole('button', { name: 'Show images' }).click()
+  const note = page.getByText('2 pictures couldn\'t load')
+  await expect(note).toBeVisible()
+  const after = await blocks()
+  expect(after.map((b) => [b.width, b.height])).toEqual(before.map((b) => [b.width, b.height])) // nothing moves
+  expect(after.every((b) => b.content.startsWith('url('))).toBe(true) // a plain block, not a broken icon and its alt text
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(note).toBeVisible() // still offline: tried, and said again
+})
+
 /** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */
 const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const LIGHT_RECEIPT = `<table id="card" width="100%" bgcolor="#ffffff" style="border:1px solid #dddddd"><tr><td style="color:#222222;font-family:Arial">
