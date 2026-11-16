@@ -639,6 +639,23 @@ test('a message folded shut in a thread previews what it says, as the list does'
   await expect(shut).not.toContainText('Can you send the plan?')
 })
 
+// A message from a past year said "Fri, Jan 31, 07:39" over it, while the list said "Jan 31, 2025".
+test('the date over a message says its year when it is not this one', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const lastYear = new Date().getFullYear() - 1
+  const old = new Date(lastYear, 11, 30, 7, 39)
+  gmail.add(rawMail({ subject: 'Year end', from: 'Mai Tran <mai@example.com>', date: old }), { arrived: old })
+  gmail.add(rawMail({ subject: 'This week', from: 'Linh Pham <linh@example.com>' }), { arrived: earlier(2) })
+  await page.evaluate(() => window.mail.saveBackfill(1095)) // kept for three years, so last year's is here
+  await signIn(run)
+  const list = page.locator('.threads')
+  await list.getByText('Year end').click()
+  await expect(page.locator('.message.open .when')).toContainText(String(lastYear))
+  await list.getByText('This week').click()
+  await expect(page.locator('.message.open .when')).not.toContainText(String(lastYear + 1))
+})
+
 test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
   run = await launch()
   const { page, gmail } = run
