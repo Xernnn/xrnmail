@@ -28,6 +28,41 @@ test('wrong password says so, right one lists the mail', async () => {
   expect(gmail.writes().filter((c) => !c.startsWith('SELECT'))).toEqual([expect.stringMatching(/^UID STORE \d+ \+FLAGS.*\\Seen/)])
 })
 
+// MiSans Latin's Bold, in every format it comes in, has an ampersand where its @ should be, so bold
+// addresses (an unread sender with no name, the account in the sidebar) read "me&example.com".
+test('an @ in bold is an @, not the ampersand the bold face has in its place', async () => {
+  run = await launch()
+  const { page } = run
+  await page.getByLabel('Email address').waitFor()
+  const drawn = await page.evaluate(async () => {
+    for (const weight of [400, 600, 700]) await document.fonts.load(`${weight} 40px MiSans`, '@&')
+    const canvas = document.createElement('canvas')
+    canvas.width = 60
+    canvas.height = 60
+    const pen = canvas.getContext('2d') as CanvasRenderingContext2D
+    const picture = (weight: number, text: string): string => {
+      pen.clearRect(0, 0, 60, 60)
+      pen.font = `${weight} 40px MiSans`
+      pen.fillText(text, 5, 45)
+      return Array.from(pen.getImageData(0, 0, 60, 60).data).join()
+    }
+    const width = (weight: number, text: string): number => {
+      pen.font = `${weight} 40px MiSans`
+      return pen.measureText(text).width
+    }
+    return {
+      loaded: [400, 600, 700].map((weight) => document.fonts.check(`${weight} 40px MiSans`, '@')),
+      boldSame: picture(700, '@') === picture(700, '&'),
+      boldWidths: [width(700, '@'), width(700, '&')],
+      regularSame: picture(400, '@') === picture(400, '&')
+    }
+  })
+  expect(drawn.loaded).toEqual([true, true, true])
+  expect(drawn.regularSame).toBe(false)
+  expect(drawn.boldSame).toBe(false)
+  expect(drawn.boldWidths[0]).not.toBe(drawn.boldWidths[1])
+})
+
 test('new mail waits, and delivering early makes you wait first', async () => {
   run = await launch()
   const { page, gmail } = run
