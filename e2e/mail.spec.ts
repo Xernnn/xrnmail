@@ -459,6 +459,28 @@ test('a newsletter made 600 pixels wide is drawn smaller to fit a narrow reading
   expect((await measure('#figures')).width).toBe(900)
 })
 
+// Mail that sets its body to the full width had the frame's margin added on, and so was always 36
+// pixels too wide, however wide the pane.
+test('mail that makes its page the full width fits a wide pane at its own size, the margin inside it', async () => {
+  run = await launch({ size: [1920, 1000] })
+  const { page, gmail } = run
+  const html = '<style>body{width:100%}</style><table width="100%" bgcolor="#f4f4f4"><tr><td id="note">The order is on its way, and should be with you on Friday.</td></tr></table>'
+  gmail.add(rawMail({ subject: 'On its way', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('On its way', { exact: true }).click()
+  await page.frameLocator('iframe.body-frame').getByText('should be with you on Friday').waitFor()
+  const sits = await page.locator('iframe.body-frame').evaluate((f: HTMLIFrameElement) => {
+    const doc = f.contentDocument as Document
+    return {
+      sideways: doc.documentElement.scrollWidth - doc.documentElement.clientWidth,
+      view: doc.documentElement.clientWidth,
+      width: (doc.getElementById('note') as Element).closest('table')?.getBoundingClientRect().width ?? 0
+    }
+  })
+  expect(sits.sideways).toBe(0)
+  expect(Math.abs(sits.width - (sits.view - 36))).toBeLessThan(1) // the frame's own margin either side, and not drawn smaller
+})
+
 /** A newsletter with a picture that isn't shown until asked for. */
 const PICTURED = `<table id="card" width="100%" bgcolor="#ffffff"><tr><td style="color:#222222">
   <img id="hero" src="https://pictures.example/hero.png" width="300" height="120" alt=""><p>Spring sale, this week only.</p></td></tr></table>`
