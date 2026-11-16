@@ -424,7 +424,8 @@ export function Reader(props: {
                   <ImportantMark size={15} /> {important ? 'Mark as not important' : 'Mark as important'}
                 </button>
               )}
-              {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
+              {/* With the inbox in one piece there's no Other to keep anyone in, so no word of it. */}
+              {sender && inInbox && props.settings?.focused && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
               {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
               {sender && !bins && !own.includes(sender.toLowerCase()) && (muted

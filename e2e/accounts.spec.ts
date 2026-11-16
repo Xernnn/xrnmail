@@ -124,6 +124,24 @@ test('Focused and Other, and keeping a sender on one side', async () => {
   await expect(page.getByText('Weekly deals').first()).toBeVisible()
 })
 
+test('with the inbox in one piece, all its mail is there and nothing speaks of Other', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Weekly deals', from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.getByRole('button', { name: /^Inbox/ }).click()
+  const list = page.locator('.threads')
+  await expect(list.getByText('Lunch?')).toBeVisible()
+  await expect(list.getByText('Weekly deals')).toBeVisible()
+  await expect(page.getByRole('group', { name: 'Focused and Other' })).toHaveCount(0)
+  await list.getByText('Weekly deals').click()
+  await page.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('button', { name: 'Mark as important' })).toBeVisible() // the menu is open
+  await expect(page.getByRole('button', { name: /^Keep this sender in (Focused|Other)$/ })).toHaveCount(0)
+})
+
 test('All Inboxes is every inbox, whole: Focused and Other are each account\'s own', async () => {
   run = await launch()
   const { page, gmail } = run
