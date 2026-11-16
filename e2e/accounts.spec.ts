@@ -312,6 +312,27 @@ test('subscriptions list who mails in bulk, and a sender can be cleared with Und
   await expect(page.getByText('2 messages')).toBeVisible()
 })
 
+// Subscriptions were squeezed into the list's column, with an empty reader beside them that nothing
+// there could ever open.
+test('Subscriptions take the whole width beside the sidebar, and a sender\'s page brings the reader back', async () => {
+  run = await launch({ size: [1280, 840] })
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <hi@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('section.list')
+  const reader = page.locator('.reader')
+  await expect(reader).toBeVisible()
+  await page.getByRole('button', { name: 'Subscriptions' }).click()
+  await expect(page.getByText('1 message', { exact: false }).first()).toBeVisible()
+  await expect(reader).toBeHidden()
+  const [panes, column] = [await page.locator('.panes').boundingBox(), await list.boundingBox()]
+  expect(column?.width).toBe(panes?.width)
+  await page.getByRole('button', { name: 'Open Shop' }).click()
+  await expect(page.locator('.view-title')).toHaveText('Shop')
+  await expect(reader).toBeVisible()
+  expect((await list.boundingBox())?.width).toBeLessThan(600)
+})
+
 test('subscriptions: how much of each sender is read, several put into the Summary at once, and a page for each sender', async () => {
   run = await launch()
   const { page, gmail } = run

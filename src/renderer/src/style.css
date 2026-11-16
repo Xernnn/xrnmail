@@ -767,6 +767,8 @@ kbd { padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 2px;
 .app.solo .back { display: none; }
 
 .one-pane .panes { grid-template-columns: minmax(0, 1fr); }
+.panes.whole, .below .panes.whole { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.panes.whole > .resize, .panes.whole > .reader { display: none; }
 /* The reader under the list, the line between them dragged up and down. */
 .below .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--list-height) 1px minmax(0, 1fr); }
 .below .resize { cursor: row-resize; }

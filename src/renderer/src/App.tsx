@@ -1039,7 +1039,8 @@ export function App(): ReactNode {
             )}
           </div>
         </header>
-        <div className="panes">
+        {/* Subscriptions are a page of senders with nothing to open beside them, so they take the width. */}
+        <div className={showSubscriptions ? 'panes whole' : 'panes'}>
           <section className="list" aria-label="Threads">
             {split && active.kind === 'inbox' && (
               <div className="tabs" role="group" aria-label="Focused and Other">
