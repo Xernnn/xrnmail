@@ -492,6 +492,40 @@ test('a picture not shown yet is a block that suits the page it sits on: dark on
   expect((await shades()).block).toBeGreaterThan(200) // on the white page it was made for, a pale one
 })
 
+// The open message worked out once whether the window was dark, so a theme switched meanwhile left a
+// darkened message in a light window, or a white card in a dark one.
+test('the open message follows the look as it changes, the system\'s and the one Settings choose', async () => {
+  run = await launch({ colorScheme: 'dark' })
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Your order', from: 'Shop <orders@shop.example>', html: LIGHT_RECEIPT }), { arrived: earlier(3) })
+  await signIn(run)
+  const frame = page.locator('iframe.body-frame')
+  /** The receipt's background, or 'not yet' while its frame is being made again. */
+  const card = (): Promise<string> => frame.evaluate((f: HTMLIFrameElement) => {
+    const doc = f.contentDocument
+    const el = doc?.getElementById('card')
+    return el && doc?.defaultView ? doc.defaultView.getComputedStyle(el).backgroundColor : 'not yet'
+  }).catch(() => 'not yet')
+  const original = page.getByRole('button', { name: 'Show original colours' })
+  await page.locator('.threads').getByText('Your order').click()
+  await expect(original).toBeVisible()
+  await expect.poll(card).toMatch(/^rgb\((\d|[1-5]\d), /) // darkened
+
+  await page.emulateMedia({ colorScheme: 'light' }) // as the desktop's theme switching to a light one
+  await expect.poll(card).toBe('rgb(255, 255, 255)')
+  await expect(original).toHaveCount(0)
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await expect(original).toBeVisible()
+  await expect.poll(card).toMatch(/^rgb\((\d|[1-5]\d), /)
+
+  await page.evaluate(() => window.mail.saveProfile({ theme: 'light' }))
+  await expect.poll(card).toBe('rgb(255, 255, 255)')
+  await expect(original).toHaveCount(0)
+  await page.evaluate(() => window.mail.saveProfile({ theme: 'dark' }))
+  await expect(original).toBeVisible()
+  await expect.poll(card).toMatch(/^rgb\((\d|[1-5]\d), /)
+})
+
 test('the page has only the bridge, and a page reached by accident gets nothing', async () => {
   run = await launch()
   const { page, gmail, app } = run

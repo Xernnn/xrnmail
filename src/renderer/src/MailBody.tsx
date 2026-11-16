@@ -84,9 +84,30 @@ function frameDocument(clean: string, images: boolean, dark: boolean, designed: 
   return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}</style></head><body>${clean}</body></html>`
 }
 
+const SYSTEM_DARK = '(prefers-color-scheme: dark)'
+
 const isDark = (): boolean => {
   const theme = document.documentElement.dataset['theme']
-  return theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  return theme === 'dark' || (theme !== 'light' && window.matchMedia(SYSTEM_DARK).matches)
+}
+
+/** Whether the window is dark, now and each time that changes: the desktop switching its theme, with
+ *  Settings on Same as the system, or Settings choosing another look. */
+function useDark(): boolean {
+  const [dark, setDark] = useState(isDark)
+  useEffect(() => {
+    const check = (): void => setDark(isDark())
+    const system = window.matchMedia(SYSTEM_DARK)
+    system.addEventListener('change', check)
+    const chosen = new MutationObserver(check)
+    chosen.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    check()
+    return () => {
+      system.removeEventListener('change', check)
+      chosen.disconnect()
+    }
+  }, [])
+  return dark
 }
 
 /** Three dots that bring back what a reply quoted. */
@@ -124,14 +145,16 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
-  const dark = useMemo(isDark, [clean])
+  const dark = useDark()
   const designed = useMemo(() => DESIGNED.test(clean), [clean])
   const showQuoted = quoteOpen || !hasQuote
   const darkening = dark && designed && darken && !original
   const source = frameDocument(clean, images, dark, designed)
   // While it's being darkened the frame stays out of sight, so its white page never flashes up: it's
   // shown once this very page, in these colours, has loaded.
-  const look = `${original}:${source}`
+  // Designed mail's page is the same in either look, and darkening changes it once it has loaded, so a
+  // look that changes makes the frame again, as Show original colours does.
+  const look = `${original}:${dark}:${source}`
   const [shown, setShown] = useState('')
   const painted = !darkening || shown === look
 
@@ -219,7 +242,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
         </div>
       )}
       <iframe
-        key={original ? 'original' : 'own'}
+        key={`${original ? 'original' : 'own'}-${dark ? 'dark' : 'light'}`}
         ref={frame}
         title="Message"
         className={painted ? 'body-frame' : 'body-frame painting'}
