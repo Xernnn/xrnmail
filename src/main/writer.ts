@@ -68,6 +68,13 @@ export class ImapWriter implements MailWriter {
     return this.boxes.find((box) => box.role === role)
   }
 
+  /** imapflow answers false both when the server says no and when the connection went before it
+   *  answered (a server gone quiet, timed out). Only the first is a refusal, which a change gets
+   *  three of before it's put back; the second is being offline, and the change waits to go again. */
+  private refused(what: string): Error {
+    return this.client.usable ? new Refused(what) : new Error(`The connection went before the server answered: ${what}`)
+  }
+
   /** A special folder, made if the server doesn't have one yet. */
   private async ensure(role: MailboxRole): Promise<MailboxRef> {
     const found = this.byRole(role)
@@ -92,7 +99,7 @@ export class ImapWriter implements MailWriter {
         const range = uids.slice(at, at + UIDS_PER_COMMAND).join(',')
         if (target) moved = together(moved, await this.move(from, range, target))
         // imapflow answers false, not an error, when a command fails, so every answer is checked.
-        else if (!(await this.store(from, range, action))) throw new Refused(action.kind)
+        else if (!(await this.store(from, range, action))) throw this.refused(action.kind)
       }
       return moved
     } finally {
@@ -128,7 +135,7 @@ export class ImapWriter implements MailWriter {
   private async move(from: MailboxRef, range: string, target: MailboxRef): Promise<Moved | null> {
     if (from.id === target.id) return null
     const result = await this.client.messageMove(range, target.path, { uid: true })
-    if (!result) throw new Refused('move')
+    if (!result) throw this.refused('move')
     const read = this.boxes.some((b) => b.id === target.id)
     return { to: read ? target : null, map: result.uidMap ?? null }
   }

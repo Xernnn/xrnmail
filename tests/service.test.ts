@@ -8,7 +8,7 @@ import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
 import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
-import { ImapSource, ImapWatcher } from '@main/source'
+import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
 import { ImapWriter } from '@main/writer'
 import { gmailThreadUrl, isSafeExternalUrl, isSafeHubUrl } from '@main/safe-url'
@@ -33,6 +33,8 @@ let landed: Mock<(count: number, preview?: { from: string; subject: string; acco
 let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
+/** How long the IMAP connections wait before giving up, when a test needs it short. */
+let timeouts: Partial<ImapTimeouts> | undefined
 
 const make = (over: Partial<ServiceDeps> = {}): MailService =>
   new MailService({
@@ -41,8 +43,8 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     post: post as unknown as typeof fetch,
     now: () => clock,
     files: new DraftFiles(folder),
-    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
-    openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
+    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
+    openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
   })
@@ -67,6 +69,7 @@ beforeEach(async () => {
   store = new Store(':memory:')
   secrets = new MemorySecrets()
   clock = at(10)
+  timeouts = undefined
   changed = vi.fn()
   landed = vi.fn()
   summarized = vi.fn()
@@ -848,6 +851,54 @@ describe('changing mail', () => {
     await service.syncAll()
     await service.syncAll()
     expect(gmail.writes()).toHaveLength(writes)
+  })
+})
+
+// A pass that connected and then heard nothing more sat for minutes, and while it sat the account
+// counted as syncing, so every Sync now, timer and wake-up for it was turned away.
+describe('a server that goes quiet', () => {
+  beforeEach(async () => {
+    timeouts = { connect: 1000, greeting: 600, quiet: 800 }
+    service = make()
+    gmail.add(rawMail({ subject: 'One' }), { arrived: past(30) })
+    await signedIn()
+  })
+
+  const quietPass = async (): Promise<number> => {
+    const started = Date.now()
+    await service.syncAll()
+    return Date.now() - started
+  }
+
+  it('a pass stopped partway gives up within its time, says so, and the next one goes', async () => {
+    gmail.stall = /^LIST$/
+    expect(await quietPass()).toBeLessThan(6000)
+    expect(service.accounts()[0]).toMatchObject({ syncing: false, error: "Couldn't reach Gmail." })
+    gmail.stall = null
+    gmail.add(rawMail({ subject: 'After the quiet' }), { arrived: new Date(clock) })
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+    expect(service.list({ kind: 'all' }).map((r) => r.subject)).toContain('After the quiet')
+  })
+
+  it('a server that takes the connection and never says hello is given up on too', async () => {
+    gmail.silent = true
+    expect(await quietPass()).toBeLessThan(6000)
+    expect(service.accounts()[0]).toMatchObject({ syncing: false, error: "Couldn't reach Gmail." })
+    gmail.silent = false
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+  })
+
+  it('a change waiting to go is kept through a quiet server, and goes once it answers', async () => {
+    gmail.stall = /^UID STORE$/
+    service.act([ref('One')], { kind: 'star' })
+    await eventually(() => expect(service.accounts()[0]?.error).toBe("Couldn't reach Gmail."))
+    // Not a refusal, which three of would put the change back: it waits to go again.
+    expect((store as unknown as { all(sql: string): { attempts: number }[] }).all('SELECT attempts FROM pending').map((p) => p.attempts)).toEqual([0])
+    gmail.stall = null
+    await later(61_000)
+    await eventually(() => expect(gmail.mails.find((m) => m.raw.toString().includes('Subject: One'))?.flags).toContain('\\Flagged'))
   })
 })
 
