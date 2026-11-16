@@ -17,7 +17,7 @@ import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, SNIPPET_RULES, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
 import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
@@ -30,8 +30,11 @@ import { Refused, type MailWriter, type Moved } from './writer'
 /** Everything the app does, with the clock and the outside world passed in. */
 
 export const EARLY_WAIT_S = 30
-/** How long Undo has before a change sets off for the server. The page offers it for less than this. */
-export const UNDO_MS = 6_000
+/** How long a change that takes mail away waits past the Undo the page offers, before it sets off
+ *  for the server. */
+const UNDO_GRACE_MS = 1_000
+/** How long that is in all, with Undo as long as Settings start out. */
+export const UNDO_MS = 5_000 + UNDO_GRACE_MS
 const RETRY_MS = 60_000
 const REFUSALS_ALLOWED = 3
 const NOT_SURE_SENT = 'The app stopped while sending this. Check Sent before trying again.'
@@ -59,7 +62,9 @@ const DEFAULT_SETTINGS: Settings = {
   muted: [],
   notifyFocusedOnly: false,
   undoSeconds: 10,
+  undoActionSeconds: 5,
   defaultReply: 'reply',
+  quoteReplies: true,
   theme: 'system',
   darkMail: true,
   focused: true,
@@ -73,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   attachmentCards: true,
   sidebar: cleanSidebar(null),
   sidebarIcons: true,
+  importanceMarks: true,
   clock24: true,
   keys: 'edison',
   keyChanges: {},
@@ -88,6 +94,7 @@ const DEFAULT_SETTINGS: Settings = {
   images: 'ask',
   imagesFrom: [],
   readAfter: 0,
+  threadOrder: 'oldest',
   later: DEFAULT_LATER
 }
 
@@ -819,7 +826,7 @@ export class MailService {
   act(targets: ThreadRef[], action: MailAction): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) ? UNDO_MS : 0
+    const wait = takesAway(action) ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
@@ -1231,7 +1238,8 @@ export class MailService {
       from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
       ...replyTargets(message, own, start.kind === 'replyAll'),
       subject: replySubject(message.subject),
-      quote: quoteOf(message, 'reply'),
+      // Settings can start a reply with nothing quoted. It still answers the message, threaded with it.
+      quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
       inReplyTo: message.messageId,
       references: `${message.references} ${message.messageId}`.trim()
     }))
@@ -1569,7 +1577,9 @@ export class MailService {
 
   /** Remakes the previews of mail stored by an older version, in small steps. The tag means it
    *  happens once, and the steps mean a large mailbox doesn't hold everything else up. */
-  async refreshSnippets(tag: string): Promise<void> {
+  async refreshSnippets(version: string): Promise<void> {
+    // Made again for each version, and when the way they're made changes in between.
+    const tag = `${version}+${SNIPPET_RULES}`
     if (this.store.meta('snippets') === tag) return
     let after = 0
     for (;;) {
@@ -1752,7 +1762,9 @@ export class MailService {
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
+      undoActionSeconds: patch.undoActionSeconds === undefined ? settings.undoActionSeconds : clamp(patch.undoActionSeconds, 1, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,
+      quoteReplies: patch.quoteReplies ?? settings.quoteReplies,
       theme: patch.theme ?? settings.theme,
       darkMail: patch.darkMail ?? settings.darkMail,
       focused: patch.focused ?? settings.focused,
@@ -1762,6 +1774,7 @@ export class MailService {
       attachmentCards: patch.attachmentCards ?? settings.attachmentCards,
       sidebar: patch.sidebar ? cleanSidebar(patch.sidebar) : settings.sidebar,
       sidebarIcons: patch.sidebarIcons ?? settings.sidebarIcons,
+      importanceMarks: patch.importanceMarks ?? settings.importanceMarks,
       clock24: patch.clock24 ?? settings.clock24,
       keys: isKeySet(patch.keys) ? patch.keys : settings.keys,
       keyChanges: patch.keyChanges ? cleanAllChanges(patch.keyChanges) : settings.keyChanges,
@@ -1777,6 +1790,7 @@ export class MailService {
       images: patch.images ?? settings.images,
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
       readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
+      threadOrder: patch.threadOrder === 'oldest' || patch.threadOrder === 'newest' ? patch.threadOrder : settings.threadOrder,
       // Only the times named change, so two set one after the other both stay.
       later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })

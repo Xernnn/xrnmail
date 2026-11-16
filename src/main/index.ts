@@ -346,13 +346,14 @@ function profile(value: unknown): ProfilePatch {
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
   if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
   if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
+  if (p['undoActionSeconds'] !== undefined) patch.undoActionSeconds = number(p['undoActionSeconds'])
   if (p['defaultReply'] === 'reply' || p['defaultReply'] === 'replyAll') patch.defaultReply = p['defaultReply']
   if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
   if (p['focused'] !== undefined) patch.focused = p['focused'] === true
   if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -365,6 +366,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
   if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
   if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
+  if (p['threadOrder'] === 'oldest' || p['threadOrder'] === 'newest') patch.threadOrder = p['threadOrder']
   if (p['later'] && typeof p['later'] === 'object') {
     const later = p['later'] as Record<string, unknown>
     patch.later = Object.fromEntries(Object.entries(later).filter(([key]) => key in DEFAULT_LATER).map(([key, value]) => [key, number(value)])) as Partial<LaterTimes>

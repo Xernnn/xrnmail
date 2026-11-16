@@ -118,8 +118,13 @@ export interface Settings {
   notifyFocusedOnly: boolean
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
+  /** How long Undo is offered after archiving, deleting, moving and the rest, and how long the change
+   *  waits here before it goes to the server. */
+  undoActionSeconds: number
   /** What the reply button on a message does: answer its sender, or everyone on it. */
   defaultReply: 'reply' | 'replyAll'
+  /** A reply starts with the message it answers quoted under it. A forward always has the message. */
+  quoteReplies: boolean
   theme: 'system' | 'light' | 'dark'
   /** In dark mode, mail made for a white page is darkened to match. */
   darkMail: boolean
@@ -146,6 +151,8 @@ export interface Settings {
   sidebar: SidebarChoice
   /** Icons beside the sidebar's entries. */
   sidebarIcons: boolean
+  /** Gmail's importance markers on rows of the list. */
+  importanceMarks: boolean
   /** Times as 17:30, not 5:30 PM. */
   clock24: boolean
   /** Which set of keys the keyboard answers to: Edison Mail's, Gmail's as xrnmail had them, Apple
@@ -169,6 +176,8 @@ export interface Settings {
   images: 'ask' | 'always'
   /** How many seconds a thread is open before it's marked read: 0 at once, -1 only when asked. */
   readAfter: number
+  /** The messages of an open thread from the top down: the first one first, or the newest. */
+  threadOrder: 'oldest' | 'newest'
   /** What Later today, This evening, Tomorrow, the weekend and Next week mean, for snoozing and sending later. */
   later: LaterTimes
   /** Senders whose pictures load without being asked for. */
@@ -194,6 +203,8 @@ export interface ThreadRow {
   unread: number
   attachment: boolean
   starred: boolean
+  /** Gmail has marked it important (its \\Important label). Only Gmail does. */
+  important: boolean
   /** Set while it's away, and for a while after it comes back. */
   snoozedUntil: number | null
   facts: Facts | null
@@ -288,6 +299,8 @@ export interface MessageView {
   date: number
   text: string
   html: string | null
+  /** A line or two of what's new in it, as the list shows: not what it quotes, nor its links. */
+  snippet: string
   attachments: AttachmentInfo[]
   /** Too big to keep whole here: Gmail has the rest. */
   truncated: boolean
@@ -347,6 +360,10 @@ export type ListQuery =
   | { kind: 'assistant'; section: AssistantSection }
   /** A sender's page: their threads on one account. */
   | { kind: 'from'; account: string; address: string }
+
+/** Gmail's label for mail it thinks matters, which its importance markers show. It's added and taken
+ *  off as any label is. */
+export const IMPORTANT = '\\Important'
 
 /** A change to mail in Gmail, made because the person asked for it. */
 export type MailAction =
@@ -417,9 +434,9 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'defaultReply' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter'>> & {
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder'>> & {
   /** Only the times named. */
   later?: Partial<LaterTimes>
 }

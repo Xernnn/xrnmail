@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Component, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CalendarRange, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from 'lucide-react'
 import type { FileKind } from './format'
 import { useFace } from './pictures'
@@ -25,6 +25,18 @@ export function initials(name: string, address: string): string {
   const first = (word: string | undefined): string => [...(word ?? '')][0] ?? ''
   const letters = usable ? first(words[0]) + (words.length > 1 ? first(words.at(-1)) : '') : first(address)
   return letters.toLocaleUpperCase() || '?'
+}
+
+/** Gmail's importance marker: a small arrow-shaped tag, drawn in the page's own colours. With [label]
+ *  it says what it is; without, it's beside words that do. */
+export function ImportantMark(props: { size?: number; label?: string; className?: string }): ReactNode {
+  const size = props.size ?? 13
+  return (
+    <svg className={props.className} width={size} height={size} viewBox="0 0 16 16" fill="currentColor"
+      {...(props.label ? { role: 'img', 'aria-label': props.label } : { 'aria-hidden': true })}>
+      <path d="M1.5 3.5h9.2a1 1 0 0 1 .8.4L14.5 8l-3 4.1a1 1 0 0 1-.8.4H1.5L4.7 8z" />
+    </svg>
+  )
 }
 
 /** A face for someone: their photo or their company's logo where the main process has one, or
@@ -64,6 +76,31 @@ export function Empty(props: { icon: LucideIcon; title: string; note?: string })
       {props.note && <p className="muted note">{props.note}</p>}
     </div>
   )
+}
+
+/** A part of the window that, should drawing it fail, shows [fallback] in its place while the rest
+ *  carries on. A new [reset] (the thread open, say) tries it again; so does [fallback]'s `again`. */
+export class Boundary extends Component<
+  { children: ReactNode; reset?: string; fallback(again: () => void): ReactNode },
+  { failed: boolean; reset?: string }
+> {
+  override state: { failed: boolean; reset?: string } = { failed: false, reset: this.props.reset }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  static getDerivedStateFromProps(props: { reset?: string }, state: { failed: boolean; reset?: string }): { failed: boolean; reset?: string } | null {
+    return props.reset !== state.reset ? { failed: false, reset: props.reset } : null
+  }
+
+  override componentDidCatch(error: unknown): void {
+    console.error(error)
+  }
+
+  override render(): ReactNode {
+    return this.state.failed ? this.props.fallback(() => this.setState({ failed: false })) : this.props.children
+  }
 }
 
 export function Skeleton({ rows = 8 }: { rows?: number }): ReactNode {

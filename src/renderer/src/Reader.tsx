@@ -5,8 +5,8 @@ import {
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { plainName } from '@shared/names'
-import type { AccountView, Address, Facts, MailAction, MessageView, Rsvp, SenderWarning, Settings } from '@shared/types'
-import { Avatar, Empty, KIND_ICONS } from './Common'
+import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
+import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
@@ -14,6 +14,9 @@ import { Original } from './Original'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 
 const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
+
+/** The mail system's own addresses, which send bounces and notices: no person to block. */
+const SYSTEM_SENDER = /^(?:mailer-daemon|postmaster)@/i
 
 export type ReplyKind = 'reply' | 'replyAll' | 'forward'
 export type Panel = 'snooze' | 'labels' | 'more' | null
@@ -47,6 +50,9 @@ const FACT_NAMES: Record<Facts['type'], string> = { package: 'Package', travel: 
 function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: number, answer: Rsvp): void }): ReactNode {
   const { message, facts, rsvp } = props
   const Icon = FACT_ICONS[facts.type]
+  // An invitation to something that's over has nothing left to answer.
+  const ends = facts.type === 'event' ? facts.end ?? facts.start : null
+  const over = ends !== null && ends < Date.now()
   return (
     <div className="fact">
       <span className={`fact-tile fact-${facts.type}`} aria-hidden="true"><Icon size={17} /></span>
@@ -57,7 +63,7 @@ function FactCard(props: { message: MessageView; facts: Facts; rsvp(message: num
       {facts.type === 'package' && facts.url && (
         <button className="pill strong" onClick={() => void window.mail.openLink(facts.url ?? '')}>Track</button>
       )}
-      {facts.type === 'event' && facts.invite && ANSWERS.map(([answer, word]) => (
+      {facts.type === 'event' && facts.invite && !over && ANSWERS.map(([answer, word]) => (
         <button key={answer} className="pill" onClick={() => rsvp(message.id, answer)}>{word}</button>
       ))}
     </div>
@@ -160,7 +166,7 @@ function Message(props: {
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
             <strong>{nameOf(m.from)}</strong>
-            <span className="muted"> {m.text.replace(/\s+/g, ' ').slice(0, 160)}</span>
+            <span className="muted"> {(m.snippet || m.text.replace(/\s+/g, ' ')).slice(0, 160)}</span>
           </span>
           <span className="muted when">{shortTime(m.date)}</span>
         </button>
@@ -245,6 +251,16 @@ function Nothing(): ReactNode {
   )
 }
 
+/** In the reader's place when a thread couldn't be drawn, so the rest of the window carries on. */
+export function CantShow(props: { back(): void; label: string }): ReactNode {
+  return (
+    <main className="reader reader-empty" role="alert">
+      <Empty icon={TriangleAlert} title="Couldn't show this message" note="Something in it couldn't be drawn here." />
+      <button type="button" className="pill" onClick={props.back}>{props.label}</button>
+    </main>
+  )
+}
+
 export function Reader(props: {
   messages: MessageView[]
   account: AccountView | undefined
@@ -318,6 +334,7 @@ export function Reader(props: {
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
   const starred = messages.some((m) => m.flagged)
   const pinned = messages.some((m) => m.pinned)
+  const important = messages.some((m) => m.labels.includes(IMPORTANT))
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
   const person = messages.find((m) => m.from.address && m.from.address !== last.account)
   const sender = person?.from.address
@@ -325,8 +342,12 @@ export function Reader(props: {
   const folded = !unfolded && messages.length > LONG_THREAD
   const hidden = folded ? messages.slice(1, -2).filter((m) => !open.has(m.id)) : []
   const shown = messages.filter((m) => !hidden.includes(m))
+  // Newest first, the thread reads from the top down the other way, and the fold sits above the first.
+  const newestFirst = settings?.threadOrder === 'newest'
+  const ordered = newestFirst ? [...shown].reverse() : shown
+  const foldAt = newestFirst ? ordered.length - 1 : 1
   const leaving = [...messages].reverse().find((m) => m.unsubscribe)
-  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
+  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()) && !SYSTEM_SENDER.test(m.from.address))
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
   const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
@@ -396,6 +417,13 @@ export function Reader(props: {
             <Popover right close={() => setPanel(null)}>
               {!bins && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
               {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
+              {gmail && !bins && (
+                // As with a flag, the mark itself says it's done: no toast, since an Undo there couldn't
+                // call back a change that has already gone to Gmail.
+                <button type="button" className="menu-item" onClick={() => { setPanel(null); act({ kind: 'label', label: IMPORTANT, add: !important }) }}>
+                  <ImportantMark size={15} /> {important ? 'Mark as not important' : 'Mark as important'}
+                </button>
+              )}
               {sender && inInbox && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
               {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
               {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
@@ -426,9 +454,9 @@ export function Reader(props: {
             <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>
           )}
         </div>
-        {shown.map((m, i) => (
+        {ordered.map((m, i) => (
           <div key={m.id} className="message-slot">
-            {hidden.length > 0 && i === 1 && (
+            {hidden.length > 0 && i === foldAt && (
               <button className="fold" onClick={() => setUnfolded(true)}>
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>

@@ -34,10 +34,10 @@ const TABS: [Tab, string, LucideIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo send default reply all mark read seen snooze send later today evening tomorrow weekend next week pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
-  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files clock 24-hour time',
+  appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
   signatures: 'signature sign',
@@ -344,6 +344,8 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
           options={[['panes', 'List and message side by side'], ['below', 'Message under the list'], ['list', 'One thing at a time']]} />
         <Choice label="When a thread is archived or deleted" value={settings.afterRemove} set={(afterRemove) => save({ afterRemove })}
           options={[['next', 'Open the next one'], ['previous', 'Open the one before'], ['list', 'Go back to the list']]} />
+        <Choice label="Undo archive and delete for" value={settings.undoActionSeconds} set={(undoActionSeconds) => save({ undoActionSeconds })}
+          options={[5, 10, 20, 30].map((n) => [n, `${n} seconds`])} />
       </section>
       <section>
         <h3>Sending</h3>
@@ -351,12 +353,15 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
           options={[0, 5, 10, 20, 30].map((n) => [n, n === 0 ? 'Off' : `${n} seconds`])} />
         <Choice label="Default reply" value={settings.defaultReply} set={(defaultReply) => save({ defaultReply })}
           options={[['reply', 'Reply'], ['replyAll', 'Reply All']]} />
+        <Check label="Quote the original message in a reply" on={settings.quoteReplies} set={(quoteReplies) => save({ quoteReplies })} />
       </section>
       <section>
         <h3>Reading</h3>
         <Check label="Load the pictures in a message without asking" on={settings.images === 'always'} set={(on) => save({ images: on ? 'always' : 'ask' })} />
         <Choice label="Mark a thread read" value={settings.readAfter} set={(readAfter) => save({ readAfter })}
           options={[[0, 'As soon as it opens'], [1, 'After 1 second'], [2, 'After 2 seconds'], [5, 'After 5 seconds'], [-1, 'Only when I mark it read']]} />
+        <Choice label="Messages in a thread" value={settings.threadOrder} set={(threadOrder) => save({ threadOrder })}
+          options={[['oldest', 'Oldest first'], ['newest', 'Newest first']]} />
       </section>
       <section>
         <h3>Snooze and send later</h3>
@@ -515,6 +520,7 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
         <Choice label="Preview lines" value={settings.previewLines} set={(previewLines) => save({ previewLines })}
           options={[[0, 'None'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]} />
         <Check label="Show a thread's files as cards under its row" on={settings.attachmentCards} set={(attachmentCards) => save({ attachmentCards })} />
+        <Check label="Show Gmail's importance markers in the list" on={settings.importanceMarks} set={(importanceMarks) => save({ importanceMarks })} />
         <Check label="Use the 24-hour clock" on={settings.clock24} set={(clock24) => save({ clock24 })} />
       </section>
     </>

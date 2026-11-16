@@ -53,8 +53,12 @@ export function straightThrough(address: string, vip: string[]): boolean {
   })
 }
 
-export const longTime = (at: number): string =>
-  new Date(at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12 })
+/** A day and a time, with the year when it isn't this one, as the list has it. */
+export const longTime = (at: number, now = Date.now()): string =>
+  new Date(at).toLocaleString([], {
+    weekday: 'short', day: 'numeric', month: 'short', year: new Date(at).getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric',
+    hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', hour12
+  })
 
 /** Every part of a moment, to the second and with its zone, for a message's details. */
 export const fullTime = (at: number): string =>

@@ -3,15 +3,16 @@ import {
   Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
   SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
-import type {
-  AccountView, Draft, DraftStart, ListQuery, MailAction, MessageView, Overview, Rsvp, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow
+import {
+  IMPORTANT, type AccountView, type Draft, type DraftStart, type ListQuery, type MailAction, type MessageView, type Overview, type Rsvp, type Settings, type Subscription,
+  type SummarySettings, type SwipeAction, type ThreadRef, type ThreadRow
 } from '@shared/types'
 import { Composer } from './Composer'
-import { Confirm, ContextMenu, Empty, Skeleton, type MenuEntry, type Question } from './Common'
+import { Boundary, Confirm, ContextMenu, Empty, ImportantMark, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
-import { Reader, type Panel, type ReplyKind } from './Reader'
+import { CantShow, Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
@@ -103,6 +104,8 @@ export function App(): ReactNode {
   const [view, setView] = useState<View>({ kind: 'inbox' })
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ThreadRow[] | null>(null)
+  /** The list emptied for its skeleton, so it's asked for again even when what's asked is the same. */
+  const [relisted, setRelisted] = useState(0)
   const [limit, setLimit] = useState(PAGE)
   const [open, setOpen] = useState<ThreadRef | null>(SOLO?.kind === 'thread' ? { account: SOLO.account, thread: SOLO.thread } : null)
   /** In a window of its own: whether its thread is in Trash or Spam just now, and whether it's anywhere at all. */
@@ -180,6 +183,7 @@ export function App(): ReactNode {
     setPicked(new Set())
     setLimit(PAGE)
     setRows(null)
+    setRelisted((n) => n + 1)
     setOpen(ref)
   }), [])
 
@@ -203,9 +207,11 @@ export function App(): ReactNode {
     document.title = soloTitle ?? (unread > 0 ? `(${unread}) xrnmail` : 'xrnmail')
   }, [unread, soloTitle])
 
+  // One with Undo stays as long as Settings say Undo lasts, and the change waits for it.
+  const undoMs = (profile?.undoActionSeconds ?? TOAST_MS / 1000) * 1000
   useEffect(() => {
     if (!toast) return undefined
-    const timer = setTimeout(() => setToast(null), toast.ms ?? TOAST_MS)
+    const timer = setTimeout(() => setToast(null), toast.ms ?? (toast.undo ? undoMs : TOAST_MS))
     return () => clearTimeout(timer)
   }, [toast])
 
@@ -272,7 +278,7 @@ export function App(): ReactNode {
       })
     }, 120)
     return () => clearTimeout(timer)
-  }, [JSON.stringify(query), version, reads, limit])
+  }, [JSON.stringify(query), version, reads, limit, relisted])
 
   /** Seconds an open thread waits before it's marked read: none, some, or -1 for only when asked. */
   const readAfter = profile?.readAfter ?? 0
@@ -458,6 +464,7 @@ export function App(): ReactNode {
       setSearch('')
       setOpen(null)
       setRows(null)
+      setRelisted((n) => n + 1)
     }
     else if (command === 'help') setHelp(true)
     else if (command === 'print') window.print()
@@ -851,6 +858,7 @@ export function App(): ReactNode {
     setPicked(new Set())
     setLimit(PAGE)
     setRows(null)
+    setRelisted((n) => n + 1)
   }
 
   const refs = targets()
@@ -888,6 +896,8 @@ export function App(): ReactNode {
   const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
   const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
   const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  // Importance is Gmail's, so it's offered only for threads that are all on Gmail.
+  const pickedGmail = pickedRows.length > 0 && pickedRows.every((r) => accounts.find((a) => a.email === r.account)?.labels)
   const onOther = active.kind === 'inbox' && active.focus === 'other'
   const appClass = ['app', open ? 'reading' : '', single ? 'one-pane' : '', below ? 'below' : '', lines === 0 ? 'no-preview' : '', profile?.sidebarIcons === false ? 'no-icons' : ''].join(' ')
   const swipes: Swipes = profile?.swipes
@@ -907,7 +917,15 @@ export function App(): ReactNode {
     // each time it changed, whatever was done to it there.
     void window.mail.openThreadWindow(open.account, open.thread, bins).then(() => setOpen(null), (e: unknown) => say(problem(e)))
   }
+  // One message that can't be drawn takes the reader with it, not the window. Another thread tries again.
   const reader = (
+    <Boundary reset={open ? keyOf(open) : ''} fallback={(again) => (
+      <CantShow label={SOLO ? 'Close' : 'Back to the list'} back={() => {
+        if (SOLO) return window.close()
+        setOpen(null)
+        again()
+      }} />
+    )}>
     <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
       settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
       labels={openAccount ? labelsOf(openAccount, overview) : []}
@@ -923,6 +941,7 @@ export function App(): ReactNode {
         setSearch(text)
         focusSearch()
       }} />
+    </Boundary>
   )
   /** What's drawn over the page, in any window. */
   const over = (
@@ -1020,7 +1039,8 @@ export function App(): ReactNode {
             )}
           </div>
         </header>
-        <div className="panes">
+        {/* Subscriptions are a page of senders with nothing to open beside them, so they take the width. */}
+        <div className={showSubscriptions ? 'panes whole' : 'panes'}>
           <section className="list" aria-label="Threads">
             {split && active.kind === 'inbox' && (
               <div className="tabs" role="group" aria-label="Focused and Other">
@@ -1085,7 +1105,7 @@ export function App(): ReactNode {
                 <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
-                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true}
+                  swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true} importance={profile?.importanceMarks ?? true}
                   open={() => setOpen({ account: row.account, thread: row.thread })}
                   pick={(event) => togglePick(row, index, event.shiftKey)}
                   act={(action, label) => void run([{ account: row.account, thread: row.thread }], action, label)}
@@ -1145,6 +1165,16 @@ export function App(): ReactNode {
                             </button>
                           ) : (
                             <p className="muted note menu-note">Labels and folders are each account's own: pick threads from one account to file them.</p>
+                          )}
+                          {pickedGmail && pickedRows.some((r) => !r.important) && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void run(refs, { kind: 'label', label: IMPORTANT, add: true }) }}>
+                              <ImportantMark size={15} /> Mark as important
+                            </button>
+                          )}
+                          {pickedGmail && pickedRows.some((r) => r.important) && (
+                            <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void run(refs, { kind: 'label', label: IMPORTANT, add: false }) }}>
+                              <ImportantMark size={15} /> Mark as not important
+                            </button>
                           )}
                           <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); setPicked(new Set()); void pin(refs, !allPinned) }}>
                             {allPinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />} {allPinned ? 'Unpin' : 'Pin'}

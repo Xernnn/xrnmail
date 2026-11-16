@@ -34,20 +34,26 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
   the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
-  it if Settings, General say so. A reply or forward closed as it opened, with nothing written, leaves
-  no draft behind.
+  it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
+  not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
+  leaves no draft behind.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
   up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
-  with the server, one thread or many at once, with Undo. It keeps working offline and catches up.
-  Once the open thread is archived or deleted, the next one opens, or the one before, or the list
-  comes back, as Settings, General say. Marking it unread closes it, so nothing else gets read.
+  with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
+  General say: what takes mail away waits that long here before the server hears of it). It keeps
+  working offline and catches up. On Gmail, threads it thinks matter carry its importance marker, and
+  can be marked important or not from the ⋮ over a thread or under a selection. Once the open thread
+  is archived or deleted, the next one opens, or the one before, or the list comes back, as Settings,
+  General say. Marking it unread closes it, so nothing else gets read.
 - **Reading:** a thread is read as it opens, or after a few seconds open, or only when you mark it
   read (Settings, General), so going down the list to look reads nothing by the way. In Unread the
-  open thread keeps its place while it's read, so `j` goes on to the one below.
+  open thread keeps its place while it's read, so `j` goes on to the one below. A thread reads oldest
+  first, or newest first if Settings, General say so: then the newest is on top, open, with the
+  middle folded below it over the first, and Reply at the foot and `r` still answer the newest.
 - **Trash and Spam:** read them, restore from them, or delete for good.
 - **Pinned:** pin a thread from its menu, a row's menu, or by dropping it on Pinned, and find it
   there afterwards. A pin is this laptop's own note: the mail service isn't told, and flags stay free
@@ -109,6 +115,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
+- **Wide mail fits the pane:** a newsletter made for a set width, 600 pixels say, is drawn smaller to
+  fit a narrower reading pane, pictures and all, and at its own size again once there's room; never
+  larger than sent. Mail that flows to any width keeps its size, and a table in it too wide for the
+  pane scrolls sideways by itself, so the words round it stay readable.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
   selection (its ⋮ labels or files every thread picked, pins them, or moves them to Other or Focused),
@@ -225,15 +235,13 @@ Not here, though Edison has them:
 - Settings' Labels, Back up & Sync and Privacy pages, which Edison's pictures name but don't open.
   Back up & Sync would need a server of Edison's.
 - From Appearance: the Scaling slider (View's zoom does that here).
-- From General: how long Undo lasts after archiving and the rest (5 seconds, as Edison's pictures
-  have it set) and Show only one undo; which of Cc and Bcc a new message shows; whether a reply
-  quotes the original; conversations newest first; replies opening in a window of their own; Gmail's
-  importance markers; and a count beside Unread, which here is the inbox's unread and would only
+- From General: which of Cc and Bcc a new message shows; replies opening in a window of their own;
+  and a count beside Unread, which here is the inbox's unread and would only
   repeat the inbox's count. Today has its count, of what came today and is unread.
 - A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
-  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Pin and
-  Move to Other here, but not Mark as important (Gmail's importance isn't read here at all).
+  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Mark as
+  important or not important (on Gmail), Pin and Move to Other here.
 
 Done differently:
 
@@ -279,6 +287,9 @@ Done differently:
   after" shows Instantly; here there are 1, 2 and 5 seconds, and only when marked. "Default reply
   behavior" shows Reply All, with the button beside each message drawn as Reply All; here that's
   what it decides, and the foot of a thread keeps both buttons and the keys keep their own.
+- How long Undo lasts after archiving, deleting and moving is 5, 10, 20 or 30 seconds (Settings,
+  General; Edison's pictures show 5). Show only one undo isn't a choice here, because it's how Undo
+  always is: each new one takes the place of the one before, and `z` undoes the one showing.
 - Edison's help says notices can be for Focused alone; here that's Only mail in Focused, under
   Notifications, while the inbox is split. Its badge setting to match isn't here: the tray counts
   everything unread.
@@ -293,6 +304,10 @@ Done differently:
   thread at a time), and labels and folders need the threads to be from one account. Move to Other
   and Move to Focused keep each picked thread's sender on that side, since that's how Focused and
   Other are decided here.
+- Gmail's importance markers are a small grey tag after a row's subject, which Settings, Appearance
+  can hide, and only Gmail threads have them. Mark as important and Mark as not important are on the ⋮
+  over a thread and the ⋮ on the bar under a selection, not on a message's own ⋮, because Gmail marks
+  a whole conversation. Like a flag, the mark itself shows it's done: there's no toast with Undo.
 - Recent searches are as Edison's phone app has them (https://9to5mac.com/?p=837422); its Mac app's
   pictures show only the box.
 - Snooze isn't in the Mac app's pictures, and reviews say it had none; Edison's phone app snoozes to

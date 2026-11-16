@@ -88,6 +88,10 @@ export class FakeGmail {
   dropNextConnection = false
   /** Answer NO to anything that would change the mailbox. */
   refuseWrites = false
+  /** Take a connection and say nothing on it, not even hello, as a server that has stopped answering. */
+  silent = false
+  /** Commands taken and never answered, as a server that goes quiet partway through. */
+  stall: RegExp | null = null
   /** Folders whose SEARCH is answered NO, as Gmail does when it's short of time. */
   refuseSearch = new Set<string>()
   /** Folders, by the name they're asked for by, that won't be opened just now. */
@@ -268,6 +272,7 @@ export class FakeGmail {
       socket.destroy()
       return
     }
+    if (this.silent) return
     socket.write('* OK Gimap ready\r\n')
     let pending = ''
     let held = '' // a command so far, while its literal is on the way
@@ -320,6 +325,7 @@ export class FakeGmail {
     const verb = (words[0] ?? '').toUpperCase()
     const full = verb === 'UID' ? `UID ${(words[1] ?? '').toUpperCase()}` : verb
     this.commands.push(verb === 'LOGIN' ? 'LOGIN' : `${full} ${rest.slice(full.length + 1)}`.trim())
+    if (this.stall?.test(full)) return
     const ok = (text = 'OK'): void => void socket.write(`${tag} OK ${text}\r\n`)
     switch (full) {
       case 'CAPABILITY':

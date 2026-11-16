@@ -351,7 +351,7 @@ describe('what a stranger chooses', () => {
 
 describe('writing back', () => {
   const message = (over: Partial<MessageDetail> = {}): MessageDetail => ({
-    id: 1, box: '@all', uid: 1, account: 'me@example.com', thread: 't', subject: 'Plan', date: 0, text: 'Line one\nLine two', html: null,
+    id: 1, box: '@all', uid: 1, account: 'me@example.com', thread: 't', subject: 'Plan', date: 0, text: 'Line one\nLine two', html: null, snippet: 'Line one Line two',
     from: { name: 'Ada', address: 'ada@example.com' },
     to: [{ name: '', address: 'me@example.com' }, { name: 'Bo', address: 'bo@example.com' }],
     cc: [{ name: '', address: 'cy@example.com' }],

@@ -2,7 +2,8 @@ import DOMPurify from 'dompurify'
 import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { splitQuoted } from '@shared/quoted'
-import { darkenDocument } from './darken'
+import { darkenDocument, UNLOADED_DARK } from './darken'
+import { fitDocument } from './fit'
 
 /**
  * Shows a stranger's HTML. It's sanitised here, then shown in a frame that may not run scripts,
@@ -17,8 +18,9 @@ const SANITIZE = {
   ALLOW_DATA_ATTR: false
 }
 
-/** Mail services that report back when a message is opened. */
-const TRACKER = /\b(list-manage\.com\/track|sendgrid\.net\/wf\/open|mandrillapp\.com\/track|mailtrack\.io|hubspotemail\.net|sparkpostmail\.com\/q|track\.customer\.io|mailgun\.org\/o|mixmax\.com\/api\/track|bananatag\.com|superhuman\.com\/[^"']{0,200}pixel|yesware\.com\/trk|cirrusinsight\.com\/[^"']{0,200}track)/i
+/** Mail services that report back when a message is opened. HubSpot hosts its senders' pictures on
+ *  the same hubspotemail.net, so only its open-tracking paths count. */
+const TRACKER = /\b(list-manage\.com\/track|sendgrid\.net\/wf\/open|mandrillapp\.com\/track|mailtrack\.io|(?:hubspotemail\.net|hubspotlinks\.com|sidekickopen\d{0,3}\.com)\/(?:e[12]t\/t?o\/|Cto\/)|track\.hubspot\.com\/__ptq|sparkpostmail\.com\/q|track\.customer\.io|mailgun\.org\/o|mixmax\.com\/api\/track|bananatag\.com|superhuman\.com\/[^"']{0,200}pixel|yesware\.com\/trk|cirrusinsight\.com\/[^"']{0,200}track)/i
 
 const tiny = (image: Element): boolean => {
   const small = (name: string): boolean => {
@@ -64,12 +66,18 @@ const DESIGNED = /<(?:table|img|font|center)\b|\b(?:background|bgcolor)\b|\bcolo
 
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
 
-/** A picture that hasn't been allowed shows as a plain block of its own size, not a broken icon. */
-const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"]{content:url("${BLANK}");background:#e9ecf0;border-radius:4px}`
+/** Marks a picture asked for that couldn't be fetched (offline, say), shown as one not asked for is. */
+const FAILED = 'xrn-failed'
+
+/** A picture that hasn't been allowed shows as a plain block of its own size, not a broken icon: pale
+ *  on the white page mail is made for, dark on a dark one (darken.ts sets that once it has darkened). */
+const UNLOADED = `html.no-images img[src^="http"],html.no-images img[src^="//"],img.${FAILED}{content:url("${BLANK}");background:var(--xrn-unloaded,#e9ecf0);border-radius:4px}`
 
 /** Installed fonts only: the frame may load nothing, so the app's own copy of MiSans can't reach it. */
 const FRAME_FONTS = `"MiSans Latin","MiSans","Noto Sans","Segoe UI",Roboto,"Helvetica Neue",Arial,"Liberation Sans",sans-serif`
 
+/** The frame's own margin is inside its page, so mail that makes its page the full width (most of what
+ *  comes from mailing services does) isn't that margin wider than the pane. */
 function frameDocument(clean: string, images: boolean, dark: boolean, designed: boolean): string {
   const remote = images ? ' http: https:' : ''
   const policy = `default-src 'none'; img-src data:${remote}; style-src 'unsafe-inline'; font-src data:`
@@ -77,14 +85,35 @@ function frameDocument(clean: string, images: boolean, dark: boolean, designed: 
   // unless a dark window darkens it once it's loaded.
   const blends = !designed
   const look = !blends ? 'body{background:#fff;color:#1c1b1a}'
-    : dark ? 'html{color-scheme:dark}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}'
+    : dark ? `html{color-scheme:dark;--xrn-unloaded:${UNLOADED_DARK}}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}`
     : 'body{background:transparent;color:#1d2025}a{color:#1a5fd0}'
-  return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}</style></head><body>${clean}</body></html>`
+  return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{box-sizing:border-box;margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}</style></head><body>${clean}</body></html>`
 }
+
+const SYSTEM_DARK = '(prefers-color-scheme: dark)'
 
 const isDark = (): boolean => {
   const theme = document.documentElement.dataset['theme']
-  return theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  return theme === 'dark' || (theme !== 'light' && window.matchMedia(SYSTEM_DARK).matches)
+}
+
+/** Whether the window is dark, now and each time that changes: the desktop switching its theme, with
+ *  Settings on Same as the system, or Settings choosing another look. */
+function useDark(): boolean {
+  const [dark, setDark] = useState(isDark)
+  useEffect(() => {
+    const check = (): void => setDark(isDark())
+    const system = window.matchMedia(SYSTEM_DARK)
+    system.addEventListener('change', check)
+    const chosen = new MutationObserver(check)
+    chosen.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    check()
+    return () => {
+      system.removeEventListener('change', check)
+      chosen.disconnect()
+    }
+  }, [])
+  return dark
 }
 
 /** Three dots that bring back what a reply quoted. */
@@ -117,19 +146,24 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   /** This message shown in its own colours after all, and whether darkening it changed anything. */
   const [original, setOriginal] = useState(false)
   const [darkened, setDarkened] = useState(false)
+  /** Pictures asked for that couldn't be fetched, and how often they've been asked for again. */
+  const [failed, setFailed] = useState(0)
+  const [tries, setTries] = useState(0)
   const frame = useRef<HTMLIFrameElement>(null)
   const watcher = useRef<ResizeObserver | null>(null)
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
-  const dark = useMemo(isDark, [clean])
+  const dark = useDark()
   const designed = useMemo(() => DESIGNED.test(clean), [clean])
   const showQuoted = quoteOpen || !hasQuote
   const darkening = dark && designed && darken && !original
   const source = frameDocument(clean, images, dark, designed)
   // While it's being darkened the frame stays out of sight, so its white page never flashes up: it's
   // shown once this very page, in these colours, has loaded.
-  const look = `${original}:${source}`
+  // Designed mail's page is the same in either look, and darkening changes it once it has loaded, so a
+  // look that changes makes the frame again, as Show original colours does.
+  const look = `${original}:${dark}:${tries}:${source}`
   const [shown, setShown] = useState('')
   const painted = !darkening || shown === look
 
@@ -143,7 +177,8 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     if (auto && hasRemote) void show()
   }, [auto, hasRemote])
   useEffect(() => {
-    frame.current?.contentDocument?.documentElement.classList.toggle('hide-quoted', !showQuoted)
+    // While the frame's new page is being made it has no root yet; it's given this once it loads.
+    frame.current?.contentDocument?.documentElement?.classList.toggle('hide-quoted', !showQuoted)
   }, [showQuoted])
 
   const loaded = (): void => {
@@ -153,8 +188,35 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.documentElement.classList.toggle('hide-quoted', !showQuoted)
     const fit = (): void => {
       const body = doc.body
-      el.style.height = `${Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height))}px`
+      if (!body) return
+      let scale = 1
+      try {
+        scale = fitDocument(doc)
+      } catch {
+        // Left at its own size: it scrolls sideways, as it did.
+      }
+      // scrollHeight is as laid out, before the zoom draws it smaller.
+      el.style.height = `${Math.ceil(Math.max(body.scrollHeight * scale, body.getBoundingClientRect().height))}px`
     }
+    // A picture that couldn't be fetched is a plain block of its size, as before it was asked for,
+    // not a broken icon with its alt text spilling over what's round it. It's counted, and said.
+    let broken = 0
+    if (images) {
+      for (const img of Array.from(doc.images)) {
+        if (!/^(?:https?:)?\/\//i.test(img.getAttribute('src') ?? '')) continue
+        const fail = (): void => {
+          img.classList.add(FAILED)
+          fit()
+        }
+        if (img.complete && img.naturalWidth === 0) {
+          fail()
+          broken++
+        } else {
+          img.addEventListener('error', () => { fail(); setFailed((n) => n + 1) }, { once: true })
+        }
+      }
+    }
+    setFailed(broken)
     fit()
     try {
       if (darkening) setDarkened(darkenDocument(doc))
@@ -163,8 +225,10 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     }
     setShown(look)
     watcher.current?.disconnect()
+    // The frame narrowing or widening fits the message again, and so does its own height changing.
     watcher.current = new ResizeObserver(fit)
     watcher.current.observe(doc.body)
+    watcher.current.observe(el)
     const linkAt = (target: EventTarget | null): HTMLAnchorElement | null =>
       (target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
     doc.addEventListener('click', (event) => {
@@ -183,13 +247,20 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const recolouring = dark && designed && darken && (original || darkened)
   return (
     <>
-      {(removed > 0 || (hasRemote && !images) || recolouring) && (
+      {(removed > 0 || (hasRemote && !images) || failed > 0 || recolouring) && (
         <div className="body-notes">
           {hasRemote && !images && (
             <>
               <ImageOff size={14} aria-hidden="true" />
               <button className="link" onClick={() => void show()}>Show images</button>
               {sender && trust && <button className="link" onClick={() => trust(sender)}>Always from this sender</button>}
+            </>
+          )}
+          {failed > 0 && (
+            <>
+              <ImageOff size={14} aria-hidden="true" />
+              <span className="muted">{failed === 1 ? "1 picture couldn't load" : `${failed} pictures couldn't load`}</span>
+              <button className="link" onClick={() => { setFailed(0); setTries((n) => n + 1) }}>Try again</button>
             </>
           )}
           {removed > 0 && (
@@ -206,7 +277,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
         </div>
       )}
       <iframe
-        key={original ? 'original' : 'own'}
+        key={`${original ? 'original' : 'own'}-${dark ? 'dark' : 'light'}-${tries}`}
         ref={frame}
         title="Message"
         className={painted ? 'body-frame' : 'body-frame painting'}

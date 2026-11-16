@@ -216,6 +216,19 @@ describe('accounts on different services', () => {
     await service.syncAll()
     expect(service.list({ kind: 'inbox' })[0]).toMatchObject({ unread: 0, starred: true })
   })
+
+  it('only Gmail says what is important: elsewhere nothing is, not even mail in a folder called Important', async () => {
+    gmail.add(rawMail({ subject: 'Gmail thinks so' }), { arrived: new Date(at(9)), labels: ['\\Inbox', '\\Important'] })
+    const plain = await serve(Y, { plain: true, folders: ['Important'] })
+    plain.add(rawMail({ subject: 'In the inbox' }), { arrived: new Date(at(8)) })
+    plain.add(rawMail({ subject: 'Filed as important' }), { box: 'Important', arrived: new Date(at(8)) })
+    await add(G, gmail)
+    await add(Y, plain)
+    const marked = service.list({ kind: 'all' }).map((r) => [r.subject, r.important]).sort()
+    expect(marked).toEqual([['Filed as important', false], ['Gmail thinks so', true], ['In the inbox', false]])
+    const [yahooThread] = service.list({ kind: 'inbox', account: Y })
+    expect(() => service.act(yahooThread ? [yahooThread] : [], { kind: 'label', label: '\\Important', add: true })).toThrow('Only Gmail has labels')
+  })
 })
 
 describe('changes on a server with folders', () => {

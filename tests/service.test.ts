@@ -8,7 +8,7 @@ import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
 import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
-import { ImapSource, ImapWatcher } from '@main/source'
+import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
 import { ImapWriter } from '@main/writer'
 import { gmailThreadUrl, isSafeExternalUrl, isSafeHubUrl } from '@main/safe-url'
@@ -33,6 +33,8 @@ let landed: Mock<(count: number, preview?: { from: string; subject: string; acco
 let summarized: Mock<(count: number, senders: string[]) => void>
 let post: Mock<(url: string, init: { body: string; redirect: string }) => Promise<{ ok: boolean }>>
 let service: MailService
+/** How long the IMAP connections wait before giving up, when a test needs it short. */
+let timeouts: Partial<ImapTimeouts> | undefined
 
 const make = (over: Partial<ServiceDeps> = {}): MailService =>
   new MailService({
@@ -41,8 +43,8 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     post: post as unknown as typeof fetch,
     now: () => clock,
     files: new DraftFiles(folder),
-    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
-    openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login }),
+    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
+    openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
   })
@@ -67,6 +69,7 @@ beforeEach(async () => {
   store = new Store(':memory:')
   secrets = new MemorySecrets()
   clock = at(10)
+  timeouts = undefined
   changed = vi.fn()
   landed = vi.fn()
   summarized = vi.fn()
@@ -706,6 +709,26 @@ describe('changing mail', () => {
     expect(ids()).toEqual(['Two'])
   })
 
+  it('Undo lasts as long as Settings say, and the change waits that long before it reaches Gmail', async () => {
+    expect(service.settings().undoActionSeconds).toBe(5) // as it always was
+    service.saveProfile({ undoActionSeconds: 20 })
+    expect(service.settings().undoActionSeconds).toBe(20)
+    const token = service.act([ref('One')], { kind: 'archive' })
+    await later(UNDO_MS + 1000)
+    expect(fakeMail('One').labels).toContain('\\Inbox') // still Undo's to call back
+    service.undo(token)
+    service.act([ref('Two')], { kind: 'archive' })
+    await later(19_000)
+    expect(fakeMail('Two').labels).toContain('\\Inbox')
+    await later(3000)
+    expect(fakeMail('Two').labels).not.toContain('\\Inbox')
+    expect(fakeMail('One').labels).toContain('\\Inbox')
+    service.saveProfile({ undoActionSeconds: 99 })
+    expect(service.settings().undoActionSeconds).toBe(30)
+    service.saveProfile({ undoActionSeconds: 0 })
+    expect(service.settings().undoActionSeconds).toBe(1)
+  })
+
   it('undo puts it back and Gmail never hears about it', async () => {
     const token = service.act([ref('One')], { kind: 'archive' })
     service.undo(token)
@@ -753,6 +776,31 @@ describe('changing mail', () => {
     service.act([thread], { kind: 'label', label: 'Work', add: true })
     await eventually(() => expect(fakeMail('One').labels).toContain('Work'))
     expect(service.overview().labels).toEqual([{ account: ME, label: 'Work', count: 1 }])
+  })
+
+  it('Gmail\'s importance shows on a thread, both ways, and marking it goes to Gmail as its label, offline too', async () => {
+    gmail.add(rawMail({ subject: 'Matters' }), { arrived: past(10), labels: ['\\Inbox', '\\Important'] })
+    await service.syncAll()
+    const important = (subject: string): boolean | undefined => service.list({ kind: 'inbox' }).find((r) => r.subject === subject)?.important
+    expect(important('Matters')).toBe(true)
+    expect(important('One')).toBe(false)
+    expect(service.overview().labels).toEqual([]) // it's Gmail's own, not one of yours
+    // Marked on the phone, it shows here.
+    gmail.change(fakeMail('Two').uid, ['\\Inbox', '\\Important'])
+    await service.syncAll()
+    expect(important('Two')).toBe(true)
+
+    gmail.dropNextConnection = true
+    service.act([ref('One')], { kind: 'label', label: '\\Important', add: true })
+    service.act([ref('Matters')], { kind: 'label', label: '\\Important', add: false })
+    expect(important('One')).toBe(true)
+    expect(important('Matters')).toBe(false)
+    await eventually(() => expect(service.accounts()[0]?.error).toBe("Couldn't reach Gmail."))
+    expect(fakeMail('One').labels).not.toContain('\\Important') // not reached: it waits, and goes again
+    await later(61_000)
+    await eventually(() => expect(fakeMail('One').labels).toContain('\\Important'))
+    await eventually(() => expect(fakeMail('Matters').labels).toEqual(['\\Inbox']))
+    expect(important('One')).toBe(true)
   })
 
   it('never touches a held message in the thread', async () => {
@@ -803,6 +851,54 @@ describe('changing mail', () => {
     await service.syncAll()
     await service.syncAll()
     expect(gmail.writes()).toHaveLength(writes)
+  })
+})
+
+// A pass that connected and then heard nothing more sat for minutes, and while it sat the account
+// counted as syncing, so every Sync now, timer and wake-up for it was turned away.
+describe('a server that goes quiet', () => {
+  beforeEach(async () => {
+    timeouts = { connect: 1000, greeting: 600, quiet: 800 }
+    service = make()
+    gmail.add(rawMail({ subject: 'One' }), { arrived: past(30) })
+    await signedIn()
+  })
+
+  const quietPass = async (): Promise<number> => {
+    const started = Date.now()
+    await service.syncAll()
+    return Date.now() - started
+  }
+
+  it('a pass stopped partway gives up within its time, says so, and the next one goes', async () => {
+    gmail.stall = /^LIST$/
+    expect(await quietPass()).toBeLessThan(6000)
+    expect(service.accounts()[0]).toMatchObject({ syncing: false, error: "Couldn't reach Gmail." })
+    gmail.stall = null
+    gmail.add(rawMail({ subject: 'After the quiet' }), { arrived: new Date(clock) })
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+    expect(service.list({ kind: 'all' }).map((r) => r.subject)).toContain('After the quiet')
+  })
+
+  it('a server that takes the connection and never says hello is given up on too', async () => {
+    gmail.silent = true
+    expect(await quietPass()).toBeLessThan(6000)
+    expect(service.accounts()[0]).toMatchObject({ syncing: false, error: "Couldn't reach Gmail." })
+    gmail.silent = false
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+  })
+
+  it('a change waiting to go is kept through a quiet server, and goes once it answers', async () => {
+    gmail.stall = /^UID STORE$/
+    service.act([ref('One')], { kind: 'star' })
+    await eventually(() => expect(service.accounts()[0]?.error).toBe("Couldn't reach Gmail."))
+    // Not a refusal, which three of would put the change back: it waits to go again.
+    expect((store as unknown as { all(sql: string): { attempts: number }[] }).all('SELECT attempts FROM pending').map((p) => p.attempts)).toEqual([0])
+    gmail.stall = null
+    await later(61_000)
+    await eventually(() => expect(gmail.mails.find((m) => m.raw.toString().includes('Subject: One'))?.flags).toContain('\\Flagged'))
   })
 })
 
@@ -1093,6 +1189,27 @@ describe('sending', () => {
     expect(raw).toMatch(/In-Reply-To: <\S+@example\.com>/)
     expect(raw).toMatch(/References: <older@example\.com> <\S+@example\.com>/)
     expect(raw).toContain('> Hi there')
+  })
+
+  it('a reply starts without the message it answers when Settings say so, and a forward always has it', async () => {
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Ada <ada@example.com>', to: `${ME}, Bao <bao@example.com>`, text: 'Pho or bun cha?' }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Lunch')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    const id = message?.id ?? 0
+    expect(service.settings().quoteReplies).toBe(true) // as it always was
+    expect((await service.startDraft({ kind: 'reply', message: id })).quote).toMatchObject({ kind: 'reply', text: expect.stringContaining('Pho or bun cha?') })
+    service.saveProfile({ quoteReplies: false })
+    const reply = await service.startDraft({ kind: 'reply', message: id })
+    expect(reply).toMatchObject({ to: '"Ada" <ada@example.com>', subject: 'Re: Lunch', quote: null })
+    expect(reply.inReplyTo).toMatch(/@example\.com>$/) // still an answer to it, threaded with it
+    expect((await service.startDraft({ kind: 'replyAll', message: id })).quote).toBeNull()
+    expect((await service.startDraft({ kind: 'forward', message: id })).quote).toMatchObject({ kind: 'forward', text: expect.stringContaining('Pho or bun cha?') })
+    service.saveDraft(reply.id, { ...reply, html: 'Bun cha', text: 'Bun cha' })
+    service.send(reply.id)
+    await later(10_000)
+    expect(smtp.sent[0]?.raw).toContain('Bun cha')
+    expect(smtp.sent[0]?.raw).not.toContain('Pho or bun cha?')
   })
 
   it('a forward carries the attachments', async () => {
@@ -1768,6 +1885,16 @@ describe('settings', () => {
     expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
   })
 
+  it('keeps the order of a thread\'s messages, oldest first to start with, and nothing else', () => {
+    expect(service.settings().threadOrder).toBe('oldest')
+    service.saveProfile({ threadOrder: 'newest' })
+    expect(service.settings().threadOrder).toBe('newest')
+    service.saveProfile({ threadOrder: 'sideways' as never })
+    expect(service.settings().threadOrder).toBe('newest')
+    service.saveProfile({ threadOrder: 'oldest' })
+    expect(service.settings().threadOrder).toBe('oldest')
+  })
+
   it('keeps the list\'s choices within what a row can show', () => {
     expect(service.settings()).toMatchObject({
       previewLines: 2, quickOn: true, quickActions: ['archive', 'flag', 'trash', 'read'],
@@ -2047,6 +2174,16 @@ describe('going back over old previews', () => {
     expect(service.list({ kind: 'inbox' })[0]?.snippet).toBe('Stale')
     await service.refreshSnippets('1.1')
     expect(service.list({ kind: 'inbox' })[0]?.snippet).toBe('Fresh words.')
+  })
+
+  it('remakes them when the way they are made changes, in the same version', async () => {
+    gmail.add(rawMail({ subject: 'Code', text: '<!doctype html><p>Your code is 4821.</p>' }), { arrived: new Date(at(8)) })
+    await signedIn()
+    const row = service.list({ kind: 'inbox' })[0]
+    store.setSnippet(service.thread(ME, row?.thread ?? '')[0]?.id ?? 0, '<!doctype html><p>Your code is 4821.</p>')
+    store.setMeta('snippets', '0.1.0') // as the version before this left it
+    await service.refreshSnippets('0.1.0')
+    expect(service.list({ kind: 'inbox' })[0]?.snippet).toBe('Your code is 4821.')
   })
 })
 

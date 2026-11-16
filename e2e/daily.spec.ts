@@ -264,6 +264,33 @@ test('Settings choose what opens once a thread is archived or deleted: the next,
   await expect(page.getByLabel('When a thread is archived or deleted')).toHaveValue('list')
 })
 
+test('Settings choose how long Undo stays after archiving or deleting, and the change waits as long for it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Keep me' }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const inInbox = (subject: string): boolean | undefined => gmail.mails.find((m) => m.raw.toString().includes(subject))?.labels.includes('\\Inbox')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Undo archive and delete for')
+  await expect(choice).toHaveValue('5') // as Edison's pictures have it, and as it always was here
+  await choice.selectOption('10')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await list.getByText('Keep me').click()
+  await page.keyboard.press('e')
+  const undo = page.getByRole('status').getByRole('button', { name: 'Undo' })
+  await expect(undo).toBeVisible()
+  await page.waitForTimeout(7000) // past the five seconds it had, and the one more the server waited
+  await expect(undo).toBeVisible()
+  expect(inInbox('Keep me')).toBe(true)
+  await undo.click()
+  await expect(list.getByText('Keep me')).toBeVisible()
+  await page.waitForTimeout(4000)
+  expect(inInbox('Keep me')).toBe(true)
+  expect(gmail.writes().filter((c) => /X-GM-LABELS|MOVE/.test(c))).toEqual([])
+})
+
 // Marking the open thread unread used to move the reader on to the next one, as archiving does, and
 // opening that one read it: one thread marked unread, another read without being looked at.
 test('marking the open thread unread closes it, and reads nothing else', async () => {
@@ -596,6 +623,70 @@ test('the bar under a selection takes every row, lets go of them, and Trash can 
   expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length).toBe(1)
 })
 
+// A message folded shut showed its raw text: links in brackets, headings in capitals, what it quoted.
+test('a message folded shut in a thread previews what it says, as the list does', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const first = 'WEEKLY PLAN\n\nSee the plan [https://plans.example/q3] before Friday.\n\nOn Mon, Linh Pham wrote:\n> Can you send the plan?'
+  gmail.add(rawMail({ subject: 'Plan', from: 'Mai Tran <mai@example.com>', text: first }), { arrived: earlier(5), thread: 66n, flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'Re: Plan', from: 'Linh Pham <linh@example.com>', text: 'Looks good.' }), { arrived: earlier(4), thread: 66n })
+  await signIn(run)
+  await page.locator('.threads').getByText(/Plan$/).first().click()
+  const shut = page.locator('.message-head.closed')
+  await expect(shut).toHaveCount(1)
+  await expect(shut).toContainText('See the plan before Friday.')
+  await expect(shut).not.toContainText('https://')
+  await expect(shut).not.toContainText('Can you send the plan?')
+})
+
+// A message from a past year said "Fri, Jan 31, 07:39" over it, while the list said "Jan 31, 2025".
+test('the date over a message says its year when it is not this one', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const lastYear = new Date().getFullYear() - 1
+  const old = new Date(lastYear, 11, 30, 7, 39)
+  gmail.add(rawMail({ subject: 'Year end', from: 'Mai Tran <mai@example.com>', date: old }), { arrived: old })
+  gmail.add(rawMail({ subject: 'This week', from: 'Linh Pham <linh@example.com>' }), { arrived: earlier(2) })
+  await page.evaluate(() => window.mail.saveBackfill(1095)) // kept for three years, so last year's is here
+  await signIn(run)
+  const list = page.locator('.threads')
+  await list.getByText('Year end').click()
+  await expect(page.locator('.message.open .when')).toContainText(String(lastYear))
+  await list.getByText('This week').click()
+  await expect(page.locator('.message.open .when')).not.toContainText(String(lastYear + 1))
+})
+
+test('an invitation that is over offers no answer, and a bounce offers no Block', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const stamp = (at: number): string => new Date(at).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const ics = (start: number, uid: string): string => [
+    'BEGIN:VCALENDAR', 'METHOD:REQUEST', 'BEGIN:VEVENT', `UID:${uid}@cal.example`, 'SEQUENCE:0', `DTSTART:${stamp(start)}`, `DTEND:${stamp(start + 3_600_000)}`,
+    `SUMMARY:${uid}`, 'ORGANIZER;CN=Mai Tran:mailto:mai@example.com', `ATTENDEE;RSVP=TRUE:mailto:${ME}`, 'END:VEVENT', 'END:VCALENDAR'
+  ].join('\r\n')
+  const invite = (subject: string, start: number, arrived: number): void =>
+    void gmail.add(rawMail({ subject, from: 'Mai Tran <mai@example.com>', attachment: { name: 'invite.ics', type: 'text/calendar', body: ics(start, subject.split(' ')[0] ?? 'x') } }), { arrived: earlier(arrived) })
+  invite('Retro last week', Date.now() - 6 * 86_400_000, 200)
+  invite('Planning next week', Date.now() + 6 * 86_400_000, 2)
+  gmail.add(rawMail({ subject: 'Undelivered Mail Returned to Sender', from: 'Mail Delivery System <MAILER-DAEMON@mail.example.com>', text: 'Your message could not be delivered.' }), { arrived: earlier(1) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false })) // a bounce would be under Other
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const list = page.locator('.threads')
+  const message = page.locator('.message.open')
+  await list.getByText('Planning next week').click()
+  await expect(message.getByRole('button', { name: 'Accept' })).toBeVisible()
+  await list.getByText('Retro last week').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Retro last week')
+  await expect(message.locator('.fact')).toBeVisible() // still shown for what it is
+  await expect(message.getByRole('button', { name: 'Accept' })).toHaveCount(0)
+  await expect(message.getByRole('button', { name: 'Decline' })).toHaveCount(0)
+  await list.getByText('Undelivered Mail Returned to Sender').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Undelivered Mail Returned to Sender')
+  await expect(message.getByText('Your message could not be delivered.')).toBeVisible()
+  await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0)
+})
+
 test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -665,6 +756,36 @@ test('Settings choose what the reply button on a message does: reply, or reply t
   await page.locator('.threads').getByText('Plain').click()
   await expect(message.getByRole('button', { name: 'Reply to this' })).toBeVisible()
   await expect(page.locator('.reply-bar').getByRole('button')).toHaveText(['Reply', 'Forward']) // the foot keeps both, as it was
+})
+
+test('Settings choose whether a reply quotes the message it answers; a forward always carries it', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Lunch', from: 'Mai Tran <mai@example.com>', to: `${ME}, Linh Pham <linh@example.com>`, text: 'Pho or bun cha?' }), { arrived: earlier(4) })
+  await signIn(run)
+  await undoOff(page)
+  const bar = page.locator('.reply-bar')
+  await page.locator('.threads').getByText('Lunch').click()
+  await bar.getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(composer(page).getByRole('button', { name: 'Quoted message' })).toBeVisible() // as it always was
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const quoting = page.getByLabel('Quote the original message in a reply')
+  await expect(quoting).toBeChecked()
+  await quoting.uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await bar.getByRole('button', { name: 'Reply All' }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Re: Lunch')
+  await expect(composer(page).getByRole('button', { name: 'Quoted message' })).toHaveCount(0)
+  await composer(page).getByLabel('Message').fill('Bun cha, at noon.')
+  await composer(page).getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Bun cha, at noon.')
+  expect(smtp.sent[0]?.raw).not.toContain('Pho or bun cha?')
+  await bar.getByRole('button', { name: 'Forward' }).click()
+  await expect(composer(page).getByRole('button', { name: 'Forwarded message' })).toBeVisible()
 })
 
 test('nothing to type into under a thread: replying starts at the buttons at its foot', async () => {
@@ -855,6 +976,58 @@ test('Settings choose when an open thread is marked read: at once, after a while
   await expect.poll(() => gmail.mails.filter((m) => m.raw.toString().includes('Alpha') && m.flags.includes('\\Seen')).length, LONG).toBe(0)
 })
 
+test('Settings can show a thread newest first: the newest on top and open, what is folded under it, and Reply still answers the newest', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const people = ['Mai Tran <mai@example.com>', 'Linh Pham <linh@example.com>', 'Bao Le <bao@example.com>']
+  const said = ['Can we meet Monday?', 'Monday is full for me.', 'Tuesday then?', 'Tuesday works.', 'Ten or eleven?', 'Eleven, see you there.']
+  for (const [i, text] of said.entries()) {
+    gmail.add(rawMail({ subject: i === 0 ? 'Meeting' : 'Re: Meeting', from: people[i % 3], text }), { arrived: earlier(10 - i), thread: 55n, flags: i < 4 ? ['\\Seen'] : [] })
+  }
+  // A thread taller than the reader, to be scrolled down before the other is opened.
+  gmail.add(rawMail({ subject: 'Long notes', from: people[0], text: Array.from({ length: 120 }, (_, i) => `Line ${i + 1} of the notes.`).join('\n') }), { arrived: earlier(12) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ readAfter: -1 })) // what's unread stays so, however often it's opened
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const list = page.locator('.threads')
+  const messages = page.locator('.messages')
+  /** The messages from the top down, each by which of [said] it is, and where the fold is. */
+  const order = (): Promise<string[]> => page.locator('.messages .message-slot').evaluateAll((slots, words) => slots.flatMap((slot) => {
+    const text = slot.querySelector('.message')?.textContent ?? ''
+    return [...(slot.querySelector('.fold') ? ['fold'] : []), String(words.findIndex((w) => text.includes(w)))]
+  }), said)
+  await list.getByText(/^(Re: )?Meeting$/).click()
+  await expect.poll(order).toEqual(['0', 'fold', '4', '5']) // oldest first, as it always was
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const choice = page.getByLabel('Messages in a thread')
+  await expect(choice).toHaveValue('oldest')
+  await choice.selectOption('newest')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+
+  await list.getByText('Long notes').click()
+  await expect(page.locator('.body-text')).toContainText('Line 120')
+  await messages.evaluate((box) => { box.scrollTop = box.scrollHeight })
+  expect(await messages.evaluate((box) => box.scrollTop)).toBeGreaterThan(0)
+  await list.getByText(/^(Re: )?Meeting$/).click()
+  await expect.poll(order).toEqual(['5', '4', 'fold', '0'])
+  // What's unread is open, the newest at the top where the reading starts.
+  await expect(page.locator('.message.open')).toHaveCount(2)
+  await expect(page.locator('.message.open').first()).toContainText(said[5] as string)
+  expect(await messages.evaluate((box) => box.scrollTop)).toBe(0)
+  await page.locator('.fold').click()
+  await expect.poll(order).toEqual(['5', '4', '3', '2', '1', '0'])
+  // Reply, at the foot and by its key, answers the newest, wherever it's shown.
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(composer(page).getByRole('button', { name: 'Remove bao@example.com' })).toBeVisible()
+  await composer(page).getByRole('button', { name: 'Discard draft' }).click()
+  await expect(composer(page)).toHaveCount(0)
+  await page.keyboard.press('r')
+  await expect(composer(page).getByRole('button', { name: 'Remove bao@example.com' })).toBeVisible()
+})
+
 // Opening a thread reads it, so in Unread it left the list the moment it opened: nothing in the list
 // was marked as open, and j, which goes on from the open thread, started again at the top.
 test('in Unread the open thread keeps its place while it is read, and j goes on to the one below', async () => {
@@ -965,6 +1138,50 @@ test('the ⋮ on the bar under a selection labels, pins and moves to Other every
   await bar.getByRole('button', { name: 'Move to Focused', exact: true }).click()
   await expect(page.getByText('bob@example.com stays in Focused')).toBeVisible()
   await expect(list.locator('.thread .subject')).toHaveText(['Gamma'])
+})
+
+test('Gmail\'s importance: a quiet mark in the list, set from the bar under a selection and over a thread, and Appearance can hide it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Rent is due', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(4), labels: ['\\Inbox', '\\Important'] })
+  gmail.add(rawMail({ subject: 'Lunch on Friday', from: 'Linh Pham <linh@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  const mark = (subject: string): ReturnType<Page['locator']> => list.locator('.thread', { hasText: subject }).getByRole('img', { name: 'Important', exact: true })
+  const labelsOf = (subject: string): string[] => gmail.mails.find((m) => m.raw.toString().includes(subject))?.labels ?? []
+  await expect(mark('Rent is due')).toBeVisible()
+  await expect(mark('Lunch on Friday')).toHaveCount(0)
+  // Quiet: no bigger than the flag and paperclip beside it, in the list's muted grey.
+  expect((await mark('Rent is due').boundingBox())?.height).toBeLessThanOrEqual(13)
+  expect(await mark('Rent is due').evaluate((el) => getComputedStyle(el).color)).toBe(await list.locator('.snippet').first().evaluate((el) => getComputedStyle(el).color))
+
+  await page.getByLabel('Select Lunch on Friday').check({ force: true })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await expect(bar.getByRole('button', { name: 'Mark as not important' })).toHaveCount(0)
+  await bar.getByRole('button', { name: 'Mark as important' }).click()
+  await expect(mark('Lunch on Friday')).toBeVisible()
+  await expect(bar).toHaveCount(0) // done with, the selection goes
+  await expect.poll(() => labelsOf('Lunch on Friday'), LONG).toContain('\\Important')
+
+  await list.getByText('Rent is due').click()
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Mark as not important' }).click()
+  await expect(mark('Rent is due')).toHaveCount(0)
+  await expect.poll(() => labelsOf('Rent is due'), LONG).toEqual(['\\Inbox'])
+  await expect(page.locator('.thread-head .tag')).toHaveCount(0) // Gmail's own, so not one of the thread's labels
+  await page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Mark as important' }).click()
+  await expect(mark('Rent is due')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Appearance' }).click()
+  const showing = page.getByLabel('Show Gmail\'s importance markers in the list')
+  await expect(showing).toBeChecked()
+  await showing.uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  await expect(list.getByRole('img', { name: 'Important', exact: true })).toHaveCount(0)
 })
 
 test('keys keep working after ticking a checkbox, and act on the selection', async () => {
@@ -1671,6 +1888,33 @@ test('the notice for a new message opens that message, in the inbox', async () =
   await expect(page.locator('.messages')).toContainText('Are you free?')
   await expect(page.locator('.view-title')).toHaveText('Inbox')
   await expect(page.locator('.threads .thread.on')).toContainText('Just in')
+})
+
+// Going to the place already shown emptied the list for its skeleton, and nothing asked for it again,
+// so the grey rows stayed until the next sync happened to change something.
+test('the place already shown, clicked again or reached from a notice, lists its mail again at once', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Hello there' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Just in', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(0.1), thread: 77n })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const soon = { timeout: 3000 }
+  await expect(list.getByText('Hello there')).toBeVisible()
+  await page.waitForTimeout(1500) // settled, so nothing else lists it again by the way
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+  await expect(list.getByText('Hello there')).toBeVisible(soon)
+  await expect(page.locator('.skeleton-row')).toHaveCount(0)
+
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.send('open-thread', { account: 'me@example.com', thread: '77' }))
+  await expect(page.locator('.thread-subject')).toHaveText('Just in')
+  await expect(list.getByText('Hello there')).toBeVisible(soon)
+
+  await page.getByRole('button', { name: 'Summary', exact: true }).click()
+  await expect(page.getByText('No Summary here')).toBeVisible()
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.send('command', 'summary'))
+  await expect(page.getByText('No Summary here')).toBeVisible(soon)
+  await expect(page.locator('.skeleton-row')).toHaveCount(0)
 })
 
 test('a message Gmail still has as a draft stays out of the thread', async () => {

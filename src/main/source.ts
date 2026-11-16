@@ -115,14 +115,34 @@ export interface ImapConfig {
   secret: string
   /** Signs in with this instead of [secret], for services that have dropped passwords. */
   accessToken?: string
+  /** Shorter for tests; otherwise [IMAP_TIMEOUTS]. */
+  timeouts?: Partial<ImapTimeouts>
 }
+
+/** How long a connection waits before it gives up, in ms: to be open, to be greeted, and with a
+ *  command out and nothing heard. */
+export interface ImapTimeouts {
+  connect: number
+  greeting: number
+  quiet: number
+}
+
+/** Connecting to Gmail takes a few seconds (3 to 16 here). imapflow's own limits are 90 seconds to
+ *  connect and 5 minutes of silence, so a pass the server stopped answering held its account for
+ *  minutes, with every sync turned away meanwhile. A server that's there answers a command in far
+ *  less than a minute; a big message coming in is never quiet that long. */
+export const IMAP_TIMEOUTS: ImapTimeouts = { connect: 30_000, greeting: 20_000, quiet: 60_000 }
 
 /** Providers show app passwords in groups with spaces, which aren't part of them. */
 export const cleanSecret = (secret: string): string => secret.replace(/\s+/g, '')
 
 /** STARTTLS is required, not merely tried: a server that stops offering it mustn't get the password. */
-export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number } = {}): ImapFlow {
+export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number; socketTimeout?: number } = {}): ImapFlow {
+  const timeouts = { ...IMAP_TIMEOUTS, ...config.timeouts }
   const client = new ImapFlow({
+    connectionTimeout: timeouts.connect,
+    greetingTimeout: timeouts.greeting,
+    socketTimeout: timeouts.quiet,
     ...extra,
     host: config.host,
     port: config.port,
@@ -150,7 +170,9 @@ export class ImapWatcher implements MailWatcher {
   private client: ImapFlow
 
   constructor(config: ImapConfig) {
-    this.client = imapClient(config, { maxIdleTime: IDLE_REFRESH_MS })
+    // Waiting in IDLE is quiet by design, so the silence allowed is longer than IDLE lasts before
+    // it's started again; past that, imapflow asks the server whether it's still there.
+    this.client = imapClient(config, { maxIdleTime: IDLE_REFRESH_MS, socketTimeout: IDLE_REFRESH_MS + (config.timeouts?.quiet ?? IMAP_TIMEOUTS.quiet) })
   }
 
   /** imapflow tells of three things while IDLE: `exists` when the count goes up, `expunge` for each

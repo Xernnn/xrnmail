@@ -4,7 +4,7 @@ import { openRate, sortSenders, type SenderOrder } from '@shared/senders'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
-import { Avatar, Empty, KIND_ICONS } from './Common'
+import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { wantFaces } from './pictures'
 import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
@@ -62,6 +62,8 @@ export function Row(props: {
   swipe: Swipes
   /** Whether the thread's files show as cards under the row. */
   cards: boolean
+  /** Whether Gmail's importance shows, where Gmail has marked the thread. */
+  importance: boolean
   /** The buttons that show under the pointer, in order. */
   quick: QuickAction[]
   open(): void
@@ -152,6 +154,7 @@ export function Row(props: {
           </span>
           <span className="thread-mid">
             <span className="subject">{row.subject || 'No subject'}</span>
+            {props.importance && row.important && <ImportantMark className="mark important" label="Important" />}
             {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
             {row.pinned && <Pin className="mark pin" size={13} aria-label="Pinned" />}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}

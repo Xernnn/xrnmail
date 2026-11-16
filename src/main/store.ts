@@ -612,9 +612,10 @@ export class Store {
     const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0 } = options
     const rows = this.all(
       `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, m.warnings, t.latest AS date,
-              t.n, t.unread, t.attachment, t.starred, t.delivered, s.until AS snoozed, p.at AS pinned
+              t.n, t.unread, t.attachment, t.starred, t.important, t.delivered, s.until AS snoozed, p.at AS pinned
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
                     SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred,
+                    MAX(EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Important')) AS important,
                     MAX(CASE WHEN summary = 1 THEN release_at END) AS delivered
              FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = ? AND ${where} GROUP BY account, thread) t
        JOIN messages m ON m.account = t.account AND m.thread = t.thread AND m.arrived = t.latest
@@ -639,6 +640,7 @@ export class Store {
       unread: Number(r['unread']),
       attachment: Number(r['attachment']) > 0,
       starred: Number(r['starred']) > 0,
+      important: Number(r['important']) > 0,
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
       facts: factsFrom(r['facts']),
       pinned: r['pinned'] != null,
@@ -800,6 +802,7 @@ export class Store {
       date: Number(r['arrived']),
       text: String(r['body_text']),
       html: r['body_html'] == null ? null : String(r['body_html']),
+      snippet: String(r['snippet']),
       attachments: parseList<AttachmentInfo>(r['attachments']),
       truncated: Number(r['truncated']) > 0,
       labels: parseList<string>(r['labels']),
