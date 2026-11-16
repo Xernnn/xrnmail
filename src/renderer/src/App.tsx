@@ -104,6 +104,8 @@ export function App(): ReactNode {
   const [view, setView] = useState<View>({ kind: 'inbox' })
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ThreadRow[] | null>(null)
+  /** The list emptied for its skeleton, so it's asked for again even when what's asked is the same. */
+  const [relisted, setRelisted] = useState(0)
   const [limit, setLimit] = useState(PAGE)
   const [open, setOpen] = useState<ThreadRef | null>(SOLO?.kind === 'thread' ? { account: SOLO.account, thread: SOLO.thread } : null)
   /** In a window of its own: whether its thread is in Trash or Spam just now, and whether it's anywhere at all. */
@@ -181,6 +183,7 @@ export function App(): ReactNode {
     setPicked(new Set())
     setLimit(PAGE)
     setRows(null)
+    setRelisted((n) => n + 1)
     setOpen(ref)
   }), [])
 
@@ -275,7 +278,7 @@ export function App(): ReactNode {
       })
     }, 120)
     return () => clearTimeout(timer)
-  }, [JSON.stringify(query), version, reads, limit])
+  }, [JSON.stringify(query), version, reads, limit, relisted])
 
   /** Seconds an open thread waits before it's marked read: none, some, or -1 for only when asked. */
   const readAfter = profile?.readAfter ?? 0
@@ -461,6 +464,7 @@ export function App(): ReactNode {
       setSearch('')
       setOpen(null)
       setRows(null)
+      setRelisted((n) => n + 1)
     }
     else if (command === 'help') setHelp(true)
     else if (command === 'print') window.print()
@@ -854,6 +858,7 @@ export function App(): ReactNode {
     setPicked(new Set())
     setLimit(PAGE)
     setRows(null)
+    setRelisted((n) => n + 1)
   }
 
   const refs = targets()

@@ -1826,6 +1826,33 @@ test('the notice for a new message opens that message, in the inbox', async () =
   await expect(page.locator('.threads .thread.on')).toContainText('Just in')
 })
 
+// Going to the place already shown emptied the list for its skeleton, and nothing asked for it again,
+// so the grey rows stayed until the next sync happened to change something.
+test('the place already shown, clicked again or reached from a notice, lists its mail again at once', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Hello there' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Just in', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(0.1), thread: 77n })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const soon = { timeout: 3000 }
+  await expect(list.getByText('Hello there')).toBeVisible()
+  await page.waitForTimeout(1500) // settled, so nothing else lists it again by the way
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+  await expect(list.getByText('Hello there')).toBeVisible(soon)
+  await expect(page.locator('.skeleton-row')).toHaveCount(0)
+
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.send('open-thread', { account: 'me@example.com', thread: '77' }))
+  await expect(page.locator('.thread-subject')).toHaveText('Just in')
+  await expect(list.getByText('Hello there')).toBeVisible(soon)
+
+  await page.getByRole('button', { name: 'Summary', exact: true }).click()
+  await expect(page.getByText('No Summary here')).toBeVisible()
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.webContents.send('command', 'summary'))
+  await expect(page.getByText('No Summary here')).toBeVisible(soon)
+  await expect(page.locator('.skeleton-row')).toHaveCount(0)
+})
+
 test('a message Gmail still has as a draft stays out of the thread', async () => {
   run = await launch()
   const { page, gmail } = run
