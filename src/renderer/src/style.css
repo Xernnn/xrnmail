@@ -457,6 +457,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .reader-empty { align-items: center; justify-content: center; gap: 2px; }
 .reader-empty .empty { padding-top: 0; }
 .reader-empty .empty-mark { display: none; }
+.stopped { display: grid; place-content: center; justify-items: center; gap: 14px; height: 100%; background: var(--bg); color: var(--text); }
 .nothing-paper { fill: var(--selected); }
 .nothing-fold { stroke: var(--bg); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .nothing-spark { stroke: var(--line); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }

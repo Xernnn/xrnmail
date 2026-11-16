@@ -273,6 +273,47 @@ test('a hostile email can do nothing', async () => {
   web.close()
 })
 
+// While a frame's new page is being made it has no root yet, and showing the quoted text then threw,
+// with nothing to catch it, so the whole window went white.
+test('a message that can\'t be drawn leaves the window as it was, and says so in the reader alone', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const reply = '<div>Thursday works.</div><div class="gmail_quote"><div>On Tue, Mai wrote:</div><blockquote class="gmail_quote">Can we meet?</blockquote></div>'
+  gmail.add(rawMail({ subject: 'Meeting', from: 'Mai Tran <mai@example.com>', html: reply }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Lunch', from: 'Linh Pham <linh@example.com>', text: 'Noon?' }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  /** What a frame says its page is, from now on: [kind] none, one with no root, or a failure. */
+  const framesAnswer = (kind: 'rootless' | 'failing' | 'real'): Promise<void> => page.evaluate((how) => {
+    const proto = HTMLIFrameElement.prototype as unknown as { realDocument?: PropertyDescriptor }
+    proto.realDocument ??= Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentDocument')
+    const real = proto.realDocument as PropertyDescriptor
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', how === 'real' ? real : {
+      configurable: true,
+      get() {
+        if (how === 'failing') throw new Error('made to fail')
+        return { documentElement: null }
+      }
+    })
+  }, kind)
+  await list.getByText('Meeting').click()
+  await page.frameLocator('iframe.body-frame').getByText('Thursday works.').waitFor()
+  await framesAnswer('rootless')
+  await page.getByRole('button', { name: 'Show quoted text' }).click()
+  await expect(page.getByRole('button', { name: 'Hide quoted text' })).toBeVisible()
+  await expect(page.locator('.thread-subject')).toHaveText('Meeting') // nothing to do, and still there
+
+  await framesAnswer('failing')
+  await page.getByRole('button', { name: 'Hide quoted text' }).click()
+  await expect(page.getByText('Couldn\'t show this message')).toBeVisible()
+  await expect(list.getByText('Lunch')).toBeVisible() // the rest of the window carries on
+  await framesAnswer('real')
+  await page.getByRole('button', { name: 'Back to the list' }).click()
+  await expect(page.getByText('Couldn\'t show this message')).toHaveCount(0)
+  await list.getByText('Lunch').click()
+  await expect(page.locator('.body-text')).toHaveText('Noon?')
+})
+
 test('images stay blocked on the next message', async () => {
   run = await launch()
   const { page, gmail } = run

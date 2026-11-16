@@ -144,7 +144,8 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     if (auto && hasRemote) void show()
   }, [auto, hasRemote])
   useEffect(() => {
-    frame.current?.contentDocument?.documentElement.classList.toggle('hide-quoted', !showQuoted)
+    // While the frame's new page is being made it has no root yet; it's given this once it loads.
+    frame.current?.contentDocument?.documentElement?.classList.toggle('hide-quoted', !showQuoted)
   }, [showQuoted])
 
   const loaded = (): void => {
@@ -154,6 +155,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.documentElement.classList.toggle('hide-quoted', !showQuoted)
     const fit = (): void => {
       const body = doc.body
+      if (!body) return
       let scale = 1
       try {
         scale = fitDocument(doc)

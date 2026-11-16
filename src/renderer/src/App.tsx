@@ -8,11 +8,11 @@ import {
   type SummarySettings, type SwipeAction, type ThreadRef, type ThreadRow
 } from '@shared/types'
 import { Composer } from './Composer'
-import { Confirm, ContextMenu, Empty, ImportantMark, Skeleton, type MenuEntry, type Question } from './Common'
+import { Boundary, Confirm, ContextMenu, Empty, ImportantMark, Skeleton, type MenuEntry, type Question } from './Common'
 import { longTime, problem, setClock24, straightThrough } from './format'
 import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type Swipes } from './List'
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
-import { Reader, type Panel, type ReplyKind } from './Reader'
+import { CantShow, Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
 import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
@@ -917,7 +917,15 @@ export function App(): ReactNode {
     // each time it changed, whatever was done to it there.
     void window.mail.openThreadWindow(open.account, open.thread, bins).then(() => setOpen(null), (e: unknown) => say(problem(e)))
   }
+  // One message that can't be drawn takes the reader with it, not the window. Another thread tries again.
   const reader = (
+    <Boundary reset={open ? keyOf(open) : ''} fallback={(again) => (
+      <CantShow label={SOLO ? 'Close' : 'Back to the list'} back={() => {
+        if (SOLO) return window.close()
+        setOpen(null)
+        again()
+      }} />
+    )}>
     <Reader messages={messages} account={openAccount} bins={bins} panel={panel} setPanel={setPanel} back={() => setOpen(null)} popOut={SOLO ? undefined : popOut} own={own}
       settings={profile} unread={unread} held={overview?.held ?? 0} vip={batching ? profile?.batch.vip ?? [] : null} many={many}
       labels={openAccount ? labelsOf(openAccount, overview) : []}
@@ -933,6 +941,7 @@ export function App(): ReactNode {
         setSearch(text)
         focusSearch()
       }} />
+    </Boundary>
   )
   /** What's drawn over the page, in any window. */
   const over = (

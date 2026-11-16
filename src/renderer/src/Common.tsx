@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Component, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { CalendarRange, File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from 'lucide-react'
 import type { FileKind } from './format'
 import { useFace } from './pictures'
@@ -76,6 +76,31 @@ export function Empty(props: { icon: LucideIcon; title: string; note?: string })
       {props.note && <p className="muted note">{props.note}</p>}
     </div>
   )
+}
+
+/** A part of the window that, should drawing it fail, shows [fallback] in its place while the rest
+ *  carries on. A new [reset] (the thread open, say) tries it again; so does [fallback]'s `again`. */
+export class Boundary extends Component<
+  { children: ReactNode; reset?: string; fallback(again: () => void): ReactNode },
+  { failed: boolean; reset?: string }
+> {
+  override state: { failed: boolean; reset?: string } = { failed: false, reset: this.props.reset }
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+
+  static getDerivedStateFromProps(props: { reset?: string }, state: { failed: boolean; reset?: string }): { failed: boolean; reset?: string } | null {
+    return props.reset !== state.reset ? { failed: false, reset: props.reset } : null
+  }
+
+  override componentDidCatch(error: unknown): void {
+    console.error(error)
+  }
+
+  override render(): ReactNode {
+    return this.state.failed ? this.props.fallback(() => this.setState({ failed: false })) : this.props.children
+  }
 }
 
 export function Skeleton({ rows = 8 }: { rows?: number }): ReactNode {

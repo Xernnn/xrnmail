@@ -245,6 +245,16 @@ function Nothing(): ReactNode {
   )
 }
 
+/** In the reader's place when a thread couldn't be drawn, so the rest of the window carries on. */
+export function CantShow(props: { back(): void; label: string }): ReactNode {
+  return (
+    <main className="reader reader-empty" role="alert">
+      <Empty icon={TriangleAlert} title="Couldn't show this message" note="Something in it couldn't be drawn here." />
+      <button type="button" className="pill" onClick={props.back}>{props.label}</button>
+    </main>
+  )
+}
+
 export function Reader(props: {
   messages: MessageView[]
   account: AccountView | undefined
