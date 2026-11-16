@@ -314,6 +314,25 @@ test('a message that can\'t be drawn leaves the window as it was, and says so in
   await expect(page.locator('.body-text')).toHaveText('Noon?')
 })
 
+// Every picture HubSpot hosts for its senders is on hubspotemail.net, as its open pixel is, and the
+// rule for the pixel took the lot: such mail had no pictures to show, and no Show images.
+test('a mailing service\'s own pictures stay, and only its open pixel goes', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p>New in the shop this week.</p>' +
+    '<img id="banner" src="https://hs-1234567.f.hubspotemail.net/hub/1234567/hubfs/spring/banner.png" alt="Spring" width="560" height="200">' +
+    '<img id="pixel" src="https://t.hubspotemail.net/e2t/to/VWxyz123/abc" alt="">'
+  gmail.add(rawMail({ subject: 'New this week', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('New this week', { exact: true }).click()
+  const frame = page.frameLocator('iframe.body-frame')
+  await frame.getByText('New in the shop this week.').waitFor()
+  await expect(frame.locator('#banner')).toHaveAttribute('src', /hubfs\/spring\/banner\.png$/)
+  await expect(frame.locator('#pixel')).not.toHaveAttribute('src', /.+/)
+  await expect(page.getByText('1 tracker removed')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
+})
+
 test('images stay blocked on the next message', async () => {
   run = await launch()
   const { page, gmail } = run
