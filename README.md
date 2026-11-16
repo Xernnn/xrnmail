@@ -109,6 +109,10 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   [docs/design.md](docs/design.md).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
+- **Wide mail fits the pane:** a newsletter made for a set width, 600 pixels say, is drawn smaller to
+  fit a narrower reading pane, pictures and all, and at its own size again once there's room; never
+  larger than sent. Mail that flows to any width keeps its size, and a table in it too wide for the
+  pane scrolls sideways by itself, so the words round it stay readable.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
   selection (its ⋮ labels or files every thread picked, pins them, or moves them to Other or Focused),

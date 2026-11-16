@@ -3,6 +3,7 @@ import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { splitQuoted } from '@shared/quoted'
 import { darkenDocument } from './darken'
+import { fitDocument } from './fit'
 
 /**
  * Shows a stranger's HTML. It's sanitised here, then shown in a frame that may not run scripts,
@@ -153,7 +154,14 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.documentElement.classList.toggle('hide-quoted', !showQuoted)
     const fit = (): void => {
       const body = doc.body
-      el.style.height = `${Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height))}px`
+      let scale = 1
+      try {
+        scale = fitDocument(doc)
+      } catch {
+        // Left at its own size: it scrolls sideways, as it did.
+      }
+      // scrollHeight is as laid out, before the zoom draws it smaller.
+      el.style.height = `${Math.ceil(Math.max(body.scrollHeight * scale, body.getBoundingClientRect().height))}px`
     }
     fit()
     try {
@@ -163,8 +171,10 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     }
     setShown(look)
     watcher.current?.disconnect()
+    // The frame narrowing or widening fits the message again, and so does its own height changing.
     watcher.current = new ResizeObserver(fit)
     watcher.current.observe(doc.body)
+    watcher.current.observe(el)
     const linkAt = (target: EventTarget | null): HTMLAnchorElement | null =>
       (target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
     doc.addEventListener('click', (event) => {

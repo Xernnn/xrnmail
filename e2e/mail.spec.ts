@@ -316,6 +316,73 @@ test('in a dark window, mail made for a white page is darkened, pictures and dar
   await expect(original).toHaveCount(0)
 })
 
+/** A newsletter laid out 600 pixels wide, as most are, with a picture across it and a link. */
+const NEWSLETTER = `<table id="letter" width="600" align="center" bgcolor="#ffffff" cellpadding="0" cellspacing="0" style="width:600px"><tr><td style="padding:24px;color:#222222;font:16px Arial">
+  <h1>This week in the garden</h1><img id="banner" src="${PIXEL}" width="552" height="138" style="width:552px;height:138px" alt="Banner">
+  <p>Strawberries are back, and the tomatoes want staking before the wind comes.</p><a id="more" href="https://garden.example/week">Read the rest</a></td></tr></table>`
+/** A reply that flows to any width, with a table of figures in it wider than the pane. */
+const FIGURES = `<p id="words">Here are the figures you asked for, laid out as the spreadsheet has them. Have a look before Friday and say what you make of the third quarter, which came in under what we planned for it.</p>
+  <table id="figures" style="width:900px"><tr>${['Region', 'Q1', 'Q2', 'Q3', 'Q4', 'Total', 'Change'].map((h) => `<td style="width:128px">${h}</td>`).join('')}</tr></table><p>Thanks, Linh</p>`
+
+test('a newsletter made 600 pixels wide is drawn smaller to fit a narrow reading pane, and at its own size once there is room', async () => {
+  run = await launch({ colorScheme: 'dark', size: [1280, 800] })
+  const { app, page, gmail } = run
+  gmail.add(rawMail({ subject: 'Garden weekly', from: 'Mai Tran <mai@garden.example>', html: NEWSLETTER }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Figures', from: 'Linh Pham <linh@example.com>', html: FIGURES }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const frame = page.locator('iframe.body-frame')
+  const resize = (width: number, height: number): Promise<void> =>
+    app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0]?.setSize(w as number, h as number), [width, height])
+  /** How far the message scrolls sideways in its frame, how wide the frame is, and where an element of it is drawn. */
+  const measure = (selector: string): Promise<{ sideways: number; view: number; width: number; bottom: number; frame: number; bg: string; parentSideways: number }> =>
+    frame.evaluate((f: HTMLIFrameElement, s) => {
+      const doc = f.contentDocument as Document
+      const el = doc.querySelector(s) as HTMLElement
+      const box = el.getBoundingClientRect()
+      const parent = el.parentElement as HTMLElement
+      return {
+        sideways: doc.documentElement.scrollWidth - doc.documentElement.clientWidth,
+        view: doc.documentElement.clientWidth,
+        width: box.width,
+        bottom: box.bottom,
+        frame: f.clientHeight,
+        bg: (doc.defaultView as Window).getComputedStyle(el).backgroundColor,
+        parentSideways: parent.scrollWidth - parent.clientWidth
+      }
+    }, selector)
+
+  await list.getByText('Garden weekly').click()
+  await page.frameLocator('iframe.body-frame').getByText('This week in the garden').waitFor()
+  await expect(frame).toHaveCSS('opacity', '1')
+  const narrow = await measure('#letter')
+  expect(narrow.view).toBeLessThan(600) // a pane narrower than the letter, beside the list at an everyday width
+  expect(narrow.sideways).toBe(0)
+  expect(narrow.width).toBeLessThanOrEqual(narrow.view)
+  expect(narrow.width).toBeGreaterThan(narrow.view * 0.85) // drawn to fit, and no smaller
+  expect(narrow.frame).toBeLessThan(narrow.bottom + 40) // the frame is as tall as the letter is drawn, with no room left under it
+  expect(narrow.frame).toBeGreaterThanOrEqual(Math.floor(narrow.bottom))
+  expect((await measure('#banner')).width).toBeLessThan(552) // its picture shrinks with it
+  expect(Number(narrow.bg.match(/\d+/)?.[0])).toBeLessThan(60) // still darkened for the dark window
+  await page.frameLocator('iframe.body-frame').getByText('Read the rest').click()
+  await expect.poll(() => run.opened()).toEqual(['https://garden.example/week'])
+
+  await resize(1800, 900)
+  await expect.poll(async () => (await measure('#letter')).width).toBe(600) // room enough: its own size, never larger
+  expect((await measure('#letter')).sideways).toBe(0)
+  expect((await measure('#banner')).width).toBe(552)
+
+  // A reply that flows to the pane keeps its size, and its one wide table scrolls sideways by itself.
+  await resize(1280, 800)
+  await list.getByText('Figures', { exact: true }).click()
+  await page.frameLocator('iframe.body-frame').getByText('Thanks, Linh').waitFor()
+  await expect.poll(async () => (await measure('#figures')).parentSideways).toBeGreaterThan(0)
+  const reply = await measure('#words')
+  expect(reply.sideways).toBe(0)
+  expect(reply.width).toBeGreaterThan(reply.view - 40) // the words fill the pane at their own size
+  expect((await measure('#figures')).width).toBe(900)
+})
+
 test('the page has only the bridge, and a page reached by accident gets nothing', async () => {
   run = await launch()
   const { page, gmail, app } = run
