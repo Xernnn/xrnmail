@@ -92,6 +92,9 @@ export class FakeGmail {
   silent = false
   /** Commands taken and never answered, as a server that goes quiet partway through. */
   stall: RegExp | null = null
+  /** Commands taken and only acted on once [release] is called, as a server slow to answer. */
+  hold: RegExp | null = null
+  readonly holding: (() => void)[] = []
   /** Folders whose SEARCH is answered NO, as Gmail does when it's short of time. */
   refuseSearch = new Set<string>()
   /** Folders, by the name they're asked for by, that won't be opened just now. */
@@ -310,6 +313,12 @@ export class FakeGmail {
     })
   }
 
+  /** Acts on what [hold] kept back, and holds nothing more. */
+  release(): void {
+    this.hold = null
+    for (const held of this.holding.splice(0)) held()
+  }
+
   private line(socket: Socket, line: string, literal: string | null): void {
     if (this.idlers.has(socket)) {
       if (line.trim().toUpperCase() === 'DONE') {
@@ -324,6 +333,7 @@ export class FakeGmail {
     const words = rest.split(' ')
     const verb = (words[0] ?? '').toUpperCase()
     const full = verb === 'UID' ? `UID ${(words[1] ?? '').toUpperCase()}` : verb
+    if (this.hold?.test(full)) return void this.holding.push(() => this.line(socket, line, literal))
     this.commands.push(verb === 'LOGIN' ? 'LOGIN' : `${full} ${rest.slice(full.length + 1)}`.trim())
     if (this.stall?.test(full)) return
     const ok = (text = 'OK'): void => void socket.write(`${tag} OK ${text}\r\n`)

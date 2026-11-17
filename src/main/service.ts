@@ -273,6 +273,8 @@ export class MailService {
   private tokens = new Map<string, Tokens>()
   private signingIn: { email: string; clientId: string; code: DeviceCode } | null = null
   private notes = new Map<string, { text: string; until: number }>()
+  /** Changes being made on the server now, by their id. */
+  private readonly underWay = new Set<number>()
   /** In here before it has signed in, so a second can't start alongside it, and only a watch's own
    *  entry is taken out when it ends: a newer one may have it by then. */
   private watchers = new Map<string, Watch>()
@@ -842,8 +844,14 @@ export class MailService {
     return group
   }
 
+  /** A change already on its way to the server can't be called back: put back here, the server
+   *  would make it anyway, and the mail would show where the server no longer has it. */
   undo(token: number): void {
     for (const item of this.store.actionsInGroup(token)) {
+      if (this.underWay.has(item.id)) {
+        this.note(item.account, 'Too late to undo')
+        continue
+      }
       this.store.restoreMail(item.before)
       this.store.finishAction(item.id)
     }
@@ -885,6 +893,7 @@ export class MailService {
   private async perform(writer: MailWriter, email: string, item: PendingAction): Promise<void> {
     const byBox = new Map<string, Located[]>()
     for (const row of this.store.locate(item.ids)) byBox.set(row.box, [...(byBox.get(row.box) ?? []), row])
+    this.underWay.add(item.id)
     try {
       for (const [box, rows] of byBox) {
         const moved = await writer.apply(box, rows.map((row) => row.uid), item.action)
@@ -897,6 +906,8 @@ export class MailService {
       this.store.finishAction(item.id)
       this.note(email, `${this.serviceName(email)} wouldn't make a change, so it's been put back.`)
       return
+    } finally {
+      this.underWay.delete(item.id)
     }
     this.store.finishAction(item.id)
   }
