@@ -170,6 +170,9 @@ const mailtoIn = (argv: string[]): string | undefined => argv.find((arg) => MAIL
 
 const MAX_BODY = 8 * 1024 * 1024
 const MAX_DROP = 26 * 1024 * 1024
+/** Tracking and sign-in links can run past 8 KB; this is well inside what one argument to the
+ *  program that opens it may be (128 KB). */
+const MAX_LINK = 64 * 1024
 
 const text = (value: unknown, max = 8192): string => {
   if (typeof value !== 'string' || value.length > max) throw new Error('Bad request')
@@ -573,7 +576,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
   handle('openLink', async (url: unknown) => {
-    const target = text(url)
+    const target = text(url, MAX_LINK)
     if (MAILTO.test(target)) await composeTo(target)
     else if (isSafeExternalUrl(target)) await shell.openExternal(target)
   })

@@ -299,6 +299,19 @@ test('a hostile email can do nothing', async () => {
   web.close()
 })
 
+// The main process took no link over 8192 characters, and the refusal went unseen: some tracking
+// and sign-in links are longer, and clicking one did nothing at all.
+test('a very long link opens like any other', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const long = `https://track.example/c?u=${'a1b2c3d4'.repeat(1_500)}`
+  gmail.add(rawMail({ subject: 'Confirm', from: 'Mai Tran <mai@example.com>', html: `<p><a id="go" href="${long}">Confirm your address</a></p>` }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Confirm', { exact: true }).click()
+  await page.frameLocator('iframe.body-frame').locator('#go').click()
+  await expect.poll(run.opened).toEqual([long])
+})
+
 // While a frame's new page is being made it has no root yet, and showing the quoted text then threw,
 // with nothing to catch it, so the whole window went white.
 test('a message that can\'t be drawn leaves the window as it was, and says so in the reader alone', async () => {
