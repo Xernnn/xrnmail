@@ -151,6 +151,8 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const [tries, setTries] = useState(0)
   const frame = useRef<HTMLIFrameElement>(null)
   const watcher = useRef<ResizeObserver | null>(null)
+  /** The frame's page that's been sized, darkened and wired, so each is done once. */
+  const wired = useRef<Document | null>(null)
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
@@ -190,7 +192,9 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const loaded = (): void => {
     const el = frame.current
     const doc = el?.contentDocument
-    if (!el || !doc) return
+    // Not the empty page a new frame starts with, nor one still being read, nor one done already.
+    if (!el || !doc || doc === wired.current || doc.URL !== 'about:srcdoc' || doc.readyState === 'loading' || !doc.body) return
+    wired.current = doc
     doc.documentElement.classList.toggle('hide-quoted', !showQuoted)
     const fit = (): void => {
       const body = doc.body
@@ -207,19 +211,19 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     // A picture that couldn't be fetched is a plain block of its size, as before it was asked for,
     // not a broken icon with its alt text spilling over what's round it. It's counted, and said.
     let broken = 0
-    if (images) {
-      for (const img of Array.from(doc.images)) {
-        if (!/^(?:https?:)?\/\//i.test(img.getAttribute('src') ?? '')) continue
-        const fail = (): void => {
-          img.classList.add(FAILED)
-          fit()
-        }
-        if (img.complete && img.naturalWidth === 0) {
-          fail()
-          broken++
-        } else {
-          img.addEventListener('error', () => { fail(); setFailed((n) => n + 1) }, { once: true })
-        }
+    for (const img of Array.from(doc.images)) {
+      // The page is shown before its pictures have come, and each one that comes may change its size.
+      if (!img.complete) img.addEventListener('load', fit, { once: true })
+      if (!images || !/^(?:https?:)?\/\//i.test(img.getAttribute('src') ?? '')) continue
+      const fail = (): void => {
+        img.classList.add(FAILED)
+        fit()
+      }
+      if (img.complete && img.naturalWidth === 0) {
+        fail()
+        broken++
+      } else {
+        img.addEventListener('error', () => { fail(); setFailed((n) => n + 1) }, { once: true })
       }
     }
     setFailed(broken)
@@ -249,6 +253,26 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.addEventListener('mouseover', (event) => onPeek(linkAt(event.target)?.href ?? null))
     doc.addEventListener('mouseleave', () => onPeek(null))
   }
+
+  // The frame's load waits for every picture, and one from a host that never answers would leave it
+  // unsized, unwired and, in a dark window, unseen for as long as the network takes to give up. So
+  // its page is taken as soon as it has been read, and load is only there for a window that's hidden.
+  const wire = useRef(loaded)
+  wire.current = loaded
+  useEffect(() => {
+    let next = 0
+    let left = 600
+    const check = (): void => {
+      try {
+        wire.current()
+        if (wired.current !== frame.current?.contentDocument && left-- > 0) next = requestAnimationFrame(check)
+      } catch {
+        // Left to the frame's load.
+      }
+    }
+    next = requestAnimationFrame(check)
+    return () => cancelAnimationFrame(next)
+  }, [look])
 
   const recolouring = dark && designed && darken && (original || darkened)
   return (

@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type ServerResponse } from 'node:http'
 import { rawMail } from '../tests/fake-gmail'
 import { launch, ME, signIn, syncAndSettle, type Running } from './app'
+import { png } from './pictures'
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -412,6 +413,41 @@ test('a thread in a window of its own keeps its pictures when the main window mo
       ((f.contentDocument as Document).getElementById('range') as HTMLImageElement).naturalWidth)).toBe(1)
     expect(hits).toEqual(['/range.png', '/range.png'])
   } finally {
+    web.close()
+  }
+})
+
+// The frame was sized, darkened and wired for clicks on its load, which waits for every picture: one
+// from a host that never answered left a dark window's designed mail unseen, and its links dead.
+test('a picture that never comes leaves the message shown and working, and one that comes late fits it again', async () => {
+  const waiting = new Map<string, ServerResponse>()
+  const web: Server = createServer((request, response) => void waiting.set(request.url ?? '', response))
+  await new Promise<void>((resolve) => web.listen(0, '127.0.0.1', resolve))
+  const address = web.address()
+  const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+  try {
+    run = await launch({ colorScheme: 'dark' })
+    const { page, gmail } = run
+    const html = `<table width="100%" bgcolor="#ffffff"><tr><td style="color:#222222"><p>Spring sale.</p>` +
+      `<img src="${base}/never.png" width="300" height="120" alt=""><img id="late" src="${base}/late.png" alt="">` +
+      `<p><a id="shop" href="https://shop.example/sale">Shop now</a></p></td></tr></table>`
+    gmail.add(rawMail({ subject: 'Spring sale', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+    await signIn(run)
+    await page.locator('.threads').getByText('Spring sale', { exact: true }).click()
+    const frame = page.locator('iframe.body-frame')
+    await page.frameLocator('iframe.body-frame').getByText('Shop now').waitFor()
+    await page.getByRole('button', { name: 'Show images' }).click()
+    await expect.poll(() => [...waiting.keys()].sort()).toEqual(['/late.png', '/never.png'])
+    await expect(frame).not.toHaveClass(/painting/)
+    await page.frameLocator('iframe.body-frame').locator('#shop').click()
+    await expect.poll(run.opened).toEqual(['https://shop.example/sale'])
+
+    const height = async (): Promise<number> => (await frame.boundingBox())?.height ?? 0
+    const before = await height()
+    waiting.get('/late.png')?.writeHead(200, { 'Content-Type': 'image/png' }).end(png(400, [40, 90, 160]))
+    await expect.poll(height).toBeGreaterThan(before + 300)
+  } finally {
+    for (const response of waiting.values()) response.destroy()
     web.close()
   }
 })
