@@ -660,7 +660,11 @@ test('a picture not shown yet is a block that suits the page it sits on: dark on
       const [r = 0, g = 0, b = 0] = (css.match(/[\d.]+/g) ?? []).map(Number)
       return (r + g + b) / 3
     }
-    return { block: light(view.getComputedStyle(doc.getElementById('hero') as Element).backgroundColor), page: light(view.getComputedStyle(doc.getElementById('card') as Element).backgroundColor) }
+    const hero = doc.getElementById('hero')
+    const card = doc.getElementById('card')
+    // A frame made again starts with an empty page, which has neither: asked again, not failed.
+    if (!hero || !card) return { block: -1, page: -1 }
+    return { block: light(view.getComputedStyle(hero).backgroundColor), page: light(view.getComputedStyle(card).backgroundColor) }
   })
   await page.locator('.threads').getByText('Spring sale', { exact: true }).click()
   await page.frameLocator('iframe.body-frame').getByText('Spring sale, this week only.').waitFor()
