@@ -126,6 +126,31 @@ test('mail as it arrives: one switch, waiting mail comes in, the times are kept,
   await expect(list.getByText('Waits again')).toHaveCount(0)
 })
 
+// Mail was read on the main process, which answers the windows: a catalogue of 1.6 MB of HTML held it
+// for about 0.4 s, so a first sync of such mail made typing and scrolling stutter.
+test('a sync reading large mail leaves the main process free to answer the window', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  const row = '<tr><td style="padding:8px;color:#333"><a href="https://shop.example/p/123">Product name here</a> <b>199,000 VND</b></td></tr>'
+  for (let i = 0; i < 4; i++) {
+    gmail.add(rawMail({ subject: `Catalogue ${i}`, from: 'Mai Tran <mai@example.com>', html: `<table>${row.repeat(11_000)}</table>` }), { arrived: earlier(i + 1) })
+  }
+  /** How late the main process ran a timer due every 10 ms, at the worst. */
+  await app.evaluate(() => {
+    const probe = globalThis as unknown as { late: number }
+    probe.late = 0
+    let last = performance.now()
+    setInterval(() => {
+      const now = performance.now()
+      probe.late = Math.max(probe.late, now - last - 10)
+      last = now
+    }, 10)
+  })
+  await signIn(run)
+  await expect(page.locator('.threads').getByText(/^Catalogue/)).toHaveCount(4, { timeout: 30_000 })
+  expect(await app.evaluate(() => (globalThis as unknown as { late: number }).late)).toBeLessThan(200)
+})
+
 test('search finds Vietnamese without its marks', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -16,6 +16,8 @@ import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
+import { Parser } from './parser'
+import readMail from './parse-worker?nodeWorker'
 import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
@@ -732,9 +734,11 @@ void app.whenReady().then(() => {
     redraw: (picture) => redraw(picture),
     ownerOf: (address) => mail?.ownerOf(address) ?? null
   })
+  const parser = new Parser(() => readMail({}))
   const service = new MailService({
     store,
     secrets,
+    parse: parser.parse,
     openSource: (account, login) => new ImapSource(imapConfig(account, login)),
     openWriter: (account, login) => new ImapWriter(imapConfig(account, login)),
     openSender: (account, login) => new SmtpSender(smtpConfig(account, login)),
@@ -797,6 +801,7 @@ void app.whenReady().then(() => {
       if (changeTimer) clearTimeout(changeTimer)
       tray?.destroy()
       tray = null
+      void parser.close()
       store.close()
       if (openedFiles) rmSync(openedFiles, { recursive: true, force: true })
       return
