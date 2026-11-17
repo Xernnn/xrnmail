@@ -58,6 +58,7 @@ const UNREADABLE: ParsedMail = {
   unsubscribe: null,
   text: 'Open it in your mail service to read it.',
   html: null,
+  cut: false,
   snippet: 'Open it in your mail service to read it.',
   attachments: [],
   bulk: false,
@@ -99,7 +100,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
     labels,
     seen: remote.seen,
     flagged: remote.flagged,
-    truncated: remote.size > MAX_SOURCE,
+    // Its HTML cut short is as much not here as a source that was.
+    truncated: remote.size > MAX_SOURCE || mail.cut,
     size: remote.size,
     releaseAt: hold.at,
     summary: hold.summary,

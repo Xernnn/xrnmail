@@ -226,7 +226,7 @@ function Message(props: {
         <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust} darken={settings?.darkMail !== false}
           keepQuoted={FORWARDED.test(m.subject)} />
         {m.attachments.length > 0 && <Attachments message={m} say={say} />}
-        {m.truncated && <p className="muted note message-note">Too big to keep whole here.</p>}
+        {m.truncated && <p className="muted note message-note">Truncated</p>}
       </div>
     </article>
   )
