@@ -255,11 +255,8 @@ export function Details(props: {
         )}
         {props.cautions.length > 0 && <><dt>Warnings</dt><dd className="details-warnings">{props.cautions.map((text) => <p key={text}>{text}</p>)}</dd></>}
       </dl>
-      {facts === 'reading' && <p className="muted note details-note">Reading how it was delivered…</p>}
-      {facts === null && <p className="muted note details-note">How it was delivered couldn't be read just now.</p>}
-      {(checks || known?.tls) && (
-        <p className="muted note details-note">What the receiving server wrote down. It can say where a message came from; it can't vouch for what it says.</p>
-      )}
+      {facts === 'reading' && <p className="muted note details-note">Reading…</p>}
+      {facts === null && <p className="muted note details-note">Couldn't be read</p>}
     </div>
   )
 }

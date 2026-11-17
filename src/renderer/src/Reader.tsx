@@ -183,7 +183,7 @@ function Message(props: {
             <strong>{nameOf(m.from)}</strong>
             {m.from.name && <span className="muted who-address"> {m.from.address}</span>}
             {props.straight && (
-              <span className="straight" title="Comes straight through, without waiting for a delivery">
+              <span className="straight">
                 <Zap size={11} aria-hidden="true" />Straight through
               </span>
             )}
@@ -255,7 +255,7 @@ function Nothing(): ReactNode {
 export function CantShow(props: { back(): void; label: string }): ReactNode {
   return (
     <main className="reader reader-empty" role="alert">
-      <Empty icon={TriangleAlert} title="Couldn't show this message" note="Something in it couldn't be drawn here." />
+      <Empty icon={TriangleAlert} title="Couldn't show this message" />
       <button type="button" className="pill" onClick={props.back}>{props.label}</button>
     </main>
   )
@@ -318,8 +318,7 @@ export function Reader(props: {
     return (
       <main className="reader reader-empty">
         <Nothing />
-        <Empty icon={Mail} title={props.unread > 0 ? `${props.unread} unread` : 'Pick something to read'}
-          note={props.held > 0 ? `${props.held} more waiting for the next delivery` : 'Press ? for the keys'} />
+        <Empty icon={Mail} title={props.unread > 0 ? `${props.unread} unread` : 'Nothing open'} />
       </main>
     )
   }
@@ -380,7 +379,7 @@ export function Reader(props: {
       <div className="toolbar" role="toolbar" aria-label="Thread">
         <button className="icon back" onClick={back} aria-label="Back"><ArrowLeft size={18} aria-hidden="true" /></button>
         {props.many && account && (
-          <span className="reader-account" title="The account this thread is in">
+          <span className="reader-account">
             <span className="account-swatch" style={{ background: account.color }} aria-hidden="true" /><span className="reader-account-name">{account.email}</span>
           </span>
         )}

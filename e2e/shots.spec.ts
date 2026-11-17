@@ -244,7 +244,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByRole('radiogroup', { name: 'How new mail arrives' }).waitFor()
     await page.screenshot({ path: `${folder}/${colorScheme}-settings-batches.png` })
     await page.getByRole('radio', { name: /As it arrives/ }).check()
-    await page.getByText('are kept for switching back').waitFor()
+    await page.getByRole('heading', { name: 'Delivery times' }).waitFor({ state: 'detached' })
     await page.screenshot({ path: `${folder}/${colorScheme}-settings-live.png` })
     await page.getByRole('radio', { name: /In batches/ }).check()
     await page.getByLabel('Remove 13:00').waitFor()

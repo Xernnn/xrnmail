@@ -110,7 +110,7 @@ export function FolderMenu(props: { folders: string[]; title?: string; right?: b
       {props.folders.map((folder) => (
         <button type="button" key={folder} className="menu-item" onClick={() => props.pick(folder)}>{folder}</button>
       ))}
-      {props.folders.length === 0 && <p className="muted note menu-note">No {props.title ? 'labels' : 'folders'} of your own yet.</p>}
+      {props.folders.length === 0 && <p className="muted note menu-note">No {props.title ? 'labels' : 'folders'}</p>}
     </Popover>
   )
 }

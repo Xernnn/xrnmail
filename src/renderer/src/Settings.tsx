@@ -134,7 +134,6 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; change: Change }):
     <>
       <section>
         <Choice label="Shortcut set" value={set} options={KEY_SETS} set={(keys) => { setChoosing(null); props.change(() => ({ profile: { keys } })) }} />
-        <p className="muted note">Press Change beside an action, then the key you want for it.</p>
       </section>
       <section className="shortcuts" aria-label="Shortcuts">
         {COMMANDS.map(([command, what]) => {
@@ -190,11 +189,8 @@ function Summary(props: { summary: SummarySettings; save(summary: Partial<Summar
   }
   return (
     <section>
-      <p className="muted note">Senders chosen in Subscriptions are held, and delivered together at a time you pick.</p>
       <SummarySchedule summary={summary} set={(next) => save({ ...next, chosen: true })} />
-      <p className="muted note">
-        {senders === 0 ? 'Nobody is in it yet. Add senders from Subscriptions.' : `${senders === 1 ? '1 sender is' : `${senders} senders are`} in it. Subscriptions has them, on its Summary side.`}
-      </p>
+      <p className="muted note">{senders === 0 ? 'No senders' : senders === 1 ? '1 sender' : `${senders} senders`}</p>
       {senders > 0 && <button className="quiet danger outline" onClick={() => void off()}>Turn off Summary</button>}
     </section>
   )
@@ -203,9 +199,9 @@ function Summary(props: { summary: SummarySettings; save(summary: Partial<Summar
 /** The times batches start from when there were none to go back to. */
 const FIRST_TIMES = ['09:00', '13:00', '17:00']
 
-const MODES: [boolean, string, string][] = [
-  [true, 'As it arrives', 'New mail shows the moment your mail service has it.'],
-  [false, 'In batches', 'New mail waits for the times you set, apart from the people let straight through.']
+const MODES: [boolean, string][] = [
+  [true, 'As it arrives'],
+  [false, 'In batches']
 ]
 
 /** How mail arrives: live, or in batches at set times. Switching keeps the times for coming back. */
@@ -231,21 +227,13 @@ function Batches(props: { batch: Settings['batch']; change: Change }): ReactNode
       <section>
         <h3>New mail</h3>
         <div className="tiles modes" role="radiogroup" aria-label="How new mail arrives">
-          {MODES.map(([live, name, note]) => (
+          {MODES.map(([live, name]) => (
             <label key={name} className={batch.live === live ? 'tile mode on' : 'tile mode'}>
               <input type="radio" name="delivery" checked={batch.live === live} onChange={() => choose(live)} />
               <span className="mode-name">{name}</span>
-              <span className="muted mode-note">{note}</span>
             </label>
           ))}
         </div>
-        {batch.live && (
-          <p className="muted note">
-            Your inbox is watched, so mail and changes made on your other devices show within seconds.
-            {batch.times.length > 0 && ` Your times (${batch.times.join(', ')}) are kept for switching back.`}
-            {' '}Senders in your Summary still wait for its time.
-          </p>
-        )}
       </section>
       {!batch.live && (
         <section>
@@ -260,7 +248,6 @@ function Batches(props: { batch: Settings['batch']; change: Change }): ReactNode
             <input type="time" aria-label="New time" value={time} onChange={(e) => setTime(e.target.value)} />
             <button className="quiet" onClick={add} disabled={!time}>Add</button>
           </div>
-          {batch.times.length === 1 && <p className="muted note">Taking the last time away makes mail arrive as it comes.</p>}
           <label>
             Straight through
             <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
@@ -403,12 +390,10 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
         {settings.focused && (
           <Check label="Only mail in Focused" on={settings.notifyFocusedOnly} set={(notifyFocusedOnly) => save({ notifyFocusedOnly })} />
         )}
-        <p className="muted note">Mail held for a delivery is announced when it lands, not before.</p>
       </section>
       <section>
         <h3>Muted senders</h3>
-        <p className="muted note">Their mail arrives as usual, and nothing announces it.</p>
-        {muted.length === 0 && <p className="muted note">Nobody is muted.</p>}
+        {muted.length === 0 && <p className="muted note">None</p>}
         {muted.map((who) => (
           <div className="line" key={who}>
             <span className="grow">{who}</span>
@@ -456,13 +441,12 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
               ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
               : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
             <button className="quiet danger"
-              onClick={() => void ask({ title: `Remove ${a.email} from this laptop?`, note: 'The mail stays on the server.', action: 'Remove', danger: true }).then((yes) => { if (yes) void window.mail.removeAccount(a.id) })}>
+              onClick={() => void ask({ title: `Remove ${a.email} from this laptop?`, action: 'Remove', danger: true }).then((yes) => { if (yes) void window.mail.removeAccount(a.id) })}>
               Remove
             </button>
           </div>
         ))}
         {error && <p className="error">{error}</p>}
-        <p className="muted note">Your photo is your Gravatar, or one chosen here, which stays on this laptop.</p>
         {adding ? <AddAccount done={() => setAdding(false)} /> : <button className="quiet" onClick={() => setAdding(true)}>Add account</button>}
       </section>
       {accounts.map((a) => (
@@ -510,7 +494,7 @@ function Appearance(props: { settings: Settings; save: Save; editMenu?: () => vo
         <Check label="Show icons in the sidebar" on={settings.sidebarIcons} set={(sidebarIcons) => save({ sidebarIcons })} />
         {props.editMenu && (
           <div className="line">
-            <span className="grow muted">Which entries it shows, and in what order. Right-clicking the sidebar does the same.</span>
+            <span className="grow">Entries</span>
             <button className="quiet" onClick={props.editMenu}>Edit Menu</button>
           </div>
         )}
@@ -563,7 +547,6 @@ function About(): ReactNode {
   return (
     <section>
       <p>xrnmail {version}</p>
-      <p className="muted note">All your mail accounts in one place, delivered in batches.</p>
     </section>
   )
 }
@@ -595,7 +578,7 @@ function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
   return (
     <section>
       <h3>Their new mail goes straight to Trash</h3>
-      {props.blocked.length === 0 && <p className="muted note">Nobody is blocked.</p>}
+      {props.blocked.length === 0 && <p className="muted note">None</p>}
       {props.blocked.map((who) => (
         <div className="line" key={who}>
           <span className="grow">{who}</span>
@@ -670,7 +653,7 @@ function Hub(props: { settings: Settings }): ReactNode {
           <label>Name<input autoComplete="off" required value={user} onChange={(e) => setUser(e.target.value)} /></label>
           <label>Password<input type="password" autoComplete="off" required value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
           {error && <p className="error">{error}</p>}
-          <div className="row-end"><span className="muted note">Sends counts only.</span><button type="submit" className="primary">Connect</button></div>
+          <div className="row-end"><button type="submit" className="primary">Connect</button></div>
         </form>
       )}
     </section>

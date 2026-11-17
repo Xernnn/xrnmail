@@ -253,9 +253,9 @@ export function Subscriptions(props: {
     return next
   })
   const empty = items.length === 0 && (
-    side === 'left' ? <Empty icon={ListChecks} title="Nobody yet" note="Senders you unsubscribe from are kept here." />
-      : side === 'summary' ? <Empty icon={Newspaper} title="Nobody in your Summary" note="Add senders from Subscribed, and their mail comes together at the time you choose." />
-      : <Empty icon={ListChecks} title="No subscriptions" note="Newsletters and offers show up here, ready to leave." />
+    side === 'left' ? <Empty icon={ListChecks} title="Nobody yet" />
+      : side === 'summary' ? <Empty icon={Newspaper} title="Nobody in your Summary" />
+      : <Empty icon={ListChecks} title="No subscriptions" />
   )
   const count = (item: Subscription): string =>
     item.count === 0 ? 'Nothing from them is left here' : `${item.count === 1 ? '1 message' : `${item.count} messages`} · ${shortTime(item.latest)}`

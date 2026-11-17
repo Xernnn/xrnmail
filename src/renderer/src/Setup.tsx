@@ -130,7 +130,7 @@ export function AddAccount(props: { done?(): void }): ReactNode {
           </label>
           <p className="muted note">
             Microsoft only lets a registered app in, and yours is free: register one for "personal and work accounts", turn on
-            public client flows, and copy its Application ID here. Your password stays with Microsoft.
+            public client flows, and copy its Application ID here.
           </p>
           {code && (
             <p className="device-code">
@@ -181,7 +181,6 @@ export function Welcome(): ReactNode {
       <div className="welcome-card">
         <img src={icon} alt="" width={64} height={64} />
         <h1>Welcome to xrnmail</h1>
-        <p className="muted">Add your first account. You can add the others in Settings at any time.</p>
         <AddAccount />
       </div>
     </div>

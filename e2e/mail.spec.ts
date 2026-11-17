@@ -100,7 +100,6 @@ test('mail as it arrives: one switch, waiting mail comes in, the times are kept,
   await modes.getByRole('radio', { name: /As it arrives/ }).check()
   await expect(modes.getByRole('radio', { name: /As it arrives/ })).toBeChecked()
   await expect(page.getByLabel('Remove 13:00')).toHaveCount(0)
-  await expect(page.getByText('Your times (09:00, 13:00, 17:00) are kept for switching back.')).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
   await expect(list.getByText('Held back')).toBeVisible()
   await expect(page.locator('.batch')).toHaveCount(0)

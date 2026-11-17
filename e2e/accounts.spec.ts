@@ -431,7 +431,7 @@ test('the Summary: a sender goes in from Subscriptions, its mail waits for the t
   await expect(page.getByText('No subscriptions')).toBeVisible() // it has a side of its own now
   await page.getByRole('group', { name: 'Sides of Subscriptions' }).getByRole('button', { name: 'Summary' }).click()
   await expect(page.locator('.summary-bar')).toContainText(`Delivered daily at ${at}`)
-  await expect(page.getByRole('button', { name: /Latest Summary/ })).toContainText('Nothing has landed yet')
+  await expect(page.getByRole('button', { name: /Latest Summary/ })).toContainText('None yet')
   await expect(page.locator('.subscription')).toContainText('2 messages')
   await expect(page.getByRole('button', { name: 'Remove hi@shop.example from Summary' })).toBeVisible()
   expect((await page.evaluate(() => window.mail.settings())).summary).toMatchObject({ senders: ['hi@shop.example'], every: 'daily', time: at, chosen: true })
@@ -482,7 +482,7 @@ test('the Summary: a sender goes in from Subscriptions, its mail waits for the t
   await expect(settings.getByRole('radio', { name: 'Pick a time' })).toBeChecked()
   await settings.getByRole('button', { name: 'Turn off Summary' }).click()
   await page.locator('dialog.confirm').getByRole('button', { name: 'Turn off' }).click()
-  await expect(settings.getByText('Nobody is in it yet')).toBeVisible()
+  await expect(settings.getByText('No senders', { exact: true })).toBeVisible()
   await settings.getByRole('button', { name: 'Done' }).click()
   await side.getByRole('button', { name: 'Subscriptions' }).click()
   await expect(page.getByRole('button', { name: 'Add hi@shop.example to Summary' })).toBeVisible()

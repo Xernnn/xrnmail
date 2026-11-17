@@ -48,7 +48,6 @@ export function NewFolderDialog(props: { accounts: AccountView[]; account: strin
           <input autoFocus required value={name} maxLength={200} placeholder="Receipts, or Work/Plans"
             onChange={(e) => setName(e.target.value)} />
         </label>
-        <p className="muted note">A slash puts it inside another, as Work/Plans is inside Work.</p>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="confirm-end">
           <button type="button" className="quiet" onClick={() => props.done(null)}>Cancel</button>

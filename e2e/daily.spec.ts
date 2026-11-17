@@ -1644,7 +1644,7 @@ test('muting a sender from the reader, and the muted senders in Settings', async
   await settings.getByRole('button', { name: 'Unmute ada@example.com' }).click()
   await expect(settings.getByRole('button', { name: 'Unmute ada@example.com' })).toHaveCount(0)
   await settings.getByRole('button', { name: 'Unmute @shop.example' }).click()
-  await expect(settings.getByText('Nobody is muted.')).toBeVisible()
+  await expect(settings.getByText('None', { exact: true })).toBeVisible()
   // Mail sorted into Other can arrive unannounced, while there's an Other.
   await settings.getByLabel('Only mail in Focused').check()
   await expect.poll(() => page.evaluate(async () => (await window.mail.settings()).notifyFocusedOnly)).toBe(true)
@@ -2032,7 +2032,7 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   await page.getByLabel('Sender to block').fill('Pest@Example.com')
   await page.getByRole('button', { name: 'Block', exact: true }).click()
   await page.getByRole('button', { name: 'Unblock pest@example.com' }).click()
-  await expect(page.getByText('Nobody is blocked.')).toBeVisible()
+  await expect(page.getByText('None', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
 
   const row = page.locator('.threads .thread', { hasText: 'Row' })
