@@ -427,7 +427,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('disconnectHub', () => service.disconnectHub())
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
-  handle('allowRemoteImages', (allow: unknown) => allowImages(allow === true))
+  handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
   handle('act', (refs: unknown, action: unknown) => service.act(targets(refs), mailAction(action)))
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))

@@ -171,6 +171,12 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     await window.mail.allowRemoteImages(true)
     setImages(true)
   }
+  /** Asked for again, still allowed: the window's allowance is asked for again first. */
+  const tryAgain = async (): Promise<void> => {
+    await window.mail.allowRemoteImages(true)
+    setFailed(0)
+    setTries((n) => n + 1)
+  }
 
   useEffect(() => () => watcher.current?.disconnect(), [])
   useEffect(() => {
@@ -260,7 +266,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
             <>
               <ImageOff size={14} aria-hidden="true" />
               <span className="muted">{failed === 1 ? "1 picture couldn't load" : `${failed} pictures couldn't load`}</span>
-              <button className="link" onClick={() => { setFailed(0); setTries((n) => n + 1) }}>Try again</button>
+              <button className="link" onClick={() => void tryAgain()}>Try again</button>
             </>
           )}
           {removed > 0 && (

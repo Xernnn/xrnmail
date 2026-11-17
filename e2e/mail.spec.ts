@@ -376,6 +376,46 @@ test('pictures that can\'t be fetched stay plain blocks, say so, and can be trie
   await expect(note).toBeVisible() // still offline: tried, and said again
 })
 
+// Pictures were one switch for the whole app: the main window moving on to another thread turned
+// them off in a thread open in a window of its own, so its Try again was refused every time.
+test('a thread in a window of its own keeps its pictures when the main window moves on', async () => {
+  const hits: string[] = []
+  const web: Server = createServer((request, response) => {
+    hits.push(request.url ?? '')
+    // The first time, as on a bad connection; after that, the picture.
+    const first = hits.length === 1
+    response.writeHead(first ? 500 : 200, { 'Content-Type': first ? 'text/plain' : 'image/png', 'Cache-Control': 'no-store' })
+    response.end(first ? 'Try later' : Buffer.from(PIXEL.split(',')[1] ?? '', 'base64'))
+  })
+  await new Promise<void>((resolve) => web.listen(0, '127.0.0.1', resolve))
+  const address = web.address()
+  const picture = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/range.png`
+  try {
+    run = await launch()
+    const { page, gmail, app } = run
+    gmail.add(rawMail({ subject: 'New range', from: 'Mai Tran <mai@example.com>', html: `<p>Our new range.</p><img id="range" src="${picture}" width="200" height="80">` }), { arrived: earlier(3) })
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Linh Pham <linh@example.com>', text: 'Noon?' }), { arrived: earlier(4) })
+    await signIn(run)
+    await page.locator('.threads').getByText('New range', { exact: true }).click()
+    const out = page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Open in a window' })
+    const [solo] = await Promise.all([app.waitForEvent('window'), out.click()])
+    await solo.frameLocator('iframe.body-frame').getByText('Our new range.').waitFor()
+    await solo.getByRole('button', { name: 'Show images' }).click()
+    const note = solo.getByText('1 picture couldn\'t load')
+    await expect(note).toBeVisible()
+
+    await page.locator('.threads').getByText('Lunch').click()
+    await expect(page.locator('.body-text')).toHaveText('Noon?')
+    await solo.getByRole('button', { name: 'Try again' }).click()
+    await expect(note).toHaveCount(0)
+    await expect.poll(() => solo.locator('iframe.body-frame').evaluate((f: HTMLIFrameElement) =>
+      ((f.contentDocument as Document).getElementById('range') as HTMLImageElement).naturalWidth)).toBe(1)
+    expect(hits).toEqual(['/range.png', '/range.png'])
+  } finally {
+    web.close()
+  }
+})
+
 /** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */
 const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const LIGHT_RECEIPT = `<table id="card" width="100%" bgcolor="#ffffff" style="border:1px solid #dddddd"><tr><td style="color:#222222;font-family:Arial">
