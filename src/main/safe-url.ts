@@ -37,6 +37,21 @@ export function isPublicHttps(raw: string): boolean {
   }
 }
 
+/** An address on this machine or a network it's on, which no name a stranger gives should lead to:
+ *  loopback, private, shared (carrier NAT, and Tailscale's), link-local, unspecified, multicast, and
+ *  IPv6's unique-local, link-local and multicast, including IPv4 ones written as IPv6. */
+export function isPrivateAddress(ip: string): boolean {
+  const v4 = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/i.exec(ip)
+  if (v4) {
+    const a = Number(v4[1])
+    const b = Number(v4[2])
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19))
+  }
+  const v6 = ip.toLowerCase()
+  return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('ff')
+}
+
 const OPENABLE = new Set([
   'pdf', 'txt', 'md', 'csv', 'tsv', 'log', 'rtf',
   'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',

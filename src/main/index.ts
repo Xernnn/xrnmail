@@ -107,6 +107,11 @@ async function txt(name: string): Promise<string[]> {
   }
 }
 
+/** Every address a name resolves to. */
+async function addressesOf(host: string): Promise<string[]> {
+  return (await dns.lookup(host, { all: true })).map((found) => found.address)
+}
+
 /** The UI tests' faces, from the files XRNMAIL_PICTURES names, so no test reaches the network. Each
  *  lookup is noted where a test can read it. */
 function testSources(spec: string): PictureSources {
@@ -728,7 +733,7 @@ void app.whenReady().then(() => {
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
   // The UI tests look nothing up unless they hand over pictures of their own.
-  const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt)
+  const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt, addressesOf)
   const avatars = new Avatars({
     dir: join(app.getPath('userData'), 'faces'),
     sources,
