@@ -12,6 +12,8 @@ const TRAY_SIZE = 22
 const DOT = 7
 
 const iconPath = (): string => join(__dirname, '../../resources/icon.png')
+/** resources/icon-16.svg, the tile drawn for small sizes, rendered at TRAY_SIZE (rsvg-convert -w 22 -h 22). */
+const trayPath = (): string => join(__dirname, '../../resources/tray.png')
 
 /** Paints a dot in the tray icon's corner: there's no count to be had there on every desktop. */
 function withDot(icon: NativeImage): NativeImage {
@@ -37,7 +39,7 @@ export class AppTray {
   private shown = -1
 
   constructor(private actions: { show(): void; command(command: AppCommand): void; sync(): void; quit(): void }) {
-    this.plain = nativeImage.createFromPath(iconPath()).resize({ width: TRAY_SIZE, height: TRAY_SIZE, quality: 'best' })
+    this.plain = nativeImage.createFromPath(trayPath()).resize({ width: TRAY_SIZE, height: TRAY_SIZE, quality: 'best' })
     this.marked = withDot(this.plain)
     this.tray = new Tray(this.plain)
     this.tray.on('click', actions.show)

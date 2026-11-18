@@ -179,8 +179,8 @@ export function Welcome(): ReactNode {
   return (
     <div className="welcome">
       <div className="welcome-card">
-        <img src={icon} alt="" width={64} height={64} />
-        <h1>Welcome to xrnmail</h1>
+        <img src={icon} alt="xrnmail" width={64} height={64} />
+        <h1>Welcome</h1>
         <AddAccount />
       </div>
     </div>
