@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Face } from '@shared/types'
-import { isPublicHttps } from './safe-url'
+import { isPrivateAddress, isPublicHttps } from './safe-url'
 
 /**
  * Faces for senders and for your own accounts: a person's photo from Gravatar, a company's logo from
@@ -139,12 +139,14 @@ export function bimiLogo(records: string[]): string | null {
 
 /**
  * The real sources, with the network and DNS passed in. Every request is a plain GET to https on a
- * public name, with no redirects (each of these answers in place, and a redirect could go anywhere),
+ * public name that resolves to no private address, with no redirects (each of these answers in place, and a redirect could go anywhere),
  * no cookies, a time limit and a size limit, and what comes back has to be a picture by its bytes.
  */
-export function webSources(fetcher: typeof fetch, txt: TxtLookup): PictureSources {
+export function webSources(fetcher: typeof fetch, txt: TxtLookup, addresses?: (host: string) => Promise<string[]>): PictureSources {
   const get = async (url: string, max: number, svg: boolean): Promise<Picture | null> => {
     if (!isPublicHttps(url)) return null
+    // A public name can still resolve to this laptop or its network, and a sender picks BIMI's.
+    if (addresses && (await addresses(new URL(url).hostname)).some(isPrivateAddress)) return null
     const response = await fetcher(url, {
       method: 'GET',
       redirect: 'error',

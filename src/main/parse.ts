@@ -9,6 +9,9 @@ import { inviteOf, type Invite } from './invite'
  *  and text and HTML normally come first, so a cut message still reads. */
 export const MAX_SOURCE = 4 * 1024 * 1024
 const MAX_HTML = 2 * 1024 * 1024
+/** The most of the pictures placed in a message's HTML written into it, on top of the markup: no more
+ *  than a whole message may be. One picture placed many times could make it far more. */
+const MAX_PICTURES = MAX_SOURCE
 const MAX_TEXT = 512 * 1024
 const SNIPPET = 180
 
@@ -32,6 +35,8 @@ export interface ParsedMail {
   unsubscribe: Unsubscribe | null
   text: string
   html: string | null
+  /** Its HTML was too long to keep whole, and was cut. */
+  cut: boolean
   snippet: string
   attachments: AttachmentInfo[]
   /** Sent to a list or by a machine, by its own headers. */
@@ -136,10 +141,13 @@ const PREVIEW_TEXT = {
   ]
 }
 
+/** A picture written into HTML, which says nothing in a preview and can be most of the HTML's length. */
+const PICTURE_DATA = /\bdata:image\/[\w.+-]{1,40};base64,[\w+/=]{200,}/gi
+
 /** What a mail's HTML says, for a preview: no shouted headings, no addresses, no picture names. */
 const readableHtml = (html: string): string => {
   try {
-    return htmlToText(html, PREVIEW_TEXT)
+    return htmlToText(html.replace(PICTURE_DATA, ''), PREVIEW_TEXT)
   } catch {
     return ''
   }
@@ -204,9 +212,39 @@ function hasTextPart(lines: readonly { key: string; line: string }[], source: Bu
   return source.subarray(0, MAX_SOURCE).includes('text/plain')
 }
 
+/** HTML no longer than [max], cut where a tag starts, so no tag is left half-written. */
+function capped(html: string, max: number): { html: string; cut: boolean } {
+  if (html.length <= max) return { html, cut: false }
+  const tag = html.lastIndexOf('<', max)
+  return { html: html.slice(0, tag > 0 ? tag : max), cut: true }
+}
+
+/** The pictures a message places in its HTML, written in where it names them, as the frame can show
+ *  them. They come after the markup is cut, so a large one can't push the words after it out. */
+function withPictures(html: string, parts: readonly Attachment[]): string {
+  const pictures = new Map<string, Attachment>()
+  for (const part of parts) {
+    if (part.cid && /^image\/[\w]+$/i.test(part.contentType) && !pictures.has(part.cid)) pictures.set(part.cid, part)
+  }
+  if (pictures.size === 0) return html
+  const urls = new Map<string, string>()
+  let room = MAX_PICTURES
+  return html.replace(/\bcid:([^'"\s]{1,256})/g, (whole, cid: string) => {
+    const part = pictures.get(cid)
+    if (!part) return whole
+    const url = urls.get(cid) ?? `data:${part.contentType};base64,${part.content.toString('base64')}`
+    urls.set(cid, url)
+    if (url.length > room) return whole
+    room -= url.length
+    return url
+  })
+}
+
 /** Anything a stranger can put in an email ends up here, so it must never throw on bad input. */
 export async function parseMail(source: Buffer): Promise<ParsedMail> {
-  const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
+  // Pictures stay as cid: links until the markup is cut, so it's only markup that's measured.
+  const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML, keepCidLinks: true })
+  const markup = typeof mail.html === 'string' ? capped(mail.html, MAX_HTML) : null
   const text = (mail.text ?? '').slice(0, MAX_TEXT)
   const from = addresses(mail.from)[0] ?? { name: '', address: '' }
   const replyTo = addresses(mail.replyTo)
@@ -223,9 +261,10 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
     references: [mail.references ?? []].flat().join(' '),
     unsubscribe: parseUnsubscribe(headerValue(mail.headerLines, 'list-unsubscribe'), headerValue(mail.headerLines, 'list-unsubscribe-post')),
     text,
-    html: typeof mail.html === 'string' ? mail.html.slice(0, MAX_HTML) : null,
+    html: markup ? withPictures(markup.html, mail.attachments ?? []) : null,
+    cut: markup?.cut ?? false,
     // Text a server made from the HTML shouts its headings, so it only counts if the sender wrote it.
-    snippet: makeSnippet(mail.html && !hasTextPart(mail.headerLines, source) ? '' : text, typeof mail.html === 'string' ? mail.html : null),
+    snippet: makeSnippet(mail.html && !hasTextPart(mail.headerLines, source) ? '' : text, markup?.html ?? null),
     attachments: attachmentInfo(mail.attachments ?? []),
     bulk,
     warnings: senderWarnings({ from, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),

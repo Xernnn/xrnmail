@@ -3,12 +3,28 @@ import { makeSnippet } from '@main/parse'
 import { quoteStart, splitQuoted } from '@shared/quoted'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 
-const FAST_MS = 200
+/** How long [work] takes over [input], at its least of a few tries, so a moment the laptop is busy
+ *  elsewhere doesn't count. */
+const least = (work: (input: string) => unknown, input: string): number => {
+  let best = Infinity
+  for (let i = 0; i < 3; i++) {
+    const started = performance.now()
+    work(input)
+    best = Math.min(best, performance.now() - started)
+  }
+  return best
+}
 
-const quick = (work: () => unknown): void => {
-  const started = performance.now()
-  work()
-  expect(performance.now() - started).toBeLessThan(FAST_MS)
+/**
+ * Whether [work] stays in step with the length of what a stranger made [make] it: four times the
+ * length takes about four times as long, where time that grows with the length squared (minutes, at
+ * 512 KB) takes sixteen. Each is timed against the same work over a quarter of it, not a clock, so a
+ * busy laptop slows both and fails neither. Work too quick to time well passes on its own.
+ */
+const quick = (make: (n: number) => string, work: (input: string) => unknown, n: number): void => {
+  const quarter = least(work, make(Math.round(n / 4)))
+  const whole = least(work, make(n))
+  expect(whole).toBeLessThan(Math.max(quarter * 10, 25))
 }
 
 describe('finding what a reply quotes', () => {
@@ -45,11 +61,11 @@ describe('finding what a reply quotes', () => {
   })
 
   it('is quick over what a stranger made to be slow', () => {
-    quick(() => splitQuoted('On '.repeat(200_000)))
-    quick(() => splitQuoted(`${'On a\n'.repeat(50_000)}wrote`))
-    quick(() => splitQuoted(`${'> a\n'.repeat(130_000)}fresh`)) // 512 KB of it was minutes, during sync
-    quick(() => makeSnippet(`${'>\n'.repeat(250_000)}fresh`))
-    quick(() => splitQuoted('>'.repeat(500_000)))
+    quick((n) => 'On '.repeat(n), splitQuoted, 200_000)
+    quick((n) => `${'On a\n'.repeat(n)}wrote`, splitQuoted, 50_000)
+    quick((n) => `${'> a\n'.repeat(n)}fresh`, splitQuoted, 130_000) // 512 KB of it was minutes, during sync
+    quick((n) => `${'>\n'.repeat(n)}fresh`, makeSnippet, 250_000)
+    quick((n) => '>'.repeat(n), splitQuoted, 500_000)
   })
 })
 
@@ -72,11 +88,11 @@ describe('previews', () => {
   })
 
   it('is quick over mail made to be slow', () => {
-    quick(() => makeSnippet(`${'On '.repeat(100_000)}wrote:`))
-    quick(() => makeSnippet('', `<div>${'<b>x'.repeat(5_000)}</div>`))
-    quick(() => makeSnippet(`<p>${'&#39;'.repeat(100_000)}`))
-    quick(() => makeSnippet(`${'[image: '.repeat(50_000)}`))
-    quick(() => makeSnippet(`${'${'.repeat(100_000)}`))
+    quick((n) => `${'On '.repeat(n)}wrote:`, makeSnippet, 100_000)
+    quick((n) => `<div>${'<b>x'.repeat(n)}</div>`, (html) => makeSnippet('', html), 5_000)
+    quick((n) => `<p>${'&#39;'.repeat(n)}`, makeSnippet, 100_000)
+    quick((n) => '[image: '.repeat(n), makeSnippet, 50_000)
+    quick((n) => '${'.repeat(n), makeSnippet, 100_000)
   })
 
   // A plain part that's really the HTML source, as some senders' software writes it, showed its tags.
@@ -119,7 +135,7 @@ describe('recipients', () => {
   })
 
   it('is quick over a header made to be slow', () => {
-    quick(() => splitRecipients('"<'.repeat(500_000)))
-    quick(() => readRecipient('<'.repeat(500_000)))
+    quick((n) => '"<'.repeat(n), splitRecipients, 500_000)
+    quick((n) => '<'.repeat(n), readRecipient, 500_000)
   })
 })

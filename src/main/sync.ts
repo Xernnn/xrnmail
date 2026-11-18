@@ -28,6 +28,8 @@ export interface SyncOptions {
   busy?: (box: string) => Set<number>
   /** Which side of the inbox it goes, and what the Assistant makes of it. */
   sort?: (mail: ParsedMail) => Sorted
+  /** How a message is read; parseMail, here, unless it's given somewhere better (parser.ts). */
+  parse?: (source: Buffer) => Promise<ParsedMail>
   /** True once the account has been removed. Asked before every folder, batch and message, so a
    *  pass that's under way stops instead of putting the mail back. */
   stopped?: () => boolean
@@ -58,6 +60,7 @@ const UNREADABLE: ParsedMail = {
   unsubscribe: null,
   text: 'Open it in your mail service to read it.',
   html: null,
+  cut: false,
   snippet: 'Open it in your mail service to read it.',
   attachments: [],
   bulk: false,
@@ -69,7 +72,7 @@ const UNREADABLE: ParsedMail = {
 async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
   let mail = UNREADABLE
   try {
-    mail = await parseMail(remote.source)
+    mail = await (options.parse ?? parseMail)(remote.source)
   } catch {
     // A mail that won't parse still arrived, so it stays listed.
   }
@@ -99,7 +102,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
     labels,
     seen: remote.seen,
     flagged: remote.flagged,
-    truncated: remote.size > MAX_SOURCE,
+    // Its HTML cut short is as much not here as a source that was.
+    truncated: remote.size > MAX_SOURCE || mail.cut,
     size: remote.size,
     releaseAt: hold.at,
     summary: hold.summary,

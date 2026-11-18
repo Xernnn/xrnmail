@@ -302,7 +302,7 @@ export interface MessageView {
   /** A line or two of what's new in it, as the list shows: not what it quotes, nor its links. */
   snippet: string
   attachments: AttachmentInfo[]
-  /** Too big to keep whole here: Gmail has the rest. */
+  /** Too big to keep whole here, its source or its HTML: the server has the rest. */
   truncated: boolean
   labels: string[]
   seen: boolean

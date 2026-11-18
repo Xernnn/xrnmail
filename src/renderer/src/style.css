@@ -643,7 +643,6 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .tiles.modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tile.mode { justify-items: start; align-content: start; gap: 3px; padding: 12px 14px; text-align: left; }
 .mode-name { font-size: 13.5px; font-weight: 600; }
-.mode-note { font-size: 12px; line-height: 1.4; }
 .tile-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #fff; font-size: 15px; font-weight: 700; }
 
 /* Settings, Shortcuts: each action, its keys, and Change. */

@@ -42,11 +42,23 @@ export function lockDownContents(contents: WebContents): void {
   contents.on('will-attach-webview', (event) => event.preventDefault())
 }
 
-let imagesAllowed = false
+/** The pages, by id, whose person has asked to see a message's pictures, each with what lets go of
+ *  it when the page goes. Each window is its own: one moving on to another thread doesn't take the
+ *  pictures away from a thread open in another. */
+const imagesAllowed = new Map<number, () => void>()
 
-/** Set while the person has asked to see a message's pictures. */
-export function allowImages(allow: boolean): void {
-  imagesAllowed = allow
+/** Set while the person has asked to see a message's pictures in [contents]. */
+export function allowImages(contents: WebContents, allow: boolean): void {
+  const { id } = contents
+  const forget = imagesAllowed.get(id)
+  if (!allow) {
+    if (forget) contents.removeListener('destroyed', forget)
+    imagesAllowed.delete(id)
+  } else if (!forget) {
+    const gone = (): void => void imagesAllowed.delete(id)
+    imagesAllowed.set(id, gone)
+    contents.once('destroyed', gone)
+  }
 }
 
 /** A picture in an email is a tracker until someone says otherwise, and the page never needs the
@@ -59,7 +71,8 @@ export function lockDownNetwork(): void {
     (details, callback) => {
       const dev = devServerUrl()
       if (dev && details.url.startsWith(dev)) return callback({})
-      callback({ cancel: !(imagesAllowed && details.resourceType === 'image') })
+      const allowed = details.webContentsId !== undefined && imagesAllowed.has(details.webContentsId)
+      callback({ cancel: !(allowed && details.resourceType === 'image') })
     }
   )
   web.on('will-download', (event) => event.preventDefault())

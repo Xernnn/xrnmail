@@ -132,6 +132,26 @@ describe('the sources', () => {
     expect(calls.map((c) => c.url)).toEqual(['https://bimi.shop.example/logo.svg', 'https://icons.duckduckgo.com/ip3/shop.example.ico'])
   })
 
+  // The name was all that was checked, so a sender could point their BIMI record at a public name of
+  // theirs that resolves to an address on this laptop or its network, and have it asked for there.
+  it('asks nothing of a name that resolves to this laptop or its network', async () => {
+    const txt = async (): Promise<string[]> => ['v=BIMI1; l=https://logo.shop.example/logo.svg']
+    const where: Record<string, string[]> = {
+      'logo.shop.example': ['192.168.1.1'],
+      'icons.duckduckgo.com': ['203.0.113.7']
+    }
+    const { fetcher, calls } = fakeWeb({ 'https://icons.duckduckgo.com/ip3/shop.example.ico': () => answer(ICO, 200, { 'content-type': 'image/x-icon' }) })
+    const sources = webSources(fetcher, txt, async (host) => where[host] ?? [])
+    expect(await sources.logo('shop.example')).toEqual({ type: 'image/x-icon', bytes: ICO })
+    expect(calls.map((c) => c.url)).toEqual(['https://icons.duckduckgo.com/ip3/shop.example.ico'])
+    for (const address of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '169.254.1.1', '100.100.1.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:192.168.0.2']) {
+      where['logo.shop.example'] = ['203.0.113.9', address]
+      calls.length = 0
+      await sources.logo('shop.example')
+      expect(calls.map((c) => c.url)).not.toContain('https://logo.shop.example/logo.svg')
+    }
+  })
+
   it('keeps a BIMI logo to its size limit', async () => {
     const huge = Buffer.concat([SVG, Buffer.alloc(MAX_SVG, 32)])
     const txt = async (): Promise<string[]> => ['v=BIMI1; l=https://bimi.shop.example/logo.svg']

@@ -16,6 +16,8 @@ import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
+import { Parser } from './parser'
+import readMail from './parse-worker?nodeWorker'
 import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
@@ -105,6 +107,11 @@ async function txt(name: string): Promise<string[]> {
   }
 }
 
+/** Every address a name resolves to. */
+async function addressesOf(host: string): Promise<string[]> {
+  return (await dns.lookup(host, { all: true })).map((found) => found.address)
+}
+
 /** The UI tests' faces, from the files XRNMAIL_PICTURES names, so no test reaches the network. Each
  *  lookup is noted where a test can read it. */
 function testSources(spec: string): PictureSources {
@@ -168,6 +175,9 @@ const mailtoIn = (argv: string[]): string | undefined => argv.find((arg) => MAIL
 
 const MAX_BODY = 8 * 1024 * 1024
 const MAX_DROP = 26 * 1024 * 1024
+/** Tracking and sign-in links can run past 8 KB; this is well inside what one argument to the
+ *  program that opens it may be (128 KB). */
+const MAX_LINK = 64 * 1024
 
 const text = (value: unknown, max = 8192): string => {
   if (typeof value !== 'string' || value.length > max) throw new Error('Bad request')
@@ -427,7 +437,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('disconnectHub', () => service.disconnectHub())
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
-  handle('allowRemoteImages', (allow: unknown) => allowImages(allow === true))
+  handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
   handle('act', (refs: unknown, action: unknown) => service.act(targets(refs), mailAction(action)))
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
@@ -571,7 +581,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
   handle('openLink', async (url: unknown) => {
-    const target = text(url)
+    const target = text(url, MAX_LINK)
     if (MAILTO.test(target)) await composeTo(target)
     else if (isSafeExternalUrl(target)) await shell.openExternal(target)
   })
@@ -723,7 +733,7 @@ void app.whenReady().then(() => {
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
   // The UI tests look nothing up unless they hand over pictures of their own.
-  const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt)
+  const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt, addressesOf)
   const avatars = new Avatars({
     dir: join(app.getPath('userData'), 'faces'),
     sources,
@@ -732,9 +742,11 @@ void app.whenReady().then(() => {
     redraw: (picture) => redraw(picture),
     ownerOf: (address) => mail?.ownerOf(address) ?? null
   })
+  const parser = new Parser(() => readMail({}))
   const service = new MailService({
     store,
     secrets,
+    parse: parser.parse,
     openSource: (account, login) => new ImapSource(imapConfig(account, login)),
     openWriter: (account, login) => new ImapWriter(imapConfig(account, login)),
     openSender: (account, login) => new SmtpSender(smtpConfig(account, login)),
@@ -797,6 +809,7 @@ void app.whenReady().then(() => {
       if (changeTimer) clearTimeout(changeTimer)
       tray?.destroy()
       tray = null
+      void parser.close()
       store.close()
       if (openedFiles) rmSync(openedFiles, { recursive: true, force: true })
       return

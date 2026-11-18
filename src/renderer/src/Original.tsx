@@ -38,7 +38,7 @@ export function Original(props: { message: number; subject: string; close(): voi
         : (
           <>
             <pre className="original-text">{found.text}</pre>
-            {found.cut && <p className="muted note original-note">This is the start of it. Save as .eml keeps it whole.</p>}
+            {found.cut && <p className="muted note original-note">Truncated</p>}
           </>
         )}
     </dialog>

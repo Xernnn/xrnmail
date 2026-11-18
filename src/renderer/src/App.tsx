@@ -597,7 +597,7 @@ export function App(): ReactNode {
 
   /** What was opened is this laptop's own record, so clearing it asks first and can't be undone. */
   const clearRecent = async (): Promise<void> => {
-    if (!await ask({ title: 'Clear Recently Seen?', note: 'Threads you open from now on are listed again.', action: 'Clear' })) return
+    if (!await ask({ title: 'Clear Recently Seen?', action: 'Clear' })) return
     try {
       await window.mail.clearRecent()
       say('Recently Seen cleared')
@@ -1117,10 +1117,10 @@ export function App(): ReactNode {
               ))}
               {(rows === null || (firstRead && list.length === 0)) && !showDrafts && !showSubscriptions && <Skeleton />}
               {emptyList && !firstRead && (
-                searching ? <Empty icon={SearchX} title="Nothing found" note="Search covers the mail kept on this laptop." />
-                  : active.kind === 'inbox' && active.focus !== 'other' ? <Empty icon={Check} title="Nothing here" note="You're all caught up." />
-                  : active.kind === 'recent' ? <Empty icon={History} title="Nothing seen yet" note="Threads you open are listed here, the last one first." />
-                  : active.kind === 'summary' ? <Empty icon={Newspaper} title="No Summary here" note="Senders you add from Subscriptions wait, and their mail comes here together at the time you choose." />
+                searching ? <Empty icon={SearchX} title="Nothing found" />
+                  : active.kind === 'inbox' && active.focus !== 'other' ? <Empty icon={Check} title="Nothing here" />
+                  : active.kind === 'recent' ? <Empty icon={History} title="Nothing seen yet" />
+                  : active.kind === 'summary' ? <Empty icon={Newspaper} title="No Summary here" />
                   : <Empty icon={Inbox} title="Nothing here" />
               )}
             </div>
@@ -1164,7 +1164,7 @@ export function App(): ReactNode {
                               {pickedAccount.labels ? 'Labels…' : 'Move to…'}
                             </button>
                           ) : (
-                            <p className="muted note menu-note">Labels and folders are each account's own: pick threads from one account to file them.</p>
+                            <p className="muted note menu-note">Pick threads from one account</p>
                           )}
                           {pickedGmail && pickedRows.some((r) => !r.important) && (
                             <button type="button" className="menu-item" onClick={() => { setBulkMenu(null); void run(refs, { kind: 'label', label: IMPORTANT, add: true }) }}>

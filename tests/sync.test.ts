@@ -117,6 +117,18 @@ describe('a first sync', () => {
     expect(row?.subject).toBe('Huge')
     expect(store.thread(ACCOUNT, row?.thread ?? '', now + 1000)[0]?.truncated).toBe(true)
   })
+
+  it('says so when only its HTML had to be cut', async () => {
+    gmail.add(rawMail({ subject: 'Long', html: `<p>start</p>${'<p>word word word</p>'.repeat(120_000)}` }))
+    gmail.add(rawMail({ subject: 'Short', html: '<p>start</p>' }))
+    await sync()
+    const cut = (subject: string): boolean | undefined => {
+      const row = store.list({ kind: 'inbox' }, now + 1000).find((r) => r.subject === subject)
+      return store.thread(ACCOUNT, row?.thread ?? '', now + 1000)[0]?.truncated
+    }
+    expect(cut('Long')).toBe(true)
+    expect(cut('Short')).toBe(false)
+  })
 })
 
 describe('later syncs', () => {

@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type ServerResponse } from 'node:http'
 import { rawMail } from '../tests/fake-gmail'
 import { launch, ME, signIn, syncAndSettle, type Running } from './app'
+import { png } from './pictures'
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -99,7 +100,6 @@ test('mail as it arrives: one switch, waiting mail comes in, the times are kept,
   await modes.getByRole('radio', { name: /As it arrives/ }).check()
   await expect(modes.getByRole('radio', { name: /As it arrives/ })).toBeChecked()
   await expect(page.getByLabel('Remove 13:00')).toHaveCount(0)
-  await expect(page.getByText('Your times (09:00, 13:00, 17:00) are kept for switching back.')).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
   await expect(list.getByText('Held back')).toBeVisible()
   await expect(page.locator('.batch')).toHaveCount(0)
@@ -123,6 +123,31 @@ test('mail as it arrives: one switch, waiting mail comes in, the times are kept,
   gmail.add(rawMail({ subject: 'Waits again' }))
   await expect(page.getByText('1 waiting')).toBeVisible({ timeout: 15_000 })
   await expect(list.getByText('Waits again')).toHaveCount(0)
+})
+
+// Mail was read on the main process, which answers the windows: a catalogue of 1.6 MB of HTML held it
+// for about 0.4 s, so a first sync of such mail made typing and scrolling stutter.
+test('a sync reading large mail leaves the main process free to answer the window', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  const row = '<tr><td style="padding:8px;color:#333"><a href="https://shop.example/p/123">Product name here</a> <b>199,000 VND</b></td></tr>'
+  for (let i = 0; i < 4; i++) {
+    gmail.add(rawMail({ subject: `Catalogue ${i}`, from: 'Mai Tran <mai@example.com>', html: `<table>${row.repeat(11_000)}</table>` }), { arrived: earlier(i + 1) })
+  }
+  /** How late the main process ran a timer due every 10 ms, at the worst. */
+  await app.evaluate(() => {
+    const probe = globalThis as unknown as { late: number }
+    probe.late = 0
+    let last = performance.now()
+    setInterval(() => {
+      const now = performance.now()
+      probe.late = Math.max(probe.late, now - last - 10)
+      last = now
+    }, 10)
+  })
+  await signIn(run)
+  await expect(page.locator('.threads').getByText(/^Catalogue/)).toHaveCount(4, { timeout: 30_000 })
+  expect(await app.evaluate(() => (globalThis as unknown as { late: number }).late)).toBeLessThan(200)
 })
 
 test('search finds Vietnamese without its marks', async () => {
@@ -273,6 +298,19 @@ test('a hostile email can do nothing', async () => {
   web.close()
 })
 
+// The main process took no link over 8192 characters, and the refusal went unseen: some tracking
+// and sign-in links are longer, and clicking one did nothing at all.
+test('a very long link opens like any other', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const long = `https://track.example/c?u=${'a1b2c3d4'.repeat(1_500)}`
+  gmail.add(rawMail({ subject: 'Confirm', from: 'Mai Tran <mai@example.com>', html: `<p><a id="go" href="${long}">Confirm your address</a></p>` }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Confirm', { exact: true }).click()
+  await page.frameLocator('iframe.body-frame').locator('#go').click()
+  await expect.poll(run.opened).toEqual([long])
+})
+
 // While a frame's new page is being made it has no root yet, and showing the quoted text then threw,
 // with nothing to catch it, so the whole window went white.
 test('a message that can\'t be drawn leaves the window as it was, and says so in the reader alone', async () => {
@@ -374,6 +412,81 @@ test('pictures that can\'t be fetched stay plain blocks, say so, and can be trie
   expect(after.every((b) => b.content.startsWith('url('))).toBe(true) // a plain block, not a broken icon and its alt text
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(note).toBeVisible() // still offline: tried, and said again
+})
+
+// Pictures were one switch for the whole app: the main window moving on to another thread turned
+// them off in a thread open in a window of its own, so its Try again was refused every time.
+test('a thread in a window of its own keeps its pictures when the main window moves on', async () => {
+  const hits: string[] = []
+  const web: Server = createServer((request, response) => {
+    hits.push(request.url ?? '')
+    // The first time, as on a bad connection; after that, the picture.
+    const first = hits.length === 1
+    response.writeHead(first ? 500 : 200, { 'Content-Type': first ? 'text/plain' : 'image/png', 'Cache-Control': 'no-store' })
+    response.end(first ? 'Try later' : Buffer.from(PIXEL.split(',')[1] ?? '', 'base64'))
+  })
+  await new Promise<void>((resolve) => web.listen(0, '127.0.0.1', resolve))
+  const address = web.address()
+  const picture = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/range.png`
+  try {
+    run = await launch()
+    const { page, gmail, app } = run
+    gmail.add(rawMail({ subject: 'New range', from: 'Mai Tran <mai@example.com>', html: `<p>Our new range.</p><img id="range" src="${picture}" width="200" height="80">` }), { arrived: earlier(3) })
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Linh Pham <linh@example.com>', text: 'Noon?' }), { arrived: earlier(4) })
+    await signIn(run)
+    await page.locator('.threads').getByText('New range', { exact: true }).click()
+    const out = page.getByRole('toolbar', { name: 'Thread' }).getByRole('button', { name: 'Open in a window' })
+    const [solo] = await Promise.all([app.waitForEvent('window'), out.click()])
+    await solo.frameLocator('iframe.body-frame').getByText('Our new range.').waitFor()
+    await solo.getByRole('button', { name: 'Show images' }).click()
+    const note = solo.getByText('1 picture couldn\'t load')
+    await expect(note).toBeVisible()
+
+    await page.locator('.threads').getByText('Lunch').click()
+    await expect(page.locator('.body-text')).toHaveText('Noon?')
+    await solo.getByRole('button', { name: 'Try again' }).click()
+    await expect(note).toHaveCount(0)
+    await expect.poll(() => solo.locator('iframe.body-frame').evaluate((f: HTMLIFrameElement) =>
+      ((f.contentDocument as Document).getElementById('range') as HTMLImageElement).naturalWidth)).toBe(1)
+    expect(hits).toEqual(['/range.png', '/range.png'])
+  } finally {
+    web.close()
+  }
+})
+
+// The frame was sized, darkened and wired for clicks on its load, which waits for every picture: one
+// from a host that never answered left a dark window's designed mail unseen, and its links dead.
+test('a picture that never comes leaves the message shown and working, and one that comes late fits it again', async () => {
+  const waiting = new Map<string, ServerResponse>()
+  const web: Server = createServer((request, response) => void waiting.set(request.url ?? '', response))
+  await new Promise<void>((resolve) => web.listen(0, '127.0.0.1', resolve))
+  const address = web.address()
+  const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+  try {
+    run = await launch({ colorScheme: 'dark' })
+    const { page, gmail } = run
+    const html = `<table width="100%" bgcolor="#ffffff"><tr><td style="color:#222222"><p>Spring sale.</p>` +
+      `<img src="${base}/never.png" width="300" height="120" alt=""><img id="late" src="${base}/late.png" alt="">` +
+      `<p><a id="shop" href="https://shop.example/sale">Shop now</a></p></td></tr></table>`
+    gmail.add(rawMail({ subject: 'Spring sale', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+    await signIn(run)
+    await page.locator('.threads').getByText('Spring sale', { exact: true }).click()
+    const frame = page.locator('iframe.body-frame')
+    await page.frameLocator('iframe.body-frame').getByText('Shop now').waitFor()
+    await page.getByRole('button', { name: 'Show images' }).click()
+    await expect.poll(() => [...waiting.keys()].sort()).toEqual(['/late.png', '/never.png'])
+    await expect(frame).not.toHaveClass(/painting/)
+    await page.frameLocator('iframe.body-frame').locator('#shop').click()
+    await expect.poll(run.opened).toEqual(['https://shop.example/sale'])
+
+    const height = async (): Promise<number> => (await frame.boundingBox())?.height ?? 0
+    const before = await height()
+    waiting.get('/late.png')?.writeHead(200, { 'Content-Type': 'image/png' }).end(png(400, [40, 90, 160]))
+    await expect.poll(height).toBeGreaterThan(before + 300)
+  } finally {
+    for (const response of waiting.values()) response.destroy()
+    web.close()
+  }
 })
 
 /** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */
@@ -547,7 +660,11 @@ test('a picture not shown yet is a block that suits the page it sits on: dark on
       const [r = 0, g = 0, b = 0] = (css.match(/[\d.]+/g) ?? []).map(Number)
       return (r + g + b) / 3
     }
-    return { block: light(view.getComputedStyle(doc.getElementById('hero') as Element).backgroundColor), page: light(view.getComputedStyle(doc.getElementById('card') as Element).backgroundColor) }
+    const hero = doc.getElementById('hero')
+    const card = doc.getElementById('card')
+    // A frame made again starts with an empty page, which has neither: asked again, not failed.
+    if (!hero || !card) return { block: -1, page: -1 }
+    return { block: light(view.getComputedStyle(hero).backgroundColor), page: light(view.getComputedStyle(card).backgroundColor) }
   })
   await page.locator('.threads').getByText('Spring sale', { exact: true }).click()
   await page.frameLocator('iframe.body-frame').getByText('Spring sale, this week only.').waitFor()

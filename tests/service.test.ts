@@ -738,6 +738,21 @@ describe('changing mail', () => {
     expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
   })
 
+  // Undo pressed while the change was already on its way put the mail back here, and the server
+  // made the change anyway: the inbox showed it until a later sync took it out again.
+  it('undo once the change is on its way to Gmail leaves the mail where Gmail will have it', async () => {
+    const token = service.act([ref('One')], { kind: 'archive' })
+    gmail.hold = /^UID STORE$/
+    const going = later(UNDO_MS + 1000)
+    await eventually(() => expect(gmail.holding).toHaveLength(1))
+    service.undo(token)
+    gmail.release()
+    await going
+    expect(fakeMail('One').labels).not.toContain('\\Inbox')
+    expect(ids()).toEqual(['Two'])
+    expect(service.accounts()[0]?.error).toBe('Too late to undo')
+  })
+
   it('delete moves to Trash, and the mail is gone from here', async () => {
     const thread = ref('One')
     service.act([thread], { kind: 'trash' })

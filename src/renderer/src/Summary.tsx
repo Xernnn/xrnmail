@@ -79,7 +79,6 @@ export function ScheduleDialog(props: { summary: SummarySettings; done(summary: 
   return (
     <dialog ref={dialog} className="confirm schedule-dialog" aria-label="When your Summary arrives" onCancel={() => props.done(null)}>
       <h2>When should your Summary arrive?</h2>
-      <p className="muted">Its senders' new mail waits, and comes together at this time.</p>
       <SummarySchedule summary={summary} set={(change) => setSummary((now) => ({ ...now, ...change }))} />
       <div className="confirm-end">
         <button className="quiet" onClick={() => props.done(null)}>Cancel</button>
@@ -113,7 +112,7 @@ export function LatestSummary(props: { open(): void; overview: Overview | null }
       <Newspaper size={20} aria-hidden="true" />
       <span className="grow">
         <strong>Latest Summary</strong>
-        <span className="muted note">{latest ? `Landed ${landedWords(latest.at)}` : 'Nothing has landed yet'}</span>
+        <span className="muted note">{latest ? `Landed ${landedWords(latest.at)}` : 'None yet'}</span>
       </span>
       <ChevronRight size={16} aria-hidden="true" />
     </button>
