@@ -1,8 +1,9 @@
 import { app, clipboard, Menu, nativeImage, Notification, session, shell, Tray, type MenuItemConstructorOptions, type NativeImage, type WebContents } from 'electron'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AppCommand } from '@shared/types'
-import { AUTOSTART_FLAG, autostartEntry } from './autostart'
+import { AUTOSTART_FLAG, autostartEntry, unpackFolder } from './autostart'
 import { isSafeExternalUrl } from './safe-url'
 
 /** The parts of being a desktop app that have nothing to do with mail: tray, menus, spelling. */
@@ -181,7 +182,7 @@ export const startedHidden = (argv: string[]): boolean => argv.includes(AUTOSTAR
 
 /** Linux has no system call for this: it's a file in the autostart folder. Only an installed build
  *  writes one, because a development build at login isn't something anyone asked for. An AppImage
- *  is started from an extracted copy, as the app's launcher starts it (see autostart.ts). */
+ *  is started from an extracted copy in the cache, as the app's launcher starts it (see autostart.ts). */
 export function setStartAtLogin(on: boolean): void {
   if (!app.isPackaged) return
   const folder = join(app.getPath('appData'), 'autostart')
@@ -189,5 +190,5 @@ export function setStartAtLogin(on: boolean): void {
   if (!on) return rmSync(file, { force: true })
   const appImage = process.env['APPIMAGE']
   mkdirSync(folder, { recursive: true })
-  writeFileSync(file, autostartEntry(appImage ?? process.execPath, Boolean(appImage)), { mode: 0o644 })
+  writeFileSync(file, autostartEntry(appImage ?? process.execPath, Boolean(appImage), unpackFolder(process.env, homedir())), { mode: 0o644 })
 }
