@@ -530,15 +530,21 @@ test('in a dark window, mail made for a white page is darkened, pictures and dar
   expect((await look('#logo')).style).toBeNull() // the picture is as it was
   await expect(frame).toHaveCSS('opacity', '1')
 
+  // Each of these makes the frame again, and it starts with an empty page that has none of the
+  // elements yet: asked again rather than failed. Not an empty answer, which would read as dark.
+  const soon = (selector: string) => look(selector).catch(() => null)
   await original.click()
-  await expect.poll(async () => (await look('#card')).bg).toBe('rgb(255, 255, 255)')
+  await expect.poll(async () => (await soon('#card'))?.bg).toBe('rgb(255, 255, 255)')
   expect((await look('#total')).color).toBe('rgb(34, 34, 34)')
   await page.getByRole('button', { name: 'Darken colours' }).click()
-  await expect.poll(async () => light((await look('#card')).bg)).toBeLessThan(40)
+  await expect.poll(async () => {
+    const card = await soon('#card')
+    return card ? light(card.bg) : 255
+  }).toBeLessThan(40)
 
   await list.getByText('Night edition').click()
   await expect(page.frameLocator('iframe.body-frame').getByText('Three stories.')).toBeVisible()
-  await expect.poll(async () => (await look('#night')).bg).toBe('rgb(17, 17, 17)')
+  await expect.poll(async () => (await soon('#night'))?.bg).toBe('rgb(17, 17, 17)')
   expect(await look('#night')).toMatchObject({ color: 'rgb(221, 221, 221)', style: 'background:#111111;color:#dddddd;padding:20px' })
   await expect(original).toHaveCount(0) // dark already, it's left as it is
 
