@@ -270,7 +270,10 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
 
 Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
 server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
-work and on a server that adds no line of its own the top one is too.
+work and on a server that adds no line of its own the top one is too. The one thing a pass there
+does is let the pictures of a sender trusted for them load by themselves (`shared/images.ts`): on a
+server that adds no line, a sender who writes a passing one of their own above the rest still gets
+that far.
 
 A message's details show those results all the same, as Gmail's details do, labelled as what the
 receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
@@ -337,7 +340,9 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
 4. The main process cancels every request from the page, whatever the CSP says, except images while
    "Show images" is on. That resets on leaving the thread. Images can be set to always load, or for
    one sender at a time, but that only presses the same button for you: it goes through the same switch
-   in the main process. The default is to ask.
+   in the main process. The default is to ask. A sender's own load only on mail the top
+   `Authentication-Results` says is theirs, by DMARC or by a DKIM signature from their domain, since
+   anyone can write their address on a From line; the rest asks, as a stranger's does.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
    It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.

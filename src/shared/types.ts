@@ -312,6 +312,8 @@ export interface MessageView {
   focused: boolean
   facts: Facts | null
   warnings: SenderWarning[]
+  /** The account's server says it's from the domain on its From line (`authenticated` in images.ts). */
+  authenticated: boolean
   /** Where replies go, when it's somewhere else. */
   replyTo: Address[]
   /** Its thread is kept under Pinned. */

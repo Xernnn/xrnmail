@@ -385,6 +385,28 @@ test('images stay blocked on the next message', async () => {
   await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
 })
 
+// On a server that adds no Authentication-Results, anyone could write a trusted sender's address on
+// a From line and have their pictures load by themselves, telling them the mail was opened, and where.
+test('a sender trusted for pictures has them load only on mail proved to be theirs', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const from = 'Mai Tran <mai@example.com>'
+  const passed = 'Authentication-Results: mx.google.com; dkim=pass header.i=@example.com; spf=pass smtp.mailfrom=mai@example.com; dmarc=pass header.from=example.com'
+  gmail.add(rawMail({ subject: 'Trip photos', from, html: '<p>one</p><img src="https://example.invalid/a.png">' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'More photos', from, html: '<p>two</p><img src="https://example.invalid/b.png">' }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'Last photos', from, html: '<p>three</p><img src="https://example.invalid/c.png">', headers: [passed] }), { arrived: earlier(4) })
+  await signIn(run)
+  await page.getByText('Trip photos').click()
+  await page.getByRole('button', { name: 'Always from this sender' }).click()
+  await expect(page.getByRole('button', { name: 'Show images' })).toHaveCount(0)
+  await page.getByText('More photos').click()
+  await expect(page.frameLocator('iframe.body-frame').getByText('two')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
+  await page.getByText('Last photos').click()
+  await expect(page.frameLocator('iframe.body-frame').getByText('three')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show images' })).toHaveCount(0)
+})
+
 // Offline, Show images left broken-picture icons with their alt text spilling over what was round
 // them, and nothing said why or offered to try again.
 test('pictures that can\'t be fetched stay plain blocks, say so, and can be tried again', async () => {

@@ -356,7 +356,7 @@ describe('writing back', () => {
     to: [{ name: '', address: 'me@example.com' }, { name: 'Bo', address: 'bo@example.com' }],
     cc: [{ name: '', address: 'cy@example.com' }],
     attachments: [], truncated: false, labels: [], seen: true, flagged: false, unsubscribe: false,
-    focused: true, facts: null, warnings: [], pinned: false,
+    focused: true, facts: null, warnings: [], authenticated: false, pinned: false,
     messageId: '<m@example.com>', references: '', replyTo: [], unsubscribeTo: null, ...over
   })
 

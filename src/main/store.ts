@@ -5,6 +5,7 @@ import type {
   Address, AssistantSection, AttachmentInfo, Draft, DraftState, Facts, HeaderDetails, LabelCount, ListQuery, MailAction, MessageView, SenderWarning,
   Subscription, ThreadRef, ThreadRow
 } from '@shared/types'
+import { authenticated } from '@shared/images'
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
 import type { Hold } from './batches'
 import type { Unsubscribe } from './parse'
@@ -314,6 +315,16 @@ function factsFrom(value: unknown): Facts | null {
   if (!value) return null
   try {
     return JSON.parse(String(value)) as Facts
+  } catch {
+    return null
+  }
+}
+
+/** What a message's headers said, as kept with it; nothing for mail kept before they were. */
+function detailsFrom(value: unknown): HeaderDetails | null {
+  if (!value) return null
+  try {
+    return JSON.parse(String(value)) as HeaderDetails
   } catch {
     return null
   }
@@ -812,6 +823,7 @@ export class Store {
       focused: Number(r['focus']) > 0,
       facts: factsFrom(r['facts']),
       warnings: parseList<SenderWarning>(r['warnings']),
+      authenticated: authenticated(detailsFrom(r['details']), String(r['from_address'])),
       replyTo: parseList<Address>(r['reply_to']),
       pinned: Number(r['pinned']) > 0
     }
