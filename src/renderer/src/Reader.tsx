@@ -4,6 +4,7 @@ import {
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
+import { imagesLoad } from '@shared/images'
 import { plainName } from '@shared/names'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
@@ -152,10 +153,7 @@ function Message(props: {
     setDetails(false)
     toggleButton.current?.focus()
   }, [])
-  const address = m.from.address.toLowerCase()
-  const trusted = settings?.images === 'always' || (settings?.imagesFrom ?? []).includes(address)
-  // A From line can be forged, so being trusted only counts on mail that passed for its sender.
-  const images = trusted && !bins && m.warnings.length === 0
+  const images = imagesLoad(m, settings, bins)
   // Its own reply button answers everyone on it, when Settings say so and there's someone else.
   const replyAll = settings?.defaultReply === 'replyAll' && m.to.length + m.cc.length > 1
   if (!open) {

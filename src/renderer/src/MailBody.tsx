@@ -283,7 +283,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
             <>
               <ImageOff size={14} aria-hidden="true" />
               <button className="link" onClick={() => void show()}>Show images</button>
-              {sender && trust && <button className="link" onClick={() => trust(sender)}>Always from this sender</button>}
+              {sender && trust && <button className="link" onClick={() => { trust(sender); void show() }}>Always from this sender</button>}
             </>
           )}
           {failed > 0 && (
