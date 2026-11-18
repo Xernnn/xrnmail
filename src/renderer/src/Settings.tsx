@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Server, Signature, SlidersHorizontal, type LucideIcon
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
 } from 'lucide-react'
 import {
   QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type SummarySettings, type SwipeAction, type Template
@@ -16,6 +16,9 @@ import { forgetFaces } from './pictures'
 import { AddAccount } from './Setup'
 import { AccountFace } from './Sidebar'
 import { SummarySchedule } from './Summary'
+import icon from './icon.svg'
+import hubTile from './apps/xrnhub.svg'
+import hubTileSmall from './apps/xrnhub-16.svg'
 
 const KEEP_DAYS = [30, 90, 365, 1095]
 
@@ -24,12 +27,17 @@ type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 export type Tab =
   'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'batches' | 'hub' | 'about'
 
+type TabIcon = ComponentType<{ className?: string; size?: number; 'aria-hidden'?: 'true' }>
+
+/** xrnhub is another xrn app, and every xrn app is shown by its tile: the one drawn for 16 px here. */
+const HubIcon: TabIcon = ({ className, size }) => <img className={className} src={hubTileSmall} alt="" width={size} height={size} />
+
 /** Edison's sections in its order, then what only xrnmail has. */
-const TABS: [Tab, string, LucideIcon][] = [
+const TABS: [Tab, string, TabIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
   ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
-  ['batches', 'Batches', Clock], ['hub', 'xrnhub', Server], ['about', 'About', Info]
+  ['batches', 'Batches', Clock], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
 ]
 
 /** What each page holds, for the search box. */
@@ -546,7 +554,7 @@ function About(): ReactNode {
   }, [])
   return (
     <section>
-      <p>xrnmail {version}</p>
+      <p className="about-version"><img src={icon} alt="xrnmail" width={32} height={32} />{version}</p>
     </section>
   )
 }
@@ -743,7 +751,7 @@ export function SettingsDialog(props: {
       </nav>
       <div className="settings-main">
         <header>
-          <h2>{title}</h2>
+          <h2>{page === 'hub' ? <img className="app-tile" src={hubTile} alt={title} width={30} height={30} /> : title}</h2>
           <input type="search" placeholder="Search settings" aria-label="Search settings" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button className="quiet" onClick={props.close}>Done</button>
         </header>
