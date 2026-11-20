@@ -60,7 +60,8 @@ something the person did. imapflow answers `false` rather than throwing when a c
 
 An action applies to `store.ts` at once, so the app never waits on the network, and joins the `pending`
 table. That's what lets it survive being offline or a restart. Anything that takes mail out of view waits
-six seconds for Undo before setting off; everything else goes straight away.
+out Undo (5 seconds, or up to 30 as Settings, General say) and one second more before setting off;
+everything else goes straight away.
 
 - Only mail that can be seen is touched. A held reply in the same thread is left alone.
 - `MailService.inLane` runs one thing at a time per account. A sync reading the server while a change is
@@ -346,8 +347,8 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
    It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
-5. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
-6. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
+6. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
+7. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
    A page can't open a window. Only the main process does, for a thread or a draft, and that window
    is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
    bridge's world, nothing of Node) behind the same walls, told in its address what to show.
@@ -400,7 +401,8 @@ Each lookup tells someone something, so the rules are about when and how:
   (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
   with a sender warning ask nothing for that sender and show initials.
 - **How.** The main process does all of it with Node's own fetch, which the page's network walls
-  don't cover and don't need to. Only https to a public name, GET, no redirects, no cookies, a time
+  don't cover and don't need to. Only https to a public name that resolves to no private, loopback,
+  shared (carrier NAT, Tailscale) or link-local address, GET, no redirects, no cookies, a time
   limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
   from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
 - **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again

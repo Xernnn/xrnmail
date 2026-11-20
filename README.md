@@ -12,10 +12,18 @@ arrives.
 It's a full mail client: write, reply, archive, delete, snooze. Your mail stays on your laptop and with
 your mail service, with no server of ours in between. Everything clever happens on your laptop.
 
-It looks and works like Edison Mail for Mac, in its own code: the same window (sidebar, a title and
-search across the top, the list, the reader with Reply and Forward at its foot), the same rows and
-quick actions, the same sections in Settings and the same keys. What xrnmail adds on top is listed
-under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
+It's laid out like a familiar Mac mail app, in its own code: a sidebar, a title and search across the
+top, the list, and the reader with Reply and Forward at its foot. Which app that is, and what xrnmail
+adds to it or leaves out, is under [Where it differs](#where-it-differs-from-edison-mail).
+
+![The inbox in batches, with a thread open beside it](docs/screenshots/inbox.png)
+
+*In batches: the next delivery and what's waiting sit over the list, and Deliver now lets it in early.
+More pictures are under [Pictures](#pictures).*
+
+Version 0.1.0, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
+[imapflow](https://imapflow.com) for IMAP, nodemailer for SMTP and SQLite (`node:sqlite`) for the mail
+kept on the laptop.
 
 ## What it does
 
@@ -61,11 +69,12 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
 - **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
   ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
   and its right-click menu clears it. Reading from the list itself leaves its order as it is.
-- **Focused and Other:** people on one side, and everything sent to everyone on the other, in each
-  account's inbox. Say which side a sender belongs on and it stays there. All Inboxes is every
-  account's inbox whole, with nothing set aside, and its count is all of it.
+- **Focused and Other:** a switch in Settings, General, on at first. On, each account's inbox has
+  people on one side and everything sent to everyone on the other, and a sender put on a side stays
+  there. Off, every inbox is one list, and nothing in the app mentions the two sides. All Inboxes is
+  every account's inbox whole either way, and its count is all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
-  mail on this laptop. Calendar invitations can be answered from the message.
+  mail on this laptop. Calendar invitations can be answered from the message, until they're over.
 - **Subscriptions:** everyone mailing you in bulk, with how much of each one's mail gets read, and
   Unsubscribe, Add to Summary and Delete all next to each. Sorted by who sends most, by how much is
   read, or by name, and for one account or all. Pick several to put them into the Summary at once
@@ -79,9 +88,9 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
 - **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
   going somewhere else. It warns; it never vouches.
-- **Message details:** "To: me ⌄" over a message opens everything about it, as Edison's header does
-  and with what Gmail's details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full
-  date and the one the sender wrote if it's far off, the account and where it is, the address it was
+- **Message details:** "To: me ⌄" over a message opens everything about it, with what Gmail's
+  details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full date and the one the
+  sender wrote if it's far off, the account and where it is, the address it was
   delivered to, mailed by and signed by, TLS, the SPF, DKIM and DMARC results the receiving server
   wrote down, the mailing list with Unsubscribe, whether you've written to the sender, and the
   warnings. Every address can be selected, copied, written to, searched for, muted, let straight
@@ -107,12 +116,16 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
-- **Faces:** a sender's photo, or their company's logo, where one exists, as in Edison Mail, and
-  coloured initials otherwise. Your own accounts show your photo in the sidebar and Settings, from
-  Gravatar or one you choose there. Who is asked about whom, and when, is under
+- **Faces:** a sender's photo, or their company's logo, where one exists, and coloured initials
+  otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or one you
+  choose there. Who is asked about whom, and when, is under
   [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
-- **Safe with hostile mail:** no scripts, and no remote images until you ask. See
-  [docs/design.md](docs/design.md).
+- **Safe with hostile mail:** no scripts, and no remote pictures until you ask: Show images for one
+  message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
+  way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
+  signature from their domain) say is theirs; anything else with their address on it asks again.
+  A picture that can't be fetched is a plain block, with a count and Try again. See
+  [docs/design.md](docs/design.md#hostile-mail).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
 - **Wide mail fits the pane:** a newsletter made for a set width, 600 pixels say, is drawn smaller to
@@ -121,27 +134,73 @@ under [Where it differs from Edison Mail](#where-it-differs-from-edison-mail).
   pane scrolls sideways by itself, so the words round it stay readable.
 - **Comfortable to live in:** four quick actions on a row under the pointer and a short and a long swipe
   each way (all of them yours to choose in Settings, Customize Actions), a bar of actions under a
-  selection (its ⋮ labels or files every thread picked, pins them, or moves them to Other or Focused),
-  drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
+  selection (its ⋮ labels or files every thread picked, pins them, marks them important on Gmail,
+  and with the inbox split moves them to Other or Focused), drag to the sidebar, right-click menus (on the sidebar: mark all as read, and Edit Menu to
   choose which of its entries show and in what order, each account's own labels or folders among them,
   with New Label or New Folder to make one on the server), recipient chips, the message beside the
   list or under it (each split dragged to the size you like, and kept) or one thing at a time, one to
   four lines of preview, and Settings you can search.
 - **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
   in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
-  The tray shows what's unread, and closing the window keeps it running. Spell check knows your
-  language, plus English and Vietnamese.
+  The tray shows what's unread, closing the window keeps it running there, and it can start at login
+  (both in Settings, General). Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says. In the dark, mail made for a white page is darkened
   to match: light backgrounds go dark and dark text light, each keeping its colour, while pictures,
   anything drawn on a picture, and mail that's dark already stay as sent. Each message has Show
   original colours, and Settings, Appearance can turn it off.
-- **xrnhub:** optional, and gets counts only.
+- **xrnhub:** optional (Settings, xrnhub). The hub is told how much is waiting, when the next batch
+  is, and when one lands, as counts and times over https, and nothing about the mail itself.
+
+## Pictures
+
+All of these are the app on a throwaway profile against the tests' fake Gmail, with made-up people
+and mail.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/all-inboxes.png" alt="All Inboxes with two accounts"><br>
+<em>Two accounts in All Inboxes, each with its colour bar, the Summary that landed on top, and a
+forged sender's warning.</em></td>
+<td width="50%"><img src="docs/screenshots/compose.png" alt="Replying in the composer"><br>
+<em>A reply: recipients, the address it goes from, the signature and the quote on show before
+it's sent.</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/details.png" alt="A message's details"><br>
+<em>"To: me ⌄" opens a message's details: who, where it was delivered, TLS, and SPF, DKIM and DMARC
+as the receiving server wrote them.</em></td>
+<td><img src="docs/screenshots/dark.png" alt="Dark mode with a darkened newsletter"><br>
+<em>Dark, with a newsletter made for a white page darkened to match, and Show original colours.</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/subscriptions.png" alt="Subscriptions"><br>
+<em>Subscriptions: each bulk sender, how much of their mail is read, and Unsubscribe, Add to Summary
+and Delete all.</em></td>
+<td><img src="docs/screenshots/summary.png" alt="A Subscription Summary that has landed"><br>
+<em>A Summary that has landed: chosen senders' mail together, once a day.</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/settings-batches.png" alt="Settings, Batches"><br>
+<em>Settings, Batches: as it arrives or in batches, the delivery times, who comes straight through,
+and how many early deliveries a day.</em></td>
+<td><img src="docs/screenshots/assistant.png" alt="The Assistant's Packages list"><br>
+<em>The Assistant found a parcel and its tracking number, on this laptop.</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/welcome.png" alt="Adding the first account"><br>
+<em>Adding the first account.</em></td>
+<td></td>
+</tr>
+</table>
 
 ## Using it
 
 Enter your address and xrnmail works out the service, from the address or the domain's public mail
 records. Reading and sending are both checked before anything is kept, and passwords go in your system
-keyring.
+keyring: the Secret Service (GNOME Keyring or KeePassXC) anywhere but KDE, which has KWallet. On
+Hyprland, Sway and other desktops Electron doesn't recognise it asks for the Secret Service itself.
+With no keyring at all, adding an account is refused rather than keeping the password with a key
+every copy of Chromium shares.
 
 - **Gmail, Yahoo, iCloud, AOL, Fastmail, Zoho:** an app password from the service. The button in the form
   goes to the right page.
@@ -152,10 +211,10 @@ keyring.
   ID into xrnmail. You then sign in on Microsoft's own page with a code.
 - **Anything else:** your password and the server's details. Only encrypted connections are accepted.
 
-Press `?` for the keys. The set is Edison Mail's, with Command read as Ctrl: `c` or `d` writes, `r` or
-Ctrl+R replies, Backspace takes a thread out of view (archives it), Shift+Backspace deletes, Ctrl+S
-flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
-archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets Edison offers: Gmail's
+Press `?` for the keys. The first set is the reference app's (Settings, Shortcuts names it), with
+Command read as Ctrl: `c` or `d` writes, `r` or Ctrl+R replies, Backspace takes a thread out of view
+(archives it), Shift+Backspace deletes, Ctrl+S flags, Shift+I marks read. The keys xrnmail had before still work beside them (`j` and `k` move, `e`
+archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets that app offers: Gmail's
 (xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
 maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
 new key. A key another action has is offered to take over, and a change can go back to the set's own.
@@ -177,6 +236,10 @@ to wait for.
 - **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
   sleep, and when the window comes back after a minute away. A watch that drops is opened again
   after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
+- **A server gone quiet** is given up on rather than waited for: 30 seconds to connect, 20 to be
+  greeted, and a minute with a command out and nothing heard. The status line says it couldn't reach
+  the service, and the next sync goes as usual. A change that was on its way then waits and goes
+  again; it isn't counted as refused.
 - **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
   go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
   project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,
@@ -209,7 +272,8 @@ When: as new mail from someone arrives here, or when they're first named in a li
 inbox, search, Subscriptions and the rest). Never when a message is opened, so nobody learns when
 you read anything. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
 and a lookup that failed is tried again after 6 hours, so each person and company is asked about
-rarely. Every request is https to a public name, with no cookies or redirects, 8 seconds and 200 KB
+rarely. Every request is https to a public name (never one that resolves to this laptop or its local
+network, so a logo record can't point at your router), with no cookies or redirects, 8 seconds and 200 KB
 at most (64 KB for SVG), and what comes back has to be a picture by its own bytes. PNG and JPEG are
 drawn again, smaller, by Chromium's decoder in the main process, so nothing but pixels is kept;
 an SVG is only ever shown as an `<img>`, where it can neither run nor fetch anything. Pictures in
@@ -224,6 +288,11 @@ in 2019. These accounts sign in with app passwords, so your photo is your Gravat
 in Settings, Accounts, which stays on this laptop and is sent nowhere.
 
 ## Where it differs from Edison Mail
+
+xrnmail looks and works like Edison Mail for Mac, in its own code and with none of its artwork: the
+same window, the same rows and quick actions, the same sections in Settings and the same keys. Edison
+has withdrawn its desktop app, so the reference is the pictures in its Mac help pages, from late
+2023.
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
 which is how Edison always works, is one switch away), the delivery line
@@ -240,8 +309,9 @@ Not here, though Edison has them:
   repeat the inbox's count. Today has its count, of what came today and is unread.
 - A message's own ⋮ has Reply all, Forward and View original here. Edison's also has Pin Thread, Trash, Mark as
   Unread, Add sender to Summary, Mute notifications and Move to Other, which here are over the thread,
-  under ⋮ More, or in "To: me ⌄". The ⋮ on the bar under a selection has Labels or Move to, Mark as
-  important or not important (on Gmail), Pin and Move to Other here.
+  under ⋮ More, or in "To: me ⌄" (Move to Other only while the inbox is split). The ⋮ on the bar
+  under a selection has Labels or Move to, Mark as important or not important (on Gmail), Pin, and
+  with the inbox split Move to Other here.
 
 Done differently:
 
@@ -317,8 +387,8 @@ Done differently:
 
 ## What it doesn't do yet
 
-- The tests use fake servers, and it has hardly been used with real accounts yet. Expect surprises from
-  real ones, Outlook's sign-in most of all.
+- It's used every day with Gmail. Outlook, Yahoo, iCloud and the rest have been tried only against
+  the tests' fake servers, so expect surprises from real ones, Outlook's sign-in most of all.
 - No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
@@ -326,21 +396,69 @@ Done differently:
 - Search covers the mail kept on this laptop (90 days by default, up to three years in Settings).
 - A scheduled message goes out when the app is running at or after its time. Closing the window keeps
   it running; Quit doesn't, though anything only waiting out Undo goes before it closes.
+- Draft sync has been checked on a real Gmail account between two copies of xrnmail, not yet with
+  drafts written in Gmail's own apps.
 
-## Building
+## How it's put together
+
+```
+src/main/       the main process: IMAP sync and watching (source.ts, sync.ts), changes (writer.ts),
+                sending (sender.ts), the store (store.ts, SQLite), batches, the Assistant, faces,
+                and service.ts, which holds everything the app does with the clock and network passed in
+src/preload/    the bridge: the page reaches the main process only through window.mail
+src/renderer/   the page (React): sidebar, list, reader, composer, settings
+src/shared/     what both sides use: types, keys, sidebar order, quoting, darkening, snooze times
+tests/          unit tests (Vitest), with a fake Gmail (IMAP) and SMTP server
+e2e/            UI tests (Playwright) that drive the built app against those fake servers
+```
+
+There's no server of xrnmail's own. Each account talks straight to its mail service: IMAP for
+reading (opened read-only, so syncing can't change anything), IMAP again for changes, on their own
+connection, and SMTP for sending. What you do is applied here at once and queued for the server,
+so it works offline and survives a restart. [docs/design.md](docs/design.md) explains each part and
+why it's built that way.
+
+The profile is `~/.config/xrnmail`: `mail.sqlite` (the mail kept here, the queue of changes, drafts,
+snoozes, pins and settings), `drafts` (files attached to drafts) and `faces`. It's readable only by
+you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're in the
+keyring.
+
+## Building and installing
+
+Linux x64, Node 24 (the Node inside Electron 44) and npm.
 
 ```sh
 npm install
-npm run build && npm start     # run it
-npm run app:install            # build an AppImage and add it to the launcher (Linux)
+npm run dev                    # run it with live reload
+npm run build && npm start     # run the built app
+npm run app:install            # build an AppImage and add it to the launcher
 ```
+
+`npm run app:install` (`scripts/install-linux-app.sh`) builds an AppImage into `dist/`, puts it at
+`~/Applications/xrnmail.AppImage`, and adds a launcher (`~/.local/share/applications/xrnmail.desktop`)
+that also takes `mailto:` links. Run it again to update: the new file is renamed over the old one, so
+a running copy carries on. The launcher and Start at login run the AppImage with
+`--appimage-extract-and-run`, from an unpacked copy in `~/.cache/xrnmail`, not from a FUSE mount
+that takes the app down with it if the mount goes, and not from `/tmp`, which is memory on many
+systems. Each install removes the unpacked copies of older builds that nothing runs from.
+
+Installed builds turn off Electron's run-as-Node, `NODE_OPTIONS` and inspector switches, quit if
+started with a debugging port, and ignore the `XRNMAIL_*` variables the tests use, so nothing else
+running as you can drive an app holding your mail passwords or point it at another server.
 
 ## Tests
 
 ```sh
-npm test            # logic, against fake IMAP and SMTP servers over real sockets
-npm run test:e2e    # the built app, including a hostile email
+npm test                           # logic, against fake IMAP and SMTP servers over real sockets
 npm run typecheck
+E2E_HEADLESS=1 npm run test:e2e    # builds, then drives the app, including a hostile email
 ```
 
-`SHOTS=<folder> npx playwright test shots` takes pictures of the app with made-up mail.
+About 500 unit tests and 110 UI tests. The UI tests run the built app on a throwaway profile
+against the fake Gmail, with links and file opens recorded rather than opened and no lookups on the
+network. `E2E_HEADLESS=1` keeps their windows off the desktop; without it a tiling window manager
+makes them too narrow for three panes. CI (`.github/workflows/ci.yml`) runs the type check, the unit
+tests and a build, and the UI tests under `xvfb-run`, on every pull request.
+
+`SHOTS=<folder> E2E_HEADLESS=1 npx playwright test shots` takes about a hundred pictures of the app
+with made-up mail, in light and dark, for looking it over.
