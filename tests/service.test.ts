@@ -296,7 +296,7 @@ describe('as it arrives', () => {
     const bulk = (subject: string, hour: number, minute: number): void => {
       gmail.add(rawMail({ subject, from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://shop.example/u>'] }), { arrived: new Date(at(hour, minute)) })
     }
-    service.saveProfile({ notifyFocusedOnly: true })
+    service.saveProfile({ focused: true, notifyFocusedOnly: true })
     live(true)
     bulk('Sale', 10, 30)
     clock = at(10, 31)
@@ -563,14 +563,14 @@ describe('xrnhub', () => {
 
   beforeEach(async () => {
     await signedIn()
-    await service.connectHub('https://hub.example/xrnhub/', 'sonn', 'hub-secret')
+    await service.connectHub('https://hub.example/xrnhub/', 'alex', 'hub-secret')
     post.mockClear()
   })
 
   it('checks the login first and never over plain http', async () => {
-    await expect(service.connectHub('http://hub.example', 'sonn', 'x')).rejects.toThrow('https')
+    await expect(service.connectHub('http://hub.example', 'alex', 'x')).rejects.toThrow('https')
     post.mockResolvedValueOnce({ ok: false })
-    await expect(service.connectHub('https://hub.example', 'sonn', 'bad')).rejects.toThrow("didn't accept")
+    await expect(service.connectHub('https://hub.example', 'alex', 'bad')).rejects.toThrow("didn't accept")
   })
 
   it('sends counts and times, and nothing about the mail', async () => {
@@ -1898,6 +1898,17 @@ describe('settings', () => {
     expect(service.settings().keyChanges).toEqual({ outlook: { archive: 'g' }, edison: { flag: 'Ctrl+G' } })
     store.setMeta('settings', JSON.stringify({ ...service.settings(), keys: 'vim', keyChanges: undefined })) // as an older version would have it
     expect(service.settings()).toMatchObject({ keys: 'edison', keyChanges: {} })
+  })
+
+  it('starts a new profile with each inbox in one piece, and keeps the choice a profile has saved', () => {
+    expect(service.settings().focused).toBe(false)
+    service.saveProfile({ focused: true })
+    expect(make().settings().focused).toBe(true)
+    service.saveProfile({ focused: false })
+    expect(make().settings().focused).toBe(false)
+    // Older versions started with the split on and saved it with every other setting.
+    store.setMeta('settings', JSON.stringify({ ...service.settings(), focused: true }))
+    expect(service.settings().focused).toBe(true)
   })
 
   it('keeps the order of a thread\'s messages, oldest first to start with, and nothing else', () => {

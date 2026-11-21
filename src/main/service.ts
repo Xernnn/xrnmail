@@ -67,7 +67,9 @@ const DEFAULT_SETTINGS: Settings = {
   quoteReplies: true,
   theme: 'system',
   darkMail: true,
-  focused: true,
+  /** Off until it's asked for: a guess at who's a person sends real mail to a side tab unseen. A
+   *  profile that saved it on keeps it on, since every save writes the whole of the settings. */
+  focused: false,
   alwaysFocused: [],
   alwaysOther: [],
   unsubscribed: [],
