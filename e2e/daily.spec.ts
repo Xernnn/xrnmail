@@ -1253,8 +1253,9 @@ test('Settings say what Tomorrow, the weekend and Next week mean, for snoozing a
   const tomorrow = page.getByRole('button', { name: /^Tomorrow/ })
   await expect(tomorrow).toContainText(`${dayName(day(1, 7))}`)
   await expect(tomorrow).toContainText('07:00')
-  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText(`${dayName(day(toTuesday, 8))}`)
-  await expect(page.getByRole('button', { name: /^Next week/ })).toContainText('08:00')
+  const nextWeek = page.getByRole('button', { name: /^Next week(?!end)/ }) // on a Saturday or a Sunday, Next weekend is there too
+  await expect(nextWeek).toContainText(`${dayName(day(toTuesday, 8))}`)
+  await expect(nextWeek).toContainText('08:00')
   await tomorrow.click()
   await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
   await expect.poll(() => page.evaluate(async () => (await window.mail.list({ kind: 'snoozed' }))[0]?.snoozedUntil)).toBe(day(1, 7).getTime())
