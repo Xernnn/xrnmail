@@ -563,14 +563,14 @@ describe('xrnhub', () => {
 
   beforeEach(async () => {
     await signedIn()
-    await service.connectHub('https://hub.example/xrnhub/', 'sonn', 'hub-secret')
+    await service.connectHub('https://hub.example/xrnhub/', 'alex', 'hub-secret')
     post.mockClear()
   })
 
   it('checks the login first and never over plain http', async () => {
-    await expect(service.connectHub('http://hub.example', 'sonn', 'x')).rejects.toThrow('https')
+    await expect(service.connectHub('http://hub.example', 'alex', 'x')).rejects.toThrow('https')
     post.mockResolvedValueOnce({ ok: false })
-    await expect(service.connectHub('https://hub.example', 'sonn', 'bad')).rejects.toThrow("didn't accept")
+    await expect(service.connectHub('https://hub.example', 'alex', 'bad')).rejects.toThrow("didn't accept")
   })
 
   it('sends counts and times, and nothing about the mail', async () => {

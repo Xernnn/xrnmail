@@ -27,9 +27,9 @@ describe('isTime', () => {
 
 describe('isVip', () => {
   it('matches an address, any case', () => expect(isVip('Boss@Work.com', ['boss@work.com'])).toBe(true))
-  it('matches a whole domain', () => expect(isVip('a@uts.edu.au', ['@uts.edu.au'])).toBe(true))
-  it('a domain does not cover its subdomains', () => expect(isVip('a@student.uts.edu.au', ['@uts.edu.au'])).toBe(false))
-  it('is not fooled by a lookalike domain', () => expect(isVip('a@evil-uts.edu.au', ['@uts.edu.au'])).toBe(false))
+  it('matches a whole domain', () => expect(isVip('a@example.edu', ['@example.edu'])).toBe(true))
+  it('a domain does not cover its subdomains', () => expect(isVip('a@dept.example.edu', ['@example.edu'])).toBe(false))
+  it('is not fooled by a lookalike domain', () => expect(isVip('a@evil-example.edu', ['@example.edu'])).toBe(false))
   it('ignores blanks', () => expect(isVip('a@b.c', ['', ' '])).toBe(false))
   it('an empty sender never passes', () => expect(isVip('', ['@'])).toBe(false))
 })
