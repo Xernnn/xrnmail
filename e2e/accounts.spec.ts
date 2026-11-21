@@ -113,6 +113,7 @@ test('Focused and Other, and keeping a sender on one side', async () => {
   gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Weekly deals', from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(3) })
   await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: true }))
   await expect(page.getByText('Lunch?')).toBeVisible()
   await expect(page.getByText('Weekly deals')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /^Other/ })).toContainText('1')
@@ -124,13 +125,12 @@ test('Focused and Other, and keeping a sender on one side', async () => {
   await expect(page.getByText('Weekly deals').first()).toBeVisible()
 })
 
-test('with the inbox in one piece, all its mail is there and nothing speaks of Other', async () => {
+test('a new profile has the inbox in one piece: all its mail is there and nothing speaks of Other', async () => {
   run = await launch()
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Weekly deals', from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(3) })
   await signIn(run)
-  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
   await page.getByRole('button', { name: /^Inbox/ }).click()
   const list = page.locator('.threads')
   await expect(list.getByText('Lunch?')).toBeVisible()
@@ -148,6 +148,7 @@ test('All Inboxes is every inbox, whole: Focused and Other are each account\'s o
   gmail.add(rawMail({ subject: 'Lunch?', from: 'Bo <bo@example.com>' }), { arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Weekly deals', from: 'Deals <deals@shop.example>', headers: ['List-Unsubscribe: <https://list.example/u>'] }), { arrived: earlier(2) })
   await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: true }))
   await page.evaluate((secret) => window.mail.addAccount({ email: 'second@example.com', secret, provider: 'gmail' }), gmail.secret)
   const side = page.locator('.sidebar')
   const list = page.locator('.threads')

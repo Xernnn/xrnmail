@@ -192,8 +192,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.getByLabel('Search').fill('zzzz')
     await page.getByText('Nothing found').waitFor()
     await page.getByLabel('Search').fill('')
+    await page.evaluate(() => window.mail.saveProfile({ focused: true })) // off at first
     await page.getByRole('button', { name: /^Other/ }).click()
     await page.screenshot({ path: `${folder}/${colorScheme}-other.png` })
+    await page.evaluate(() => window.mail.saveProfile({ focused: false }))
     await page.getByRole('button', { name: 'Subscriptions' }).click()
     await page.getByText('Nothing here').or(page.locator('.subscription').first()).or(page.getByText('No subscriptions')).first().waitFor()
     await new Promise((resolve) => setTimeout(resolve, 600))
@@ -228,7 +230,6 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await syncAndSettle(page)
     await later(run, 180_000)
     await page.getByRole('button', { name: /^Inbox/ }).first().click()
-    await page.getByRole('button', { name: 'Focused', exact: true }).click()
     await page.getByRole('button', { name: /Your Summary/ }).waitFor({ timeout: 15_000 })
     await page.screenshot({ path: `${folder}/${colorScheme}-inbox-summary.png` })
     await page.getByRole('button', { name: /Your Summary/ }).click()

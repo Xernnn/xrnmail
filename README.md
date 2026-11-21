@@ -69,10 +69,11 @@ kept on the laptop.
 - **Recently Seen:** the threads you've opened, the last one first, wherever they are now: archived
   ones stay, and what's in Trash or Spam waits there. It keeps the last hundred, on this laptop only,
   and its right-click menu clears it. Reading from the list itself leaves its order as it is.
-- **Focused and Other:** a switch in Settings, General, on at first. On, each account's inbox has
-  people on one side and everything sent to everyone on the other, and a sender put on a side stays
-  there. Off, every inbox is one list, and nothing in the app mentions the two sides. All Inboxes is
-  every account's inbox whole either way, and its count is all of it.
+- **Focused and Other:** a switch in Settings, General, off at first (a profile that saved it on
+  keeps it on). On, each account's inbox has people on one side and everything sent to everyone on
+  the other, and a sender put on a side stays there. Off, every inbox is one list, and nothing in the
+  app mentions the two sides. All Inboxes is every account's inbox whole either way, and its count is
+  all of it.
 - **Assistant:** packages with their tracking, travel, bills and receipts, and events, found in your
   mail on this laptop. Calendar invitations can be answered from the message, until they're over.
 - **Subscriptions:** everyone mailing you in bulk, with how much of each one's mail gets read, and
@@ -338,8 +339,9 @@ Done differently:
   or folder goes to the server there and then, so it needs a connection, where other changes wait.
 - A changed key is one key for its action, in place of all the set's keys for it.
 - Edison's Focused Inbox is one switch for everything, and in its pictures All Inboxes is split too,
-  with All Other beside it. Here the switch (Settings, General) is the same one, but it splits only
-  each account's own inbox: All Inboxes shows every account's mail together, Other included.
+  with All Other beside it. Here the switch (Settings, General) is the same one, off until you turn
+  it on, and it splits only each account's own inbox: All Inboxes shows every account's mail
+  together, Other included.
 - Edison finds faces on servers of its own. Here they come from Gravatar, BIMI and DuckDuckGo's icons,
   asked from this laptop, and a sender with a warning keeps their initials.
 - A draft from your service's Drafts, written on the phone say, brings its words in as plain text and

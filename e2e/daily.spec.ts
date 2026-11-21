@@ -694,6 +694,7 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   gmail.add(rawMail({ subject: 'To several', from: 'Mai Tran <mai@example.com>', to: `${ME}, Linh Pham <linh@example.com>` }), { arrived: earlier(4) })
   gmail.add(rawMail({ subject: 'Offers', from: 'Shop <hi@shop.example>', headers: ['List-Unsubscribe: <mailto:leave@shop.example>'] }), { arrived: earlier(3) })
   await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: true }))
   await page.locator('.threads').getByText('Plain').click()
   const tools = page.getByRole('toolbar', { name: 'Thread' })
   const labels = await tools.getByRole('button').evaluateAll((buttons) => buttons.map((b) => b.getAttribute('aria-label')))
@@ -1103,6 +1104,7 @@ test('the ⋮ on the bar under a selection labels, pins and moves to Other every
   gmail.add(rawMail({ subject: 'Beta', from: 'Bob <bob@example.com>' }), { arrived: earlier(4) })
   gmail.add(rawMail({ subject: 'Gamma', from: 'Cy <cy@example.com>' }), { arrived: earlier(3) })
   await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: true }))
   const bar = page.getByRole('toolbar', { name: 'Selected threads' })
   const list = page.locator('.threads')
   const pickTwo = async (): Promise<void> => {
@@ -1625,6 +1627,7 @@ test('muting a sender from the reader, and the muted senders in Settings', async
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Chatter', from: 'Ada Lovelace <ada@example.com>' }), { arrived: earlier(5) })
   await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: true }))
   await page.locator('.threads').getByText('Chatter').click()
   await page.getByRole('button', { name: 'More' }).click()
   await page.getByRole('button', { name: 'Mute notifications', exact: true }).click()
@@ -1851,7 +1854,6 @@ test('unsubscribing with one click opens nothing', async () => {
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Weekly deals', headers: ['List-Unsubscribe: <https://list.example.com/u/1>'] }), { arrived: earlier(5) })
   await signIn(run)
-  await page.getByRole('button', { name: /^Other/ }).click()
   await page.getByText('Weekly deals').click()
   await page.getByRole('button', { name: 'Unsubscribe' }).click()
   await expect.poll(run.opened).toEqual(['https://list.example.com/u/1'])
