@@ -462,3 +462,11 @@ tests and a build, and the UI tests under `xvfb-run`, on every pull request.
 
 `SHOTS=<folder> E2E_HEADLESS=1 npx playwright test shots` takes about a hundred pictures of the app
 with made-up mail, in light and dark, for looking it over.
+
+## Licence
+
+[MIT](LICENSE) © Xernnn.
+
+The app's typeface is MiSans by Xiaomi, used under the MiSans font licence (free for commercial use
+when the software notes that it uses MiSans). The font files, in `src/renderer/src/fonts/`, are not
+covered by this repository's licence. https://hyperos.mi.com/font/en/
