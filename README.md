@@ -21,7 +21,7 @@ adds to it or leaves out, is under [Where it differs](#where-it-differs-from-edi
 *In batches: the next delivery and what's waiting sit over the list, and Deliver now lets it in early.
 More pictures are under [Pictures](#pictures).*
 
-Version 0.1.0, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
+Version 0.1.1, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
 [imapflow](https://imapflow.com) for IMAP, nodemailer for SMTP and SQLite (`node:sqlite`) for the mail
 kept on the laptop.
 
