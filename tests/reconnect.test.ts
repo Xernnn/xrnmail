@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
-import { MailService, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
+import { describeFailure, MailService, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
 import { ImapWriter } from '@main/writer'
@@ -311,5 +311,42 @@ describe('anything that gets through', () => {
     service.watchAll() // the inbox opens, so the server is there, but All Mail is still missing
     await soon(() => expect(gmail.idling).toBe(1))
     expect(error()).toBe(said)
+  })
+})
+
+describe('a server too busy to sign in just now', () => {
+  it('is said as not reached, and tried again, not as a refused password', () => {
+    const refused = 'Gmail refused this password.'
+    const busy = "Couldn't reach Gmail."
+    const login = (serverResponseCode?: string, responseText = ''): unknown => ({ authenticationFailed: true, responseStatus: 'NO', serverResponseCode, responseText })
+    for (const code of ['UNAVAILABLE', 'INUSE', 'LIMIT']) expect(describeFailure(login(code), 'Gmail')).toBe(busy)
+    expect(describeFailure(login('ALERT', 'Too many simultaneous connections. (Failure)'), 'Gmail')).toBe(busy)
+    for (const code of ['AUTHENTICATIONFAILED', 'AUTHORIZATIONFAILED', 'EXPIRED', undefined]) expect(describeFailure(login(code), 'Gmail')).toBe(refused)
+    expect(describeFailure(login('ALERT', 'Application-specific password required'), 'Gmail')).toBe(refused)
+  })
+
+  it('a pass turned away at LOGIN with [UNAVAILABLE] gets through on its next try', async () => {
+    fakeTimers()
+    gmail.loginAnswer = 'NO [UNAVAILABLE] Temporary System Problem. Try again later. (Failure)'
+    await service.syncAll()
+    expect(error()).toBe("Couldn't reach Gmail.")
+    gmail.loginAnswer = null
+    await vi.advanceTimersByTimeAsync(5_000)
+    await eventually(() => expect(error()).toBeNull())
+  })
+
+  it('a message turned away at AUTH with a 4xx waits for a connection, and goes', async () => {
+    const draft = await service.startDraft({ kind: 'new' })
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Hi', html: '<p>Hello</p>', text: 'Hello', quote: null })
+    service.send(draft.id)
+    smtp.authAnswer = '454 4.7.0 Too many login attempts, please try again later.'
+    clock += 11_000
+    await service.tick()
+    expect(service.drafts()[0]).toMatchObject({ state: 'queued', error: 'Waiting for a connection.' })
+    expect(smtp.received).toBe(0)
+    smtp.authAnswer = null
+    clock += 61_000
+    await service.tick()
+    expect(smtp.sent).toHaveLength(1)
   })
 })

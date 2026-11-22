@@ -86,6 +86,8 @@ export class FakeGmail {
   allMail = '[Gmail]/All Mail'
   hasAllMail = true
   dropNextConnection = false
+  /** Answers LOGIN with this, a busy server's NO say, whatever the password. */
+  loginAnswer: string | null = null
   /** Answer NO to anything that would change the mailbox. */
   refuseWrites = false
   /** Take a connection and say nothing on it, not even hello, as a server that has stopped answering. */
@@ -350,6 +352,7 @@ export class FakeGmail {
         socket.write('* ID ("name" "GImap")\r\n')
         return ok()
       case 'LOGIN':
+        if (this.loginAnswer) return void socket.write(`${tag} ${this.loginAnswer}\r\n`)
         if (!this.options.token && rest.includes(this.secret)) return ok('LOGIN completed')
         return void socket.write(`${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`)
       case 'NAMESPACE':

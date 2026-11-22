@@ -197,11 +197,19 @@ export function cleanBatch(batch: BatchSettings): BatchSettings {
 /** What's said while a service can't be reached, which a pass that gets through takes away. */
 const unreachable = (service: string): string => `Couldn't reach ${service}.`
 
-/** Fixed words: what a server says is never shown, and can't carry anything back to the page. */
+/** What a server turns a sign-in away with when it's busy, not when the password is wrong: RFC 5530's
+ *  codes for that, and Gmail's words for too many connections at once, which come as an [ALERT]. */
+const BUSY_CODES = new Set(['UNAVAILABLE', 'INUSE', 'LIMIT', 'SERVERBUG'])
+const BUSY_WORDS = /too many (simultaneous )?connections|try again later/i
+
+/** Fixed words: what a server says is never shown, and can't carry anything back to the page. It's
+ *  only read for whether a sign-in turned away was busy, which is waited out like a lost connection
+ *  and tried again: told "refused this password", people changed a password that was right. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
-  const e = error as { authenticationFailed?: boolean; message?: string }
+  const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
-  if (e?.authenticationFailed) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
+  if (e?.authenticationFailed && !busy) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)

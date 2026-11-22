@@ -87,7 +87,10 @@ export class SmtpSender implements MailSender {
     try {
       await this.transport.verify()
     } catch (e) {
-      if ((e as { code?: string }).code === 'EAUTH') throw e
+      // A 4xx is SMTP for "not now": too many sign-ins, say. It's waited out, not taken for a
+      // wrong password.
+      const { code, responseCode = 0 } = e as { code?: string; responseCode?: number }
+      if (code === 'EAUTH' && !(responseCode >= 400 && responseCode < 500)) throw e
       throw new NeverLeft('no connection')
     }
   }

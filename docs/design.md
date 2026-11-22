@@ -195,6 +195,10 @@ and after that the three-minute passes carry on as usual. Waking from sleep is o
 the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the quick tries, "Couldn't
 reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
 that gets through ends them. A refused password isn't tried again this way: asking again won't help.
+A sign-in turned away because the server is busy isn't a refused password, though imapflow marks
+any NO to LOGIN as one: RFC 5530's `[UNAVAILABLE]`, `[INUSE]`, `[LIMIT]` and `[SERVERBUG]`, and
+Gmail's "Too many simultaneous connections", are waited out like a lost connection, and so is an
+SMTP sign-in answered with a 4xx. Only that is read of what the server said; none of it is shown.
 Anything else that gets through to the server (a change, a draft going up, a copy filed in Sent, a
 message sent, a watch opening) takes "Couldn't reach" away too; any other error waits for a pass.
 
