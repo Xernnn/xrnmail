@@ -173,8 +173,9 @@ export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number; so
 /** Waits on the inbox for something to happen there. It reads nothing and can change nothing. */
 export interface MailWatcher {
   /** Calls [changed] whenever the server says mail landed in the inbox, left it, or had its flags
-   *  changed (read or flagged elsewhere), and resolves when the connection ends. */
-  watch(changed: () => void): Promise<void>
+   *  changed (read or flagged elsewhere), and resolves when the connection ends. [opened] is told
+   *  once the inbox is open and being watched. */
+  watch(changed: () => void, opened?: () => void): Promise<void>
   close(): Promise<void>
 }
 
@@ -195,7 +196,7 @@ export class ImapWatcher implements MailWatcher {
    *  flagged or unflagged. Each only says to look; the sync does the reading. IDLE is broken and
    *  started again every few minutes (`maxIdleTime`), and imapflow starts it again by itself after
    *  anything else on this connection, so it's asked for once. */
-  async watch(changed: () => void): Promise<void> {
+  async watch(changed: () => void, opened?: () => void): Promise<void> {
     const ended = new Promise<void>((resolve) => this.client.once('close', () => resolve()))
     try {
       await this.client.connect()
@@ -207,6 +208,7 @@ export class ImapWatcher implements MailWatcher {
     }
     for (const event of ['exists', 'expunge', 'flags']) this.client.on(event, () => changed())
     void this.client.idle().catch(() => undefined)
+    opened?.()
     await ended
   }
 

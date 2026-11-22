@@ -235,9 +235,11 @@ so there's still one way into the store and the batches apply as usual. It waits
 been quiet for 750 ms first, so a burst of news is one sync. If the sync is already running it's asked
 to go again afterwards, because what changed may have missed it. The watch has its own connection, so
 a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
-it again, as it does after anything else on that connection. A lost connection is retried after a
-minute, and the three-minute passes carry on regardless, so watching can fail without anything being
-missed. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
+it again, as it does after anything else on that connection. A lost connection is retried after 2
+seconds, then 10 and 30, then every minute, and the three-minute passes carry on regardless, so
+watching can fail without anything being missed. A watch that opens again after being lost asks for
+a sync at once, since IDLE only tells of what happens from then on, and takes away "Couldn't reach",
+since the server has just answered. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
 left open, every minute's try added one, until the service refused the account for having too many.
 
 Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have

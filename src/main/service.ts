@@ -247,8 +247,9 @@ type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progr
 
 /** How many messages have to be coming before it's worth saying so. */
 const WORTH_SHOWING = 40
-/** How long a lost watch on the inbox waits before trying again. Syncs carry on regardless. */
-const WATCH_RETRY_MS = 60_000
+/** How long a lost watch on the inbox waits before trying again, longer each time it's lost again
+ *  without having opened, and then the last each time. Syncs carry on regardless. */
+const WATCH_RETRY_MS = [2_000, 10_000, 30_000, 60_000]
 /** How long an account waits to try again after a pass that couldn't reach its server, longer each
  *  time it fails again: the network is often back within seconds of waking or of a VPN reconnecting.
  *  After the last, the three-minute passes carry on as usual. */
@@ -288,7 +289,8 @@ export class MailService {
    *  entry is taken out when it ends: a newer one may have it by then. */
   private watchers = new Map<string, Watch>()
   private watching = false
-  private rewatch: NodeJS.Timeout | null = null
+  /** Accounts whose watch was lost: how many times in a row, and the try waiting to replace it. */
+  private rewatches = new Map<string, { losses: number; timer: NodeJS.Timeout | null }>()
   /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
   /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
@@ -576,6 +578,9 @@ export class MailService {
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
     this.stopRetrying(email)
     this.deps.secrets.remove(`account:${email}`)
     this.store.deleteMeta(`config:${email}`)
@@ -626,6 +631,15 @@ export class MailService {
     retry.timer.unref?.()
   }
 
+  /** The server answered, so saying it can't be reached is out of date. Anything else it said stays
+   *  until a pass shows otherwise. */
+  private reached(email: string): void {
+    const status = this.status.get(email)
+    if (!status?.error || status.error !== unreachable(this.serviceName(email))) return
+    status.error = null
+    this.deps.changed()
+  }
+
   private stopRetrying(email: string): void {
     const retry = this.retries.get(email)
     if (retry?.timer) clearTimeout(retry.timer)
@@ -659,8 +673,8 @@ export class MailService {
 
   stopWatching(): void {
     this.watching = false
-    if (this.rewatch) clearTimeout(this.rewatch)
-    this.rewatch = null
+    for (const { timer } of this.rewatches.values()) if (timer) clearTimeout(timer)
+    this.rewatches.clear()
     for (const watch of this.watchers.values()) this.endWatch(watch)
     this.watchers.clear()
   }
@@ -693,7 +707,15 @@ export class MailService {
       const login = await this.login(email)
       if (mine.stopped || !this.emails().includes(email)) return
       mine.watcher = open(this.config(email), login)
-      await mine.watcher.watch(changed)
+      await mine.watcher.watch(changed, () => {
+        if (mine.stopped) return
+        // Back after being lost: the server only tells of what happens from now on, so what landed
+        // meanwhile is looked for now rather than at the next pass.
+        const again = this.rewatches.has(email)
+        this.rewatches.delete(email)
+        this.reached(email)
+        if (again) changed()
+      })
     }
     const lost = (): void => {
       // A watch that failed partway, signed in but unable to open the inbox say, still holds its
@@ -702,12 +724,17 @@ export class MailService {
       if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email) || this.rewatch) return
-      this.rewatch = setTimeout(() => {
-        this.rewatch = null
-        this.emails().forEach((each) => this.watch(each))
-      }, WATCH_RETRY_MS)
-      this.rewatch.unref?.()
+      if (!this.watching || !this.emails().includes(email)) return
+      const rewatch = this.rewatches.get(email) ?? { losses: 0, timer: null }
+      this.rewatches.set(email, rewatch)
+      if (rewatch.timer) return
+      const wait = WATCH_RETRY_MS[Math.min(rewatch.losses, WATCH_RETRY_MS.length - 1)]
+      rewatch.losses++
+      rewatch.timer = setTimeout(() => {
+        rewatch.timer = null
+        if (this.emails().includes(email)) this.watch(email)
+      }, wait)
+      rewatch.timer.unref?.()
     }
     void run().catch(() => undefined).finally(lost)
   }

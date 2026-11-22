@@ -6,11 +6,11 @@ import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
-import { MailService, type ServiceDeps } from '@main/service'
+import { MailService, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
 import { ImapWriter } from '@main/writer'
-import { FakeGmail } from './fake-gmail'
+import { FakeGmail, rawMail } from './fake-gmail'
 import { FakeSmtp } from './fake-smtp'
 
 /** Getting back through: after waking, a network change or a server's blip, the account's error
@@ -175,5 +175,69 @@ describe('a sync asked for while one is running', () => {
     await first
     await eventually(() => expect(service.accounts()[0]?.syncing).toBe(false))
     expect(passes() - before).toBe(2) // the one held, then one more
+  })
+})
+
+describe('a watch on the inbox that drops', () => {
+  it('is back within seconds, looks for what landed while it was down, and clears the error', async () => {
+    fakeTimers()
+    let watches = 0
+    service = make({
+      openWatcher: () => ({
+        watch: async (_changed, opened) => {
+          if (++watches === 1) return // lost as soon as it began, as when the VPN reconnects
+          opened?.()
+          await new Promise(() => undefined)
+        },
+        close: async () => undefined
+      })
+    })
+    gmail.dropNextConnection = true
+    await service.syncAll()
+    expect(error()).toBe("Couldn't reach Gmail.")
+    service.watchAll()
+    await eventually(() => expect(watches).toBe(1))
+    gmail.add(rawMail({ subject: 'While it was down' }), { arrived: new Date() })
+    const stored = store.uids(ME, '@all').size
+    const before = passes()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await eventually(() => expect(watches).toBe(2))
+    expect(error()).toBeNull() // the server answered
+    await vi.advanceTimersByTimeAsync(WATCH_SETTLE_MS)
+    await eventually(() => expect(store.uids(ME, '@all').size).toBe(stored + 1))
+    await eventually(() => expect(service.accounts()[0]?.syncing).toBe(false))
+    expect(passes() - before).toBe(1)
+  })
+
+  it('tries again after 2, 10 and 30 seconds, then every minute, while it can\'t get through', async () => {
+    fakeTimers()
+    let watches = 0
+    service = make({ openWatcher: () => ({ watch: async () => void watches++, close: async () => undefined }) })
+    service.watchAll()
+    await eventually(() => expect(watches).toBe(1))
+    for (const wait of [2_000, 10_000, 30_000, 60_000, 60_000]) {
+      const before = watches
+      await vi.advanceTimersByTimeAsync(wait - 500)
+      expect(watches).toBe(before)
+      await vi.advanceTimersByTimeAsync(500)
+      await eventually(() => expect(watches).toBe(before + 1))
+    }
+  })
+
+  it('opened at the start, looks for nothing more than the sync already running', async () => {
+    fakeTimers()
+    service = make({
+      openWatcher: () => ({
+        watch: async (_changed, opened) => {
+          opened?.()
+          await new Promise(() => undefined)
+        },
+        close: async () => undefined
+      })
+    })
+    const before = passes()
+    service.watchAll()
+    await vi.advanceTimersByTimeAsync(WATCH_SETTLE_MS + 100)
+    expect(passes() - before).toBe(0)
   })
 })
