@@ -195,6 +195,8 @@ and after that the three-minute passes carry on as usual. Waking from sleep is o
 the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the quick tries, "Couldn't
 reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
 that gets through ends them. A refused password isn't tried again this way: asking again won't help.
+Anything else that gets through to the server (a change, a draft going up, a copy filed in Sent, a
+message sent, a watch opening) takes "Couldn't reach" away too; any other error waits for a pass.
 
 A sync asked for while one is running (waking, the window coming back, F5, the button) goes once
 more when that one ends, however many times it was asked. The one running may be stuck on a

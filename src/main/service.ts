@@ -953,6 +953,7 @@ export class MailService {
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const item of due) await this.perform(writer, email, item)
     } catch (e) {
       // Not reached, so nothing is lost: it all goes again later, in the same order.
@@ -1437,6 +1438,7 @@ export class MailService {
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const copy of copies) await this.deleteCopy(writer, email, copy)
       for (const { id } of due) await this.pushDraft(writer, email, id)
       this.draftsRetryAt.delete(email)
@@ -1734,6 +1736,7 @@ export class MailService {
     const sender = this.deps.openSender(config, login)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
+      this.reached(draft.account)
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
@@ -1761,6 +1764,7 @@ export class MailService {
       try {
         writer = this.deps.openWriter(this.config(email), await this.login(email))
         await writer.connect()
+        this.reached(email)
         await writer.fileSent(raw, messageId)
       } catch {
         this.note(email, 'Sent, but no copy could be kept in Sent.')

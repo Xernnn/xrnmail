@@ -17,6 +17,20 @@ import { FakeSmtp } from './fake-smtp'
  *  goes as soon as the server can be reached again, not at the next three-minute pass. */
 
 const eventually = (check: () => void): Promise<void> => vi.waitFor(check, { timeout: 15_000, interval: 15 })
+/** Kept before any test fakes the timers. */
+const realTimeout = setTimeout
+/** As [eventually], without moving faked timers on: for waiting on the network, not on a timer. */
+async function soon(check: () => void, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms
+  for (;;) {
+    try {
+      return check()
+    } catch (e) {
+      if (Date.now() > end) throw e
+    }
+    await new Promise((resolve) => realTimeout(resolve, 15))
+  }
+}
 const ME = 'me@example.com'
 
 let gmail: FakeGmail
@@ -28,13 +42,14 @@ let timeouts: Partial<ImapTimeouts> | undefined
 let folder: string
 let store: Store
 let secrets: MemorySecrets
+let clock: number
 let service: MailService
 
 const make = (over: Partial<ServiceDeps> = {}): MailService =>
   new MailService({
     store, secrets,
     changed: () => undefined,
-    now: () => Date.now(),
+    now: () => clock,
     files: new DraftFiles(folder),
     openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
@@ -73,6 +88,7 @@ beforeEach(async () => {
   folder = mkdtempSync(join(tmpdir(), 'xrnmail-test-'))
   store = new Store(':memory:')
   secrets = new MemorySecrets()
+  clock = Date.now()
   timeouts = undefined
   service = make()
   await signedIn()
@@ -80,6 +96,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.useRealTimers()
+  gmail.release()
   vi.restoreAllMocks()
   service.stopWatching()
   await eventually(() => expect(service.accounts().every((a) => !a.syncing)).toBe(true))
@@ -252,5 +269,47 @@ describe('the network changing', () => {
     expect(passes() - before).toBe(1)
     await eventually(() => expect(gmail.commands.filter((line) => /\bIDLE\b/.test(line)).length).toBe(idles + 1))
     await eventually(() => expect([gmail.connections, gmail.idling]).toEqual([1, 1]))
+  })
+})
+
+describe('anything that gets through', () => {
+  /** The pass failed, and its quick tries are held back, so only what's tested can clear the error. */
+  beforeEach(async () => {
+    gmail.add(rawMail({ subject: 'One' }), { arrived: new Date(clock - 30 * 3_600_000) })
+    await service.syncAll()
+    fakeTimers()
+    gmail.dropNextConnection = true
+    await service.syncAll()
+    expect(error()).toBe("Couldn't reach Gmail.")
+  })
+
+  it('a change reaching the server clears "Couldn\'t reach"', async () => {
+    const row = service.list({ kind: 'all' }).find((r) => r.subject === 'One')
+    service.act([{ account: ME, thread: row?.thread ?? '' }], { kind: 'star' })
+    await soon(() => expect(gmail.mails[0]?.flags).toContain('\\Flagged'))
+    await soon(() => expect(error()).toBeNull())
+  })
+
+  it('a message sent clears it too, before the pass that brings it into Sent', async () => {
+    const draft = await service.startDraft({ kind: 'new' })
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Hi', html: '<p>Hello</p>', text: 'Hello', quote: null })
+    service.send(draft.id)
+    clock += 11_000
+    gmail.hold = /^LIST$/
+    const ticking = service.tick()
+    await soon(() => expect(smtp.sent).toHaveLength(1))
+    await soon(() => expect(error()).toBeNull())
+    gmail.release()
+    await ticking
+  })
+
+  it('leaves an error that isn\'t about reaching the server', async () => {
+    gmail.hasAllMail = false
+    await service.syncAll()
+    const said = error()
+    expect(said).toContain('All Mail')
+    service.watchAll() // the inbox opens, so the server is there, but All Mail is still missing
+    await soon(() => expect(gmail.idling).toBe(1))
+    expect(error()).toBe(said)
   })
 })
