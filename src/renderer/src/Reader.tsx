@@ -5,6 +5,7 @@ import {
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { imagesLoad } from '@shared/images'
+import { hintFor, type KeyCommand } from '@shared/keys'
 import { plainName } from '@shared/names'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
@@ -372,6 +373,11 @@ export function Reader(props: {
     say: props.say
   }
 
+  // Tooltips name the keys of the set in use, as changed in Settings.
+  const keySet = settings?.keys ?? 'edison'
+  const hint = (...commands: KeyCommand[]): string | undefined => hintFor(keySet, settings?.keyChanges[keySet], ...commands)
+  const titled = (label: string, key: string | undefined): string => (key ? `${label} (${key})` : label)
+
   const moreItem = (Icon: LucideIcon, label: string, run: () => void): ReactNode => (
     <button type="button" className="menu-item" onClick={() => { setPanel(null); run() }}>
       <Icon size={15} aria-hidden="true" /> {label}
@@ -391,27 +397,27 @@ export function Reader(props: {
         {bins ? (
           <>
             <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />
-            <IconButton icon={Trash2} label="Delete forever" hint="#" click={props.forever} />
+            <IconButton icon={Trash2} label="Delete forever" hint={hint('trash')} click={props.forever} />
           </>
         ) : (
           <>
             {inInbox
-              ? <IconButton icon={Check} label="Archive" hint="e" click={() => act({ kind: 'archive' }, 'Archived')} />
+              ? <IconButton icon={Check} label="Archive" hint={hint('archive', 'removeFromView')} click={() => act({ kind: 'archive' }, 'Archived')} />
               : <IconButton icon={Inbox} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />}
-            <IconButton icon={Trash2} label="Delete" hint="#" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-            <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint="s" on={starred}
+            <IconButton icon={Trash2} label="Delete" hint={hint('trash')} click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
+            <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint={hint('flag')} on={starred}
               click={() => act({ kind: starred ? 'unstar' : 'star' })} />
             {unread
-              ? <IconButton icon={MailOpen} label="Mark read" hint="Shift+I" click={() => act({ kind: 'read' })} />
-              : <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />}
+              ? <IconButton icon={MailOpen} label="Mark read" hint={hint('read', 'toggleRead')} click={() => act({ kind: 'read' })} />
+              : <IconButton icon={Mail} label="Mark unread" hint={hint('unread', 'toggleRead')} click={() => act({ kind: 'unread' })} />}
             <div className="anchor">
-              <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint="l" click={() => setPanel(panel === 'labels' ? null : 'labels')} />
+              <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint={hint('labels')} click={() => setPanel(panel === 'labels' ? null : 'labels')} />
               {panel === 'labels' && (gmail
                 ? <LabelMenu labels={labels} active={active} right set={(label, add) => act({ kind: 'label', label, add })} close={() => setPanel(null)} />
                 : <FolderMenu folders={account?.folders ?? []} right close={() => setPanel(null)} pick={(to) => { setPanel(null); act({ kind: 'move', to }, `Moved to ${to}`) }} />)}
             </div>
             <div className="anchor">
-              <IconButton icon={Clock} label="Snooze" hint="b" click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
+              <IconButton icon={Clock} label="Snooze" hint={hint('snooze')} click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
               {panel === 'snooze' && <TimeMenu title="Snooze until" right pick={props.snooze} close={() => setPanel(null)} />}
             </div>
             {props.unsnooze && <IconButton icon={AlarmClockOff} label="Unsnooze" click={props.unsnooze} />}
@@ -477,11 +483,11 @@ export function Reader(props: {
       </div>
       {!bins && (
         <div className="reply-bar">
-          <button type="button" title="Reply (r)" onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
+          <button type="button" title={titled('Reply', hint('reply'))} onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
           {several && (
-            <button type="button" title="Reply all (a)" onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={17} aria-hidden="true" /> Reply All</button>
+            <button type="button" title={titled('Reply all', hint('replyAll'))} onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={17} aria-hidden="true" /> Reply All</button>
           )}
-          <button type="button" title="Forward (f)" onClick={() => props.reply('forward', last.id)}><Forward size={17} aria-hidden="true" /> Forward</button>
+          <button type="button" title={titled('Forward', hint('forward'))} onClick={() => props.reply('forward', last.id)}><Forward size={17} aria-hidden="true" /> Forward</button>
         </div>
       )}
       {peek && <div className="peek">{peek}</div>}

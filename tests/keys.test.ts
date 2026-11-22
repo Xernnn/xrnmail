@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanAllChanges, cleanChanges, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
+import { cleanAllChanges, cleanChanges, hintFor, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
 
 describe('keys', () => {
   it('names a press the way the tables do', () => {
@@ -75,6 +75,22 @@ describe('keys', () => {
       expect(Object.keys(KEYS[set]).filter((k) => k in RESERVED), set).toEqual([])
       expect([press(set, 'ArrowDown'), press(set, 'ArrowUp'), press(set, 'Escape'), press(set, '?')]).toEqual(['next', 'previous', 'close', 'help'])
     }
+  })
+})
+
+// The tooltips over a thread always named the Edison and Gmail letters: "Archive (e)" with the Apple
+// Mail set, where e does nothing, and after a key had been changed.
+describe('the keys tooltips name', () => {
+  it('are the set\'s own, as changed, spelt for reading, and none where the set has none', () => {
+    expect(['archive', 'trash', 'flag', 'unread', 'labels', 'snooze', 'reply'].map((c) => hintFor('edison', {}, c as never)))
+      .toEqual(['e', '#', 's', 'Shift+U', 'l', 'b', 'r'])
+    expect(hintFor('apple', {}, 'archive')).toBe('Ctrl+Alt+A')
+    expect(hintFor('apple', {}, 'trash')).toBe('Backspace')
+    expect(hintFor('apple', {}, 'snooze')).toBeUndefined()
+    expect(hintFor('apple', {}, 'unread', 'toggleRead')).toBe('Ctrl+Shift+U')
+    expect(hintFor('outlook', {}, 'flag')).toBe('Ctrl+1')
+    expect(hintFor('edison', { archive: 'y' }, 'archive')).toBe('y')
+    expect(hintFor('edison', { archive: '' }, 'archive')).toBeUndefined()
   })
 })
 

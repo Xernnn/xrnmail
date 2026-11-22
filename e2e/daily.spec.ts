@@ -431,6 +431,28 @@ test('marking the open thread unread closes it, and reads nothing else', async (
   await expect.poll(() => gmail.mails.filter((m) => m.flags.includes('\\Seen')).length, LONG).toBe(0)
 })
 
+// The tooltips over a thread and on Compose named Edison's letters whatever the set: "Archive (e)"
+// with Apple Mail's keys, where e does nothing, and after the key had been changed.
+test('tooltips name the keys of the set in use, as changed in Settings', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plans' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plans').click()
+  const tools = page.getByRole('toolbar', { name: 'Thread', exact: true })
+  const title = (name: string): Promise<string | null> => tools.getByRole('button', { name, exact: true }).getAttribute('title')
+  const reply = page.locator('.reply-bar').getByRole('button', { name: 'Reply' })
+  const compose = page.locator('.sidebar').getByRole('button', { name: 'Compose' })
+  expect([await title('Archive'), await title('Snooze'), await reply.getAttribute('title'), await compose.getAttribute('title')])
+    .toEqual(['Archive (e)', 'Snooze (b)', 'Reply (r)', 'New message (c)'])
+  await page.evaluate(() => window.mail.saveProfile({ keys: 'apple' }))
+  await expect.poll(() => title('Archive')).toBe('Archive (Ctrl+Alt+A)')
+  expect([await title('Delete'), await title('Snooze'), await reply.getAttribute('title'), await compose.getAttribute('title')])
+    .toEqual(['Delete (Backspace)', 'Snooze', 'Reply (Ctrl+R)', 'New message (Ctrl+N)'])
+  await page.evaluate(() => window.mail.saveProfile({ keyChanges: { apple: { archive: 'y' } } }))
+  await expect.poll(() => title('Archive')).toBe('Archive (y)')
+})
+
 // The refresh that follows a change waits 150 ms, and quitting can close the store and destroy the
 // tray before it comes. When the app took longer than that to go, the refresh still ran, and with
 // unread mail shown it set the image of the destroyed tray, which throws in the main process.

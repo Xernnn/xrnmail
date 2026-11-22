@@ -169,6 +169,16 @@ export function spell(name: string): string {
   return name.replace('Escape', 'Esc').replace(/^Delete$|(\+)Delete$/, '$1Del').replace(/Arrow(Down|Up|Left|Right)/, '$1')
 }
 
+/** The key a tooltip names beside an action: the first of the first command given that has one in
+ *  the set as changed, spelt for reading. None when none of them has a key. */
+export function hintFor(set: KeySet, changes: KeyChanges = {}, ...commands: KeyCommand[]): string | undefined {
+  for (const command of commands) {
+    const [key] = keysOf(set, changes, command)
+    if (key) return spell(key)
+  }
+  return undefined
+}
+
 /** What can't be changed, at the end of every list. */
 export const FIXED: [string, string][] = [
   ['Ctrl+N', 'New message'], ['Ctrl+F', 'Search'], ['Ctrl+Enter', 'Send'], ['F5', 'Check for mail'], ['F1', 'These keys']

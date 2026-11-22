@@ -14,7 +14,7 @@ import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type S
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
 import { CantShow, Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
-import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
+import { hintFor, keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
@@ -1074,6 +1074,7 @@ export function App(): ReactNode {
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--list-height': `${listHeight}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
+        composeKey={profile ? hintFor(profile.keys, profile.keyChanges[profile.keys], 'compose') : 'c'}
         menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
         choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
         edited={(choice) => {
