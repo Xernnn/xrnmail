@@ -1225,6 +1225,32 @@ test('a place in the sidebar can be right-clicked to mark all of it read', async
   await expect(page.getByText('Nothing unread there')).toBeVisible()
 })
 
+// The main process took at most 1000 threads in one go, and Mark all as read and Empty Trash send a
+// whole list: with more than that, each was refused with "Bad request" and nothing happened.
+test('Mark all as read and Empty Trash work on more than a thousand threads', async () => {
+  test.setTimeout(180_000)
+  run = await launch()
+  const { page, gmail } = run
+  for (let i = 0; i < 1001; i++) gmail.add(rawMail({ subject: `Notice ${i}` }), { arrived: earlier(30) })
+  for (let i = 0; i < 1001; i++) gmail.add(rawMail({ subject: `Old ${i}` }), { box: '[Gmail]/Trash', arrived: earlier(30) })
+  await signIn(run)
+  const syncing = page.locator('.sync-progress')
+  await expect(page.locator('.threads .thread').first()).toBeVisible({ timeout: 60_000 })
+  await expect(syncing).toHaveCount(0, { timeout: 60_000 })
+  await page.locator('.sidebar').getByRole('button', { name: /^Inbox/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Mark all as read' }).click()
+  await expect(page.getByText('Marked as read: 1001 threads')).toBeVisible()
+  await expect(page.locator('.threads .unread-dot')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Trash', exact: true }).click()
+  await page.getByRole('button', { name: 'Empty Trash now' }).click()
+  await expect(page.getByRole('dialog')).toContainText('1001 threads')
+  await page.getByRole('dialog').getByRole('button', { name: 'Empty Trash' }).click()
+  await expect(page.getByText('Trash emptied: 1001 threads')).toBeVisible()
+  await expect(page.getByText('Nothing here')).toBeVisible()
+  await expect.poll(() => gmail.mails.filter((m) => m.flags.includes('\\Seen')).length, { timeout: 30_000 }).toBe(1001)
+  await expect.poll(() => gmail.box('[Gmail]/Trash').mails.length, { timeout: 30_000 }).toBe(0)
+})
+
 // These toasts offered Undo for changes that had gone to Gmail at once, so pressing it a moment
 // later did nothing: the toast went, and the mail stayed read, labelled or in the inbox.
 test('Undo calls back Mark all as read, a label and Move to Inbox, as it does archiving', async () => {

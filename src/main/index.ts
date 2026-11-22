@@ -263,8 +263,12 @@ function mailAction(value: unknown): MailAction {
   throw new Error('Bad request')
 }
 
+/** As many threads as the page acts on at once: Mark all as read, Empty Trash and Select All take a
+ *  whole list, which it reads up to 20,000 threads of. */
+const MOST_THREADS = 20_000
+
 function targets(value: unknown): ThreadRef[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error('Bad request')
+  if (!Array.isArray(value) || value.length > MOST_THREADS) throw new Error('Bad request')
   return value.map((item) => {
     const t = (item ?? {}) as Record<string, unknown>
     return { account: text(t['account'], 320), thread: text(t['thread'], 64) }

@@ -49,7 +49,7 @@ interface Span { key: string; low: number; high: number; start: number }
 /** How wide the list is beside the reader, and how tall over it, as last dragged. */
 const LIST_WIDTHS: Span = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
 const LIST_HEIGHTS: Span = { key: 'xrnmail.listHeight', low: 140, high: 900, start: 300 }
-/** More than Trash is ever likely to hold on this laptop. */
+/** More than Trash is ever likely to hold on this laptop, and as many as the main process takes in one go. */
 const WHOLE_LIST = 20_000
 
 const savedSpan = (span: Span): number => {
