@@ -53,8 +53,8 @@ async function closedPort(): Promise<number> {
 }
 
 const error = (): string | null | undefined => service.accounts()[0]?.error
-/** Passes that reached the server: each one lists its folders first. */
-const passes = (): number => gmail.commands.filter((line) => line.startsWith('LIST')).length
+/** Passes that reached the server: each one lists every folder first. A watch lists only the inbox. */
+const passes = (): number => gmail.commands.filter((line) => line === 'LIST "" "*"').length
 
 async function signedIn(): Promise<void> {
   await service.addAccount({ email: ME, secret: gmail.secret, provider: 'gmail' })
@@ -239,5 +239,18 @@ describe('a watch on the inbox that drops', () => {
     service.watchAll()
     await vi.advanceTimersByTimeAsync(WATCH_SETTLE_MS + 100)
     expect(passes() - before).toBe(0)
+  })
+})
+
+describe('the network changing', () => {
+  it('starts the watch over and syncs, leaving one watch', async () => {
+    service.watchAll()
+    await eventually(() => expect(gmail.idling).toBe(1))
+    const before = passes()
+    const idles = gmail.commands.filter((line) => /\bIDLE\b/.test(line)).length
+    await service.reconnect()
+    expect(passes() - before).toBe(1)
+    await eventually(() => expect(gmail.commands.filter((line) => /\bIDLE\b/.test(line)).length).toBe(idles + 1))
+    await eventually(() => expect([gmail.connections, gmail.idling]).toEqual([1, 1]))
   })
 })

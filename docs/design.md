@@ -185,7 +185,8 @@ message that loses the label (the phone sending a draft it saved can do that) sh
 
 ## Sync
 
-Every three minutes, and on waking, each account connects, syncs and logs out. Batching means nothing
+Every three minutes, on waking, and when the network changes, each account connects, syncs and logs
+out. Batching means nothing
 depends on being fast, so these passes are what the app relies on; watching the inbox, below, only
 brings the next one forward.
 
@@ -248,9 +249,18 @@ line and Deliver now; the Summary keeps its own time. The batch times stay saved
 Settings saved before the switch existed are live exactly when they have no times, which is how they
 behaved; batches always have a time, so taking the last one away is going live.
 
-There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
-them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
-connection running that nothing will close. Gmail allows fifteen at once.
+There's one watch per account, counted from when it starts signing in. Waking from sleep, or the
+network changing, replaces them all, and an old one finishing its goodbye only ever clears its own
+place, so a wake can't leave a connection running that nothing will close. Gmail allows fifteen at
+once.
+
+### Noticing the network change
+
+Linux tells an app nothing when a VPN reconnects, its kill switch comes up or the Wi-Fi changes, and
+a socket on the old route can take a minute to find out. So `network.ts` reads the interfaces and
+their addresses every 5 seconds (one system call) and, when they've changed and held for 2 seconds,
+does what waking does: every watch starts again, the quick tries start over, and every account
+syncs. The loopback isn't counted, nor the order the system lists them in.
 
 ## Staying open
 

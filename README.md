@@ -235,7 +235,8 @@ to wait for.
   elsewhere. Within a second xrnmail runs its ordinary sync for that account, so what you see is
   what the server has. A burst of changes, like a phone marking thirty messages read, is one sync.
 - **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
-  sleep, and when the window comes back after a minute away. A watch that drops is opened again
+  sleep, when the network changes (a VPN reconnecting, another Wi-Fi), and when the window comes
+  back after a minute away. A watch that drops is opened again
   after 2 seconds, then 10, 30 and every minute, and syncs once it's back; the three-minute passes
   go on regardless, so nothing is missed meanwhile.
 - **A server gone quiet** is given up on rather than waited for: 30 seconds to connect, 20 to be

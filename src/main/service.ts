@@ -605,9 +605,9 @@ export class MailService {
     await Promise.all(this.emails().map((email) => this.syncOne(email)))
   }
 
-  /** After waking from sleep: every connection may be dead, so each watch starts again, the waits
-   *  between tries start over, and every account syncs. A pass that runs before the network is
-   *  back is tried again within seconds. */
+  /** After waking from sleep, or when the network changes: every connection may be dead, so each
+   *  watch starts again, the waits between tries start over, and every account syncs. A pass that
+   *  runs before the network is back is tried again within seconds. */
   async reconnect(): Promise<void> {
     for (const email of [...this.retries.keys()]) this.stopRetrying(email)
     if (this.watching) {

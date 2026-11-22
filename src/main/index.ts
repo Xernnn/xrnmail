@@ -16,6 +16,7 @@ import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
+import { watchNetwork } from './network'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
@@ -799,6 +800,9 @@ void app.whenReady().then(() => {
   const syncing = setInterval(() => background(service.syncAll()), SYNC_MS)
   const ticking = setInterval(() => background(service.tick()), TICK_MS)
   powerMonitor.on('resume', () => background(service.reconnect()))
+  // A VPN reconnecting, its kill switch, another Wi-Fi: the same as waking for every connection,
+  // and nothing else notices until the next pass.
+  const stopNetwork = watchNetwork(() => background(service.reconnect()))
   let finished = false
   app.on('before-quit', (event) => {
     quitting = true
@@ -817,6 +821,7 @@ void app.whenReady().then(() => {
     }
     // Mail waiting out Undo would otherwise sit here until the next launch.
     event.preventDefault()
+    stopNetwork()
     service.stopWatching()
     const giveUp = new Promise((resolve) => setTimeout(resolve, FINISH_WAIT_MS))
     void Promise.race([service.finishUp().catch(() => undefined), giveUp]).finally(() => {
