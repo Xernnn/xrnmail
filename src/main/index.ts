@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
@@ -24,7 +25,7 @@ import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
-import { ImapSource, ImapWatcher, type ImapConfig } from './source'
+import { ADDRESS_ATTEMPT_MS, ImapSource, ImapWatcher, type ImapConfig } from './source'
 import { Store } from './store'
 import { ImapWriter } from './writer'
 
@@ -49,6 +50,10 @@ if (app.isPackaged && DEBUG_SWITCHES.some((name) => app.commandLine.hasSwitch(na
 // other Wayland compositors), where it would otherwise fall back to basic_text and refuse.
 const passwordStore = passwordStoreSwitch(process.platform, process.env.XDG_CURRENT_DESKTOP, (s) => app.commandLine.hasSwitch(s))
 if (passwordStore) app.commandLine.appendSwitch('password-store', passwordStore)
+
+// The same patience for everything else this side opens, signing in to Microsoft and fetching
+// pictures among them: they go through fetch, which tries addresses the way IMAP's sockets do.
+setDefaultAutoSelectFamilyAttemptTimeout(ADDRESS_ATTEMPT_MS)
 
 if (!app.requestSingleInstanceLock()) app.quit()
 

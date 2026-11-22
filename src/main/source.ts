@@ -1,5 +1,7 @@
 import { ImapFlow, type ListResponse } from 'imapflow'
 import { createHash } from 'node:crypto'
+import type { TcpNetConnectOpts } from 'node:net'
+import type { ConnectionOptions } from 'node:tls'
 import type { Security } from '@shared/providers'
 
 /**
@@ -133,6 +135,18 @@ export interface ImapTimeouts {
  *  less than a minute; a big message coming in is never quiet that long. */
 export const IMAP_TIMEOUTS: ImapTimeouts = { connect: 30_000, greeting: 20_000, quiet: 60_000 }
 
+/** How long each of a server's addresses is given to answer before the next is tried, in ms.
+ *  Node tries them one at a time and drops each after 250 ms, except the last, which waits out the
+ *  whole connect time. Through a VPN to a far exit, Gmail takes 400 ms or more to answer, so every
+ *  IPv4 try was dropped and the connection ended on an IPv6 address the VPN's kill switch swallows,
+ *  waiting until the 30 seconds ran out: "Couldn't reach Gmail." This is long enough for a slow
+ *  route and one lost packet, and an address that's truly gone still hands over in seconds. */
+export const ADDRESS_ATTEMPT_MS = 2_500
+
+/** Handed to the socket as it's opened, alongside the certificate checks Node does by default. A
+ *  socket takes it, though the TLS options' type doesn't list it. */
+const SOCKET: ConnectionOptions & Pick<TcpNetConnectOpts, 'autoSelectFamilyAttemptTimeout'> = { autoSelectFamilyAttemptTimeout: ADDRESS_ATTEMPT_MS }
+
 /** Providers show app passwords in groups with spaces, which aren't part of them. */
 export const cleanSecret = (secret: string): string => secret.replace(/\s+/g, '')
 
@@ -149,7 +163,8 @@ export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number; so
     secure: config.security === 'tls',
     auth: config.accessToken ? { user: config.user, accessToken: config.accessToken } : { user: config.user, pass: config.secret },
     logger: false,
-    doSTARTTLS: config.security === 'tls' ? undefined : config.security === 'starttls'
+    doSTARTTLS: config.security === 'tls' ? undefined : config.security === 'starttls',
+    tls: SOCKET
   })
   client.on('error', () => undefined) // the work in progress fails on its own; unhandled this ends the app
   return client
