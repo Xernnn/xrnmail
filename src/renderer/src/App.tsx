@@ -539,10 +539,11 @@ export function App(): ReactNode {
     }
   }
 
-  const block = async (address: string): Promise<void> => {
+  /** Blocked from a thread, it's that thread that goes to Trash, whatever else is ticked in the list. */
+  const block = async (address: string, refs: ThreadRef[]): Promise<void> => {
     if (!await ask({ title: `Block ${address}?`, note: 'New mail from them goes straight to Trash.', action: 'Block', danger: true })) return
     await window.mail.block(address)
-    await run(targets(), { kind: 'trash' }, `Blocked ${address}`)
+    await run(refs, { kind: 'trash' }, `Blocked ${address}`)
   }
 
   const clearSender = async (item: Subscription): Promise<void> => {
@@ -931,7 +932,7 @@ export function App(): ReactNode {
       labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
-      reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
+      reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address, open ? [open] : [])} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
       forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}

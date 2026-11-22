@@ -730,6 +730,28 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+// Block sender sent what was ticked in the list to Trash, whoever it was from, and left the open
+// thread from the sender just blocked where it was.
+test('blocking the sender of the open thread sends that thread to Trash, not the ones ticked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Files for you', from: 'Bao Le <bao@example.com>' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Trip to Da Lat', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(4) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  await page.getByLabel('Select Files for you').check({ force: true })
+  await list.getByText('Trip to Da Lat').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Trip to Da Lat')
+  await page.getByRole('toolbar', { name: 'Thread', exact: true }).getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('button', { name: 'Block sender' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Block' }).click()
+  await expect(page.getByText('Blocked mai@example.com')).toBeVisible()
+  await expect(list.getByText('Trip to Da Lat')).toHaveCount(0)
+  await expect(list.getByText('Files for you')).toBeVisible()
+  await page.getByRole('button', { name: 'Trash', exact: true }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Trip to Da Lat'])
+})
+
 test('Settings choose what the reply button on a message does: reply, or reply to everyone on it', async () => {
   run = await launch()
   const { page, gmail } = run
