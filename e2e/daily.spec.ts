@@ -137,6 +137,46 @@ test('a draft survives closing, and a restart of the page', async () => {
   await expect(page.getByText('Half finished')).toHaveCount(0)
 })
 
+// Discard draft, in the composer and on a row in Drafts, took the draft and its copy in Gmail's
+// Drafts away at once, with no Undo and not a word.
+test('a draft thrown away can be had back with Undo, from the composer and from Drafts', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  await signIn(run)
+  const toast = page.getByRole('status')
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByLabel('Subject').fill('Half finished')
+  await box.getByLabel('Message').fill('Some words')
+  await box.getByRole('button', { name: 'Discard draft' }).click()
+  await expect(box).toHaveCount(0)
+  await expect(toast).toContainText('Draft discarded')
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(composer(page).getByLabel('Subject')).toHaveValue('Half finished')
+  await expect(composer(page).getByLabel('Message')).toHaveText('Some words')
+  await composer(page).getByRole('button', { name: 'Close' }).click()
+  await expect.poll(() => gmail.drafts().length, LONG).toBe(1) // up in Gmail's Drafts
+
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  const list = page.locator('.threads')
+  await list.locator('.thread', { hasText: 'Half finished' }).hover()
+  await page.getByRole('button', { name: 'Discard Half finished' }).click()
+  await expect(list.getByText('Half finished')).toHaveCount(0)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(list.getByText('Half finished')).toBeVisible()
+  await expect(composer(page)).toHaveCount(0)
+
+  await list.locator('.thread', { hasText: 'Half finished' }).hover()
+  await page.getByRole('button', { name: 'Discard Half finished' }).click()
+  await expect(list.getByText('Half finished')).toHaveCount(0)
+  await page.waitForTimeout(3000)
+  expect(gmail.drafts()).toHaveLength(1) // Undo still has it
+  await expect.poll(() => gmail.drafts().length, LONG).toBe(0)
+  await page.reload()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await expect(page.getByText('Nothing here')).toBeVisible()
+})
+
 test('drafts are kept in Gmail\'s Drafts: one written here goes up, one written on the phone comes in, and either goes when it is sent', async () => {
   run = await launch()
   const { page, gmail, smtp } = run

@@ -130,6 +130,8 @@ export function Composer(props: {
   closing?: { current: { id: number; close(): Promise<void> } | null }
   /** Just started here, by Reply, Forward or a new message: closed as it started, it goes. */
   fresh?: boolean
+  /** Thrown away with something in it, which Undo can bring back. */
+  discarded?: (id: number) => void
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -267,10 +269,15 @@ export function Composer(props: {
     }
   }
 
+  /** Thrown away with Undo, as other things are, unless there's nothing in it to want back. */
   const discard = async (): Promise<void> => {
+    const edit = collect()
+    const worth = !isEmpty(edit) && !untouched(edit)
+    if (worth) await save() // what was typed just now is what Undo brings back
     gone.current = true
-    await window.mail.discardDraft(draft.id)
+    await window.mail.discardDraft(draft.id, worth)
     props.close(false)
+    if (worth) props.discarded?.(draft.id)
   }
 
   const send = async (at?: number): Promise<void> => {

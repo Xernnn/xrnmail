@@ -149,6 +149,10 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
 - **A copy that has to go** (the draft was sent, thrown away, moved to another account or emptied)
   is noted in `draft_copies` and goes as soon as the server can be reached, like the pending queue:
   offline, or after a restart, nothing is lost. Refused three times, it's let go of and said.
+- **Thrown away** from the composer or Drafts, a draft with something in it leaves Drafts at once and
+  goes for good, with its copy, once Undo has had its time, or when the app closes; until then
+  nothing about it changes on the server, and one that was waiting to go waits as a draft, so it
+  can't leave meanwhile. Undo gives it back as it was. A crash meanwhile keeps it.
 - **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
   draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
   or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or

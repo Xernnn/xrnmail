@@ -301,6 +301,8 @@ export class MailService {
   private draftsRetryAt = new Map<string, number>()
   /** How often each copy that has to go has been refused. */
   private copyRefusals = new Map<number, number>()
+  /** Drafts thrown away while Undo lasts: when each goes for good, and how it was. */
+  private discarding = new Map<number, { at: number; was: Draft }>()
   /** Drafts on the server too big to bring here, so they aren't fetched again each pass. */
   private tooBig = new Set<string>()
 
@@ -812,6 +814,7 @@ export class MailService {
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
+    this.discardThrown()
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email)))
@@ -1223,7 +1226,7 @@ export class MailService {
   }
 
   drafts(): Draft[] {
-    return this.store.drafts()
+    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id))
   }
 
   async startDraft(start: DraftStart): Promise<Draft> {
@@ -1311,15 +1314,41 @@ export class MailService {
     else this.holds.delete(id)
   }
 
-  discardDraft(id: number): void {
+  /** Thrown away. With Undo on offer ([undoable]) it leaves Drafts at once and goes for good, its
+   *  copy on the server too, once Undo has had its time; until then nothing of it changes anywhere,
+   *  and a message waiting to go waits as a draft instead, so it can't leave meanwhile. */
+  discardDraft(id: number, undoable = false): void {
     const draft = this.store.draft(id)
     if (draft?.state === 'sending') throw new Error('This is already on its way.')
+    if (undoable && draft) {
+      if (draft.state === 'queued') this.store.saveDraft({ ...draft, state: 'draft', sendAt: null })
+      this.discarding.set(id, { at: this.deps.now() + this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS, was: draft })
+      this.deps.changed()
+      return
+    }
+    this.discarding.delete(id)
     this.letCopyGo(id)
     this.store.deleteDraft(id)
     this.deps.files.clear(id)
     this.dirtySince.delete(id)
     if (draft) this.sendFailureDealt(draft.account)
     this.deps.changed()
+  }
+
+  /** Undo for a draft thrown away: it's back as it was, waiting to go again if it was. */
+  undiscardDraft(id: number): void {
+    const thrown = this.discarding.get(id)
+    if (!thrown) throw new Error('Too late: that draft has gone.')
+    this.discarding.delete(id)
+    const draft = this.store.draft(id)
+    if (draft && thrown.was.state === 'queued') this.store.saveDraft({ ...draft, state: 'queued', sendAt: thrown.was.sendAt })
+    this.deps.changed()
+  }
+
+  /** Drafts thrown away whose Undo has run out, or all of them when the app is closing. */
+  private discardThrown(all = false): void {
+    const now = this.deps.now()
+    for (const [id, { at }] of this.discarding) if (all || at <= now) this.discardDraft(id)
   }
 
   /** The draft's copy on the server is to go, now or as soon as the server can be reached, and the
@@ -1336,7 +1365,7 @@ export class MailService {
    *  for a moment or changing for a while. All of them when the app is closing. */
   private dueDrafts(email: string, all = false): DraftLink[] {
     const now = this.deps.now()
-    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed &&
+    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed && !this.discarding.has(d.id) &&
       (all || now - d.updated >= DRAFT_QUIET_MS || now - (this.dirtySince.get(d.id) ?? d.updated) >= DRAFT_MOST_MS))
   }
 
@@ -1591,6 +1620,7 @@ export class MailService {
       this.store.saveDraft({ ...draft, sendAt: now })
     }
     this.store.hurryActions(now)
+    this.discardThrown(true)
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))

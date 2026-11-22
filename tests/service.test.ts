@@ -1405,6 +1405,57 @@ describe('drafts on the server', () => {
     expect(onServer()).toEqual([])
   })
 
+  // Discard draft took a draft and its copy on the server away at once, with no Undo and no word.
+  it('a draft thrown away with Undo leaves Drafts at once, its copy only once Undo has had its time, and Undo gives it back', async () => {
+    const id = await write()
+    await later(5000)
+    expect(onServer()).toEqual(['Plans'])
+    service.discardDraft(id, true)
+    expect(service.drafts()).toEqual([])
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    service.undiscardDraft(id)
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+    await later(UNDO_MS + 5000)
+    expect(onServer()).toEqual(['Plans'])
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+
+    service.discardDraft(id, true)
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    await later(1000)
+    await eventually(() => expect(onServer()).toEqual([]))
+    expect(service.drafts()).toEqual([])
+    expect(() => service.undiscardDraft(id)).toThrow('Too late')
+  })
+
+  it('a message waiting to go that is thrown away never goes, and Undo has it wait again', async () => {
+    const id = await write()
+    const when = service.send(id)
+    service.discardDraft(id, true)
+    await later(UNDO_MS + 5000)
+    expect(smtp.sent).toEqual([])
+    expect(service.drafts()).toEqual([])
+
+    const other = await write({ subject: 'Later' })
+    const at = service.send(other, clock + 3_600_000)
+    service.discardDraft(other, true)
+    await later(1000)
+    service.undiscardDraft(other)
+    expect(service.drafts()[0]).toMatchObject({ id: other, state: 'queued', sendAt: at })
+    expect(when).toBeLessThan(at)
+  })
+
+  it('a draft thrown away while Undo lasts goes for good when the app closes', async () => {
+    const id = await write()
+    await later(5000)
+    service.discardDraft(id, true)
+    await service.finishUp()
+    expect(onServer()).toEqual([])
+    service = make()
+    expect(service.drafts()).toEqual([])
+  })
+
   it('works offline, and catches up once the server can be reached', async () => {
     gmail.dropNextConnection = true
     const id = await write()

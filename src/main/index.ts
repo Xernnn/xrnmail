@@ -557,7 +557,8 @@ function register(service: MailService, avatars: Avatars): void {
     else return
     service.holdDraft(draft, on === true)
   })
-  handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
+  handle('discardDraft', (id: unknown, undoable: unknown) => service.discardDraft(number(id), undoable === true))
+  handle('undiscardDraft', (id: unknown) => service.undiscardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }
     const parent = dialogParent()

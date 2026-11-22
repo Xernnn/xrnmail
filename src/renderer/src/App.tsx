@@ -537,6 +537,23 @@ export function App(): ReactNode {
     setToast(left > 0 ? { text: 'Sending', undo, ms: left, sending: true } : { text: 'Sending', sending: true })
   }
 
+  /** "Draft discarded", with Undo bringing it back to Drafts, and to the composer if it was thrown
+   *  away from there. */
+  const discarded = (id: number, reopen: boolean): void => {
+    setToast({
+      text: 'Draft discarded',
+      undo: async () => {
+        try {
+          await window.mail.undiscardDraft(id)
+          const draft = reopen ? (await window.mail.drafts()).find((d) => d.id === id) : undefined
+          if (draft) await showComposer(draft)
+        } catch (e) {
+          say(problem(e))
+        }
+      }
+    })
+  }
+
   const sent = (id: number, when: number, scheduled: boolean): void => {
     setComposing(null)
     announce(id, when, scheduled)
@@ -992,6 +1009,7 @@ export function App(): ReactNode {
       {composing && (
         <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
           solo={SOLO?.kind === 'draft'} leaving={leaving} closing={closing} fresh={composing === started}
+          discarded={(id) => discarded(id, true)}
           moveOut={(id) => {
             setComposing(null)
             void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))
@@ -1131,7 +1149,7 @@ export function App(): ReactNode {
             }}>
               {showDrafts && shownDrafts.map((draft) => (
                 <DraftRow key={draft.id} draft={draft} account={many ? accounts.find((a) => a.email === draft.account) : undefined} open={() => void reopen(draft)}
-                  discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
+                  discard={() => void window.mail.discardDraft(draft.id, true).then(() => discarded(draft.id, false), (e: unknown) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
                 <Subscriptions version={version} side={subscriptionSide} accounts={accounts} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}

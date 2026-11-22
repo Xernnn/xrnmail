@@ -556,7 +556,10 @@ export interface MailApi {
   /** A composer has this draft open, or has let it go. While one has, what the server says about the
    *  draft leaves it as it is here. */
   holdDraft(id: number, on: boolean): Promise<void>
-  discardDraft(id: number): Promise<void>
+  /** With [undoable], it waits out Undo before it goes for good, out of Drafts meanwhile. */
+  discardDraft(id: number, undoable?: boolean): Promise<void>
+  /** Undo for a draft thrown away. */
+  undiscardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
   addFile(id: number, name: string, type: string, bytes: ArrayBuffer): Promise<Draft>

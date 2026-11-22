@@ -48,7 +48,8 @@ kept on the laptop.
   it is in Drafts.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
-  up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
+  up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away
+  has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
