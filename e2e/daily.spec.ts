@@ -1550,6 +1550,39 @@ test('snoozing takes a thread away until its time, and it can be found meanwhile
   await expect(page.locator('.threads').getByText('Later please')).toBeVisible()
 })
 
+// Snooze from a row ticked the row and opened its times on the bar at the foot of the list, far
+// from the row it was asked from.
+test('snoozing from a row asks when beside that row, and ticks nothing', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Alpha', 'Beta', 'Gamma'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ quickActions: ['snooze', 'archive', 'trash', 'read'] }))
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const list = page.locator('.threads')
+  const times = page.locator('.popover', { hasText: 'Snooze until' })
+  const near = async (subject: string): Promise<number> => {
+    const [row, menu] = [await list.locator('.thread', { hasText: subject }).boundingBox(), await times.boundingBox()]
+    return Math.min(Math.abs((menu?.y ?? 0) - ((row?.y ?? 0) + (row?.height ?? 0))), Math.abs((menu?.y ?? 0) + (menu?.height ?? 0) - (row?.y ?? 0)))
+  }
+  await list.locator('.thread', { hasText: 'Beta' }).hover()
+  await list.locator('.thread', { hasText: 'Beta' }).getByRole('button', { name: 'Snooze' }).click()
+  await expect(times).toBeVisible()
+  expect(await near('Beta')).toBeLessThan(20)
+  await expect(page.getByRole('toolbar', { name: 'Selected threads' })).toHaveCount(0)
+  await times.getByRole('button', { name: /^Tomorrow/ }).click()
+  await expect(page.getByRole('status')).toHaveText(/^Snoozed until/)
+  await expect(list.getByText('Beta')).toHaveCount(0)
+
+  await list.getByText('Gamma').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Snooze' }).click()
+  await expect(times).toBeVisible()
+  expect(await near('Gamma')).toBeLessThan(20)
+  await page.keyboard.press('Escape')
+  await expect(times).toHaveCount(0)
+  await expect(list.getByText('Gamma')).toBeVisible()
+})
+
 // Snoozed showed each thread's own date, not when it comes back, and only the snooze toast's Undo
 // could bring one back early.
 test('Snoozed says when each thread comes back, and Unsnooze brings one back now', async () => {

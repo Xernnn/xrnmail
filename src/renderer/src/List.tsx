@@ -131,7 +131,7 @@ export function Row(props: {
   const shown = bins ? [] : [...new Set(props.quick)].filter((kind) => kind !== 'none')
 
   return (
-    <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
+    <div ref={box} className={`thread ${stateClass}`} data-account={row.account} data-thread={row.thread} draggable onDragStart={drag} onWheel={wheel}
       onContextMenu={(e) => { e.preventDefault(); props.menu(e.clientX, e.clientY) }}>
       {look && LookIcon && (
         <div className={`swipe-under ${look.tone} ${shift > 0 ? 'from-left' : 'from-right'} ${Math.abs(shift) >= SWIPE_COMMIT ? 'ready' : ''}`}>

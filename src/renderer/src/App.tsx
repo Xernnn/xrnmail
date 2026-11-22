@@ -133,6 +133,8 @@ export function App(): ReactNode {
   const [help, setHelp] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [bulkSnooze, setBulkSnooze] = useState(false)
+  /** Snooze's times beside a row, for it or for the selection it's in. */
+  const [rowSnooze, setRowSnooze] = useState<{ refs: ThreadRef[]; x: number; y: number; up: boolean } | null>(null)
   /** The bar under a selection's ⋮, and the labels or folders it leads to. */
   const [bulkMenu, setBulkMenu] = useState<'more' | 'file' | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -439,6 +441,7 @@ export function App(): ReactNode {
     async (refs: ThreadRef[], at: number) => {
       setPanel(null)
       setBulkSnooze(false)
+      setRowSnooze(null)
       try {
         if (!SOLO) leave(refs)
         await window.mail.snooze(refs, at)
@@ -762,10 +765,14 @@ export function App(): ReactNode {
     })
   }
 
-  /** Snoozing one row asks "until when" where a selection would. */
-  const snoozeRow = (row: ThreadRow): void => {
-    setPicked(new Set([keyOf(row)]))
-    setBulkSnooze(true)
+  /** Snoozing from a row asks "until when" beside that row: under it, or over it near the foot. */
+  const snoozeRow = (row: ThreadRow, refs: ThreadRef[] = [{ account: row.account, thread: row.thread }]): void => {
+    const shown = [...document.querySelectorAll<HTMLElement>('.threads .thread')]
+      .find((element) => element.dataset['account'] === row.account && element.dataset['thread'] === row.thread)
+    const box = shown?.getBoundingClientRect()
+    if (!box) return
+    const up = box.bottom > window.innerHeight / 2
+    setRowSnooze({ refs, x: box.right - 8, y: up ? box.top : box.bottom, up })
   }
 
   const swiped = (row: ThreadRow, action: SwipeAction): void => {
@@ -816,7 +823,7 @@ export function App(): ReactNode {
         : { label: 'Pin', icon: Pin, run: () => void pin(refs, true) },
       'gap',
       { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
-      { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
+      { label: 'Snooze', icon: Clock, run: () => snoozeRow(row, refs) },
       ...(active.kind === 'snoozed' ? [{ label: 'Unsnooze', icon: AlarmClockOff, run: () => void unsnooze(refs) }] : []),
       { label: 'Report spam', icon: OctagonAlert, run: () => void run(refs, { kind: 'spam' }, 'Reported as spam') },
       { label: 'Delete', icon: Trash2, danger: true, run: () => void run(refs, { kind: 'trash' }, 'Moved to Trash') },
@@ -1295,6 +1302,11 @@ export function App(): ReactNode {
         </div>
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
+      {rowSnooze && (
+        <div className="anchor row-snooze" style={{ left: rowSnooze.x, top: rowSnooze.y }}>
+          <TimeMenu title="Snooze until" right up={rowSnooze.up} pick={(at) => void snooze(rowSnooze.refs, at)} close={() => setRowSnooze(null)} />
+        </div>
+      )}
       {sideMenu && (
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
           items={[
