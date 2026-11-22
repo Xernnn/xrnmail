@@ -1,5 +1,6 @@
 import { htmlToText } from 'html-to-text'
 import { simpleParser, type AddressObject, type Attachment } from 'mailparser'
+import { plainName, reorders } from '@shared/names'
 import { splitQuoted } from '@shared/quoted'
 import type { Address, AttachmentInfo, HeaderDetails, SenderWarning } from '@shared/types'
 import { headerDetails } from './details'
@@ -47,13 +48,16 @@ export interface ParsedMail {
   details: HeaderDetails
 }
 
-function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
+/** The people a header names. Their names lose what turns text around or draws nothing, unless
+ *  [asWritten], for a warning to see what the sender did. */
+function addresses(field: AddressObject | AddressObject[] | undefined, asWritten = false): Address[] {
   const found: Address[] = []
+  const named = (name: string | undefined): string => (asWritten ? name ?? '' : plainName(name ?? ''))
   for (const group of Array.isArray(field) ? field : field ? [field] : []) {
     for (const item of group.value) {
-      if (item.address) found.push({ name: item.name ?? '', address: item.address })
+      if (item.address) found.push({ name: named(item.name), address: item.address })
       for (const member of item.group ?? []) {
-        if (member.address) found.push({ name: member.name ?? '', address: member.address })
+        if (member.address) found.push({ name: named(member.name), address: member.address })
       }
     }
   }
@@ -64,7 +68,7 @@ function attachmentInfo(parts: Attachment[]): AttachmentInfo[] {
   // Pictures placed in the body aren't things to list as attachments.
   return parts
     .filter((a) => !a.related)
-    .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, size: a.size }))
+    .map((a) => ({ name: plainName(a.filename ?? 'attachment'), type: a.contentType, size: a.size }))
 }
 
 const headerValue = (lines: readonly { key: string; line: string }[], key: string): string => {
@@ -111,8 +115,11 @@ export function senderWarnings(mail: { from: Address; replyTo: Address[]; authen
   }
   const both = said('spf') === 'fail' && said('dkim') === 'fail'
   if (said('dmarc') === 'fail' || both) found.push('forged')
-  const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(mail.from.name.slice(0, 300))?.[0]?.toLowerCase()
+  const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(plainName(mail.from.name.slice(0, 300)))?.[0]?.toLowerCase()
   if (inName && inName !== mail.from.address.toLowerCase()) found.push('name-mismatch')
+  // A name can turn itself around to show "security@paypal.com" while the check above sees it as
+  // written, backwards. No real name needs that.
+  if (reorders(mail.from.name.slice(0, 300)) || reorders(mail.from.address)) found.push('hidden')
   const domain = domainOf(mail.from.address)
   if (domain.split('.').some((part) => part.startsWith('xn--')) || /[^\x00-\x7f]/.test(domain)) found.push('lookalike')
   const elsewhere = mail.replyTo.find((who) => baseOf(domainOf(who.address)) !== baseOf(domain))
@@ -246,12 +253,13 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
   const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML, keepCidLinks: true })
   const markup = typeof mail.html === 'string' ? capped(mail.html, MAX_HTML) : null
   const text = (mail.text ?? '').slice(0, MAX_TEXT)
-  const from = addresses(mail.from)[0] ?? { name: '', address: '' }
+  const sender = addresses(mail.from, true)[0] ?? { name: '', address: '' }
+  const from = { name: plainName(sender.name), address: sender.address }
   const replyTo = addresses(mail.replyTo)
   const bulk = looksBulk(mail.headerLines)
   const calendar = (mail.attachments ?? []).find((a) => a.contentType === 'text/calendar')
   return {
-    subject: mail.subject ?? '',
+    subject: plainName(mail.subject ?? ''),
     from,
     to: addresses(mail.to),
     cc: addresses(mail.cc),
@@ -267,7 +275,7 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
     snippet: makeSnippet(mail.html && !hasTextPart(mail.headerLines, source) ? '' : text, markup?.html ?? null),
     attachments: attachmentInfo(mail.attachments ?? []),
     bulk,
-    warnings: senderWarnings({ from, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),
+    warnings: senderWarnings({ from: sender, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),
     invite: calendar ? inviteOf(calendar.content.toString('utf8')) : null,
     details: headerDetails(mail.headerLines, addresses(mail.bcc), mail.date)
   }
@@ -290,7 +298,7 @@ export async function attachmentsOf(source: Buffer): Promise<WholeAttachment[]> 
   const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
   return (mail.attachments ?? [])
     .filter((a) => !a.related)
-    .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
+    .map((a) => ({ name: plainName(a.filename ?? 'attachment'), type: a.contentType, content: a.content }))
 }
 
 /** A draft from the account's Drafts folder: the person's own, written on another device, or this

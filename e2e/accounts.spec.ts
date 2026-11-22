@@ -513,6 +513,15 @@ test('warnings, and a tracker that never gets to load', async () => {
   expect(await frame.locator('img[src*="track.example"]').count()).toBe(0)
   hits.push(...await app.evaluate(() => (globalThis as unknown as { tracked?: string[] }).tracked ?? []))
   expect(hits).toEqual([])
+
+  // U+202E in a name showed it backwards, as "security@paypal.com", and nothing warned.
+  gmail.add(rawMail({ subject: 'Security check', from: '=?UTF-8?Q?=E2=80=AEmoc=2Elapyap=40ytiruces?= <attacker@evil.example>' }), { arrived: earlier(1) })
+  await syncAndSettle(page)
+  await page.locator('.threads').getByText('Security check').click()
+  await expect(page.getByRole('alert')).toContainText('hides characters')
+  const name = page.locator('.message.open .who-name strong bdi')
+  await expect(name).toHaveText('moc.lapyap@ytiruces')
+  expect(await name.evaluate((element) => element.textContent?.includes('\u202E'))).toBe(false)
 })
 
 test('the look can be set, and sticks', async () => {

@@ -148,7 +148,7 @@ export function Row(props: {
           <span className="thread-top">
             {unread && <span className="unread-dot" aria-hidden="true" />}
             {unread && <span className="sr-only">Unread, </span>}
-            <span className="sender">{head ? head.title : names}</span>
+            <span className="sender">{head ? head.title : <bdi>{plainName(names)}</bdi>}</span>
             {!head && row.count > 1 && <span className="count">({row.count})</span>}
             <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>
           </span>

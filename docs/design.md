@@ -276,6 +276,13 @@ does is let the pictures of a sender trusted for them load by themselves (`share
 server that adds no line, a sender who writes a passing one of their own above the rest still gets
 that far.
 
+Names, subjects and attachment names lose, as a message is read, the characters that turn text
+around (U+202A–202E, U+2066–2069), the marks that steer it (U+200E, U+200F, U+061C) and what draws
+nothing at all (`plainName`); the body keeps them, as the sender wrote it. U+202E turned
+`moc.lapyap@ytiruces` into a bold "security@paypal.com", and the check for a name showing another
+address saw it backwards, so a name that had any of the first kind is warned about. Names are drawn
+in `<bdi>`, so even a right-to-left one can't move the address beside it.
+
 A message's details show those results all the same, as Gmail's details do, labelled as what the
 receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
 strings are dropped before a result is looked for, only the top `Authentication-Results`,

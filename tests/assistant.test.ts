@@ -177,6 +177,27 @@ describe('warnings about a sender', () => {
     expect(await warned({ from: 'Ada <ada@example.com>', headers: ['Reply-To: x@evil.example', 'List-Id: <a.example>'] })).toEqual([])
   })
 
+  // U+202E shows the rest of a line backwards: this name read as "security@paypal.com", in bold, and
+  // the check for a name showing another address saw only the reversed text, so it said nothing.
+  it('catches a name turned around by hidden characters, and shows it without them', async () => {
+    const parsed = await mail({
+      from: '=?UTF-8?Q?=E2=80=AEmoc=2Elapyap=40ytiruces?= <attacker@evil.example>',
+      subject: '=?UTF-8?Q?Invoice_=E2=80=AEfdp=2Eexe?=',
+      text: 'Keep ‏this‮ as sent',
+      attachment: { name: 'photo‮gpj.exe', type: 'application/octet-stream', body: 'MZ' }
+    })
+    expect(parsed.warnings).toEqual(['hidden'])
+    expect(parsed.from).toEqual({ name: 'moc.lapyap@ytiruces', address: 'attacker@evil.example' })
+    expect(parsed.subject).toBe('Invoice fdp.exe')
+    expect(parsed.attachments[0]?.name).toBe('photogpj.exe')
+    expect(parsed.text).toContain('Keep ‏this‮ as sent') // the body is the sender's, as sent
+    for (const invisible of ['⁦', '⁩', '‎', '؜', '​', '﻿']) {
+      expect((await mail({ from: `"Mai${invisible} Tran" <mai@example.com>` })).from.name, escape(invisible)).toBe('Mai Tran')
+    }
+    expect(await warned({ from: '"Mai⁧ Tran" <mai@example.com>' })).toEqual(['hidden'])
+    expect(await warned({ from: '"Mai‏ Tran" <mai@example.com>' })).toEqual([]) // a mark, as right-to-left names carry
+  })
+
   it('is a pure reading of what it was given', () => {
     expect(senderWarnings({ from: { name: '', address: '' }, replyTo: [], authentication: '', bulk: false })).toEqual([])
   })
