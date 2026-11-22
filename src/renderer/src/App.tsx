@@ -394,7 +394,8 @@ export function App(): ReactNode {
       try {
         if (leaves && !SOLO) leave(refs)
         if (closes && !SOLO) setOpen(null)
-        const token = await window.mail.act(refs, action)
+        // What's offered with Undo waits for it before the server hears, or Undo would have nothing to call back.
+        const token = await window.mail.act(refs, action, label !== undefined)
         // Reading it again would only mark it read again, so a window of its own goes with it.
         if (SOLO && action.kind === 'unread') return window.close()
         setPicked(new Set())

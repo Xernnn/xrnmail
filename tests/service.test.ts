@@ -738,6 +738,29 @@ describe('changing mail', () => {
     expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
   })
 
+  // "Labelled Receipts", "Marked as read" and "Moved to Inbox" offered Undo for changes that went to
+  // Gmail at once, and only a change still waiting can be called back: Undo put the mail back here,
+  // the server kept it as changed, and the next sync changed it here again.
+  it('a change offered with Undo waits for it, whatever it is, and Undo calls it back before Gmail hears', async () => {
+    const labelled = service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    const read = service.act([ref('Two')], { kind: 'read' }, true)
+    await later(1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    service.undo(labelled)
+    service.undo(read)
+    await later(UNDO_MS)
+    await service.syncAll()
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    expect(fakeMail('Two').flags).not.toContain('\\Seen')
+    expect(service.list({ kind: 'inbox' }).find((r) => r.subject === 'Two')?.unread).toBe(1)
+    expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
+    service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    await later(UNDO_MS - 1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    await later(1000)
+    await eventually(() => expect(fakeMail('One').labels).toContain('Receipts'))
+  })
+
   // Undo pressed while the change was already on its way put the mail back here, and the server
   // made the change anyway: the inbox showed it until a later sync took it out again.
   it('undo once the change is on its way to Gmail leaves the mail where Gmail will have it', async () => {

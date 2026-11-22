@@ -1105,6 +1105,54 @@ test('a place in the sidebar can be right-clicked to mark all of it read', async
   await expect(page.getByText('Nothing unread there')).toBeVisible()
 })
 
+// These toasts offered Undo for changes that had gone to Gmail at once, so pressing it a moment
+// later did nothing: the toast went, and the mail stayed read, labelled or in the inbox.
+test('Undo calls back Mark all as read, a label and Move to Inbox, as it does archiving', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Old invoice' }), { box: '[Gmail]/Trash', arrived: earlier(6) })
+  gmail.add(rawMail({ subject: 'Alpha' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Beta' }), { arrived: earlier(4), labels: ['\\Inbox', 'Receipts'] })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const toast = page.getByRole('status').filter({ hasText: 'Undo' })
+  const mail = (subject: string): ReturnType<typeof gmail.mails.find> =>
+    [...gmail.mails, ...gmail.box('[Gmail]/Trash').mails].find((m) => m.raw.toString().includes(subject))
+  await expect(list.locator('.unread-dot')).toHaveCount(2)
+  await page.locator('.sidebar').getByRole('button', { name: /^Inbox/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Mark all as read' }).click()
+  await expect(toast).toContainText('Marked as read: 2 threads')
+  await expect(list.locator('.unread-dot')).toHaveCount(0)
+  await page.waitForTimeout(2000)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(list.locator('.unread-dot')).toHaveCount(2)
+
+  await page.getByLabel('Select Alpha').check({ force: true })
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  await bar.getByRole('button', { name: 'More for the selected' }).click()
+  await bar.getByRole('button', { name: /^Labels/ }).click()
+  await bar.getByRole('button', { name: 'Receipts', exact: true }).click()
+  await expect(toast).toContainText('Labelled Receipts')
+  await page.waitForTimeout(2000)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+
+  await page.getByRole('button', { name: 'Trash', exact: true }).click()
+  await list.locator('.thread', { hasText: 'Old invoice' }).hover()
+  await list.locator('.thread', { hasText: 'Old invoice' }).getByRole('button', { name: 'Move to Inbox' }).click()
+  await expect(toast).toContainText('Moved to Inbox')
+  await expect(list.getByText('Old invoice')).toHaveCount(0)
+  await page.waitForTimeout(2000)
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(list.getByText('Old invoice')).toBeVisible()
+
+  await page.waitForTimeout(6000) // past Undo's five seconds and the one more the server waits
+  expect(mail('Old invoice')?.labels).not.toContain('\\Inbox')
+  expect(gmail.box('[Gmail]/Trash').mails).toHaveLength(1)
+  expect(mail('Alpha')?.labels).not.toContain('Receipts')
+  expect(gmail.mails.filter((m) => m.flags.includes('\\Seen'))).toEqual([])
+  expect(gmail.writes().filter((c) => /STORE|MOVE/.test(c))).toEqual([])
+})
+
 // A thread ticked before a search stayed ticked once the search had left it out, and the bar still
 // said "1 selected". With none of the ticked ones in the list, the bar's buttons fell back to the
 // open thread: Delete selected deleted the thread being read, and the ticked one stayed.

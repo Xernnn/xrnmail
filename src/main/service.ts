@@ -829,11 +829,13 @@ export class MailService {
   }
 
   /** Done here at once, then sent to the server: straight away, or after Undo's had its chance for
-   *  the ones that take mail out of sight. It survives a restart, and waits out being offline. */
-  act(targets: ThreadRef[], action: MailAction): number {
+   *  the ones that take mail out of sight and any other the page offers Undo for ([undoable]). A
+   *  change already sent can't be called back, so an Undo offered for one that went at once would do
+   *  nothing. It survives a restart, and waits out being offline. */
+  act(targets: ThreadRef[], action: MailAction, undoable = false): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
+    const wait = takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)

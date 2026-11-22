@@ -495,8 +495,9 @@ export interface MailApi {
   finishEarly(): Promise<number>
   /** Lets remote images load, for the message on screen only. */
   allowRemoteImages(allow: boolean): Promise<void>
-  /** Applies at once here and reaches Gmail shortly after. Returns what undoes it. */
-  act(targets: ThreadRef[], action: MailAction): Promise<number>
+  /** Applies at once here and reaches Gmail shortly after: with [undoable], once Undo has had its
+   *  time, as what takes mail away always does. Returns what undoes it. */
+  act(targets: ThreadRef[], action: MailAction, undoable?: boolean): Promise<number>
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>

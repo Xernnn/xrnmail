@@ -30,7 +30,7 @@ const api: MailApi = {
   beginEarly: () => call('beginEarly'),
   finishEarly: () => call('finishEarly'),
   allowRemoteImages: (allow) => call('allowRemoteImages', allow),
-  act: (targets, action) => call('act', targets, action),
+  act: (targets, action, undoable) => call('act', targets, action, undoable === true),
   undo: (token) => call('undo', token),
   snooze: (targets, until) => call('snooze', targets, until),
   unsnooze: (targets) => call('unsnooze', targets),

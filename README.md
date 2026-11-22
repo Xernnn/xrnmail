@@ -52,7 +52,8 @@ kept on the laptop.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
-  General say: what takes mail away waits that long here before the server hears of it). It keeps
+  General say: what takes mail away, and anything else offered with Undo, waits that long here before
+  the server hears of it). It keeps
   working offline and catches up. On Gmail, threads it thinks matter carry its importance marker, and
   can be marked important or not from the ⋮ over a thread or under a selection. Once the open thread
   is archived or deleted, the next one opens, or the one before, or the list comes back, as Settings,

@@ -59,9 +59,11 @@ something the person did. imapflow answers `false` rather than throwing when a c
 ## Changes
 
 An action applies to `store.ts` at once, so the app never waits on the network, and joins the `pending`
-table. That's what lets it survive being offline or a restart. Anything that takes mail out of view waits
-out Undo (5 seconds, or up to 30 as Settings, General say) and one second more before setting off;
-everything else goes straight away.
+table. That's what lets it survive being offline or a restart. Anything that takes mail out of view,
+and any other change the page offers Undo for (Move to Inbox, a label added from a selection, Mark
+all as read), waits out Undo (5 seconds, or up to 30 as Settings, General say) and one second more
+before setting off, since a change already sent can't be called back; everything else goes straight
+away.
 
 - Only mail that can be seen is touched. A held reply in the same thread is left alone.
 - `MailService.inLane` runs one thing at a time per account. A sync reading the server while a change is
