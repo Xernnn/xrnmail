@@ -50,6 +50,8 @@ const DAY_MS = 86_400_000
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
 const NOTE_MS = 10 * 60_000
+/** Beside the account when a message didn't go. What went wrong is on the draft, in Drafts. */
+export const SEND_FAILED = 'Sending failed. See Drafts.'
 
 const DEFAULT_SETTINGS: Settings = {
   batch: { live: false, times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
@@ -1316,6 +1318,7 @@ export class MailService {
     this.store.deleteDraft(id)
     this.deps.files.clear(id)
     this.dirtySince.delete(id)
+    if (draft) this.sendFailureDealt(draft.account)
     this.deps.changed()
   }
 
@@ -1649,6 +1652,7 @@ export class MailService {
       this.store.saveDraft(gone
         ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
         : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: waiting })
+      if (gone) this.note(draft.account, SEND_FAILED)
       this.deps.changed()
       return null
     }
@@ -1663,6 +1667,7 @@ export class MailService {
       const copy = await sender.send(this.outgoingFrom(draft))
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
+      this.sendFailureDealt(draft.account)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
       return draft.account
     } catch (e) {
@@ -1671,14 +1676,22 @@ export class MailService {
       } else if (e instanceof Unmade) {
         // Nothing was handed over, so it's said plainly, not as "check Sent".
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: "One of its attachments can't be read on this laptop any more, so nothing was sent. Remove it and send again." })
+        this.note(draft.account, SEND_FAILED)
       } else {
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+        this.note(draft.account, SEND_FAILED)
       }
       return null
     } finally {
       sender.close()
       this.deps.changed()
     }
+  }
+
+  /** "Sending failed" stays beside the account while one of its drafts is still failed. */
+  private sendFailureDealt(email: string): void {
+    if (this.notes.get(email)?.text !== SEND_FAILED) return
+    if (!this.store.drafts().some((d) => d.account === email && d.state === 'failed')) this.notes.delete(email)
   }
 
   /** The message has gone by now, so a failure here can only cost the copy, never send it again. */

@@ -40,6 +40,38 @@ test('writing a new message: it leaves, and lands in Sent', async () => {
   await expect(page.getByText('Hello from xrnmail')).toBeVisible(LONG)
 })
 
+// With Undo send off, the toast said "Sent" as soon as the message was queued, and a send that then
+// failed said nothing: the only sign was a count by Drafts.
+test('a message is "Sent" only once it has gone, and a send that fails says so and stays in Drafts', async () => {
+  run = await launch()
+  const { page, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  const toast = page.getByRole('status')
+  const write = async (subject: string): Promise<void> => {
+    await page.keyboard.press('c')
+    const box = composer(page)
+    await box.getByLabel('To').fill('ada@example.com')
+    await box.getByLabel('Subject').fill(subject)
+    await box.getByLabel('Message').click()
+    await page.keyboard.type('Plain words')
+    await page.keyboard.press('Control+Enter')
+    await expect(box).toHaveCount(0)
+  }
+  smtp.dropAfterData = true
+  await write('Cut off')
+  await expect(toast).toHaveText('Sending')
+  await expect(toast).toHaveText('Sending failed', LONG)
+  await expect(page.locator('.sidebar').getByRole('alert')).toHaveText('Sending failed. See Drafts.')
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await expect(page.locator('.thread.problem')).toContainText('This may not have been sent')
+
+  smtp.dropAfterData = false
+  await write('Goes through')
+  await expect(toast).toHaveText('Sent', LONG)
+  expect(smtp.sent.map((m) => m.raw.includes('Subject: Goes through'))).toEqual([true])
+})
+
 test('the composer: From under the recipients, formatting in a bar of its own, and Send in words at the foot', async () => {
   run = await launch()
   const { page, smtp } = run

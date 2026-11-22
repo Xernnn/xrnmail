@@ -115,6 +115,9 @@ is all Undo and "send later" are. `tick()` sends what's due.
   anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
 - Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
   attempt, so a crash comes back the same way instead of as a retry.
+- A draft that ends in `failed` stays in Drafts with what went wrong, and the account says "Sending
+  failed" in the sidebar until it's sent or thrown away. The page says "Sent" only once the draft has
+  gone, never when it's queued.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
   changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
   written if the draft is still queued and due at that moment, and what goes is the draft as it is

@@ -30,6 +30,8 @@ interface Toast {
   undo?: () => unknown
   /** How long it stays, when Undo lasts longer than usual. */
   ms?: number
+  /** It's about a message on its way, which says how that went once it knows. */
+  sending?: boolean
 }
 
 const TOAST_MS = 5000
@@ -160,6 +162,8 @@ export function App(): ReactNode {
   const anchor = useRef<number | null>(null)
   /** A draft on its way to the composer, which Esc can still call off. */
   const starting = useRef<{ off: boolean } | null>(null)
+  /** Messages sent from here and not yet gone, by draft. */
+  const going = useRef(new Set<number>())
 
   const bump = useCallback(() => setVersion((v) => v + 1), [])
   const say = useCallback((text: string): void => setToast({ text }), [])
@@ -493,9 +497,22 @@ export function App(): ReactNode {
     }
   }
 
+  // A message on its way is "Sent" once it has gone from Drafts, and a failure says so; what went
+  // wrong is on the draft, which stays. An Undo on offer for something else meanwhile stays.
+  useEffect(() => {
+    for (const id of going.current) {
+      const draft = drafts.find((d) => d.id === id)
+      if (draft && draft.state !== 'failed') continue
+      going.current.delete(id)
+      const text = draft ? 'Sending failed' : 'Sent'
+      setToast((now) => (now?.undo && !now.sending ? now : { text }))
+    }
+  }, [drafts])
+
   /** "Sending", with Undo bringing the message back to the composer. */
   const announce = (id: number, when: number, scheduled: boolean): void => {
     const undo = async (): Promise<void> => {
+      going.current.delete(id)
       try {
         await window.mail.unsend(id)
         const draft = (await window.mail.drafts()).find((d) => d.id === id)
@@ -506,7 +523,8 @@ export function App(): ReactNode {
     }
     if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo })
     const left = when - Date.now()
-    setToast(left > 0 ? { text: 'Sending', undo, ms: left } : { text: 'Sent' })
+    going.current.add(id)
+    setToast(left > 0 ? { text: 'Sending', undo, ms: left, sending: true } : { text: 'Sending', sending: true })
   }
 
   const sent = (id: number, when: number, scheduled: boolean): void => {

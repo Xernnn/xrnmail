@@ -6,7 +6,7 @@ import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
-import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
+import { cleanBatch, describeFailure, MailService, SEND_FAILED, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
@@ -1159,6 +1159,31 @@ describe('sending', () => {
     await later(120_000)
     expect(smtp.received).toBe(1)
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'This may not have been sent. Check Sent before trying again.' })
+  })
+
+  // A send that failed marked its draft and said nothing else: no word beside the account, so with
+  // the composer gone the only sign was a count by Drafts.
+  it('a send that fails says so beside the account until its draft is sent or thrown away', async () => {
+    const draft = await write()
+    smtp.dropAfterData = true
+    service.send(draft.id)
+    await later(10_000)
+    expect(service.drafts()[0]).toMatchObject({ id: draft.id, state: 'failed' })
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    smtp.dropAfterData = false
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent).toHaveLength(1)
+    expect(service.accounts()[0]?.error).toBeNull()
+
+    const other = await write({ subject: 'Plan' })
+    service.addFileBytes(other.id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    rmSync(join(folder, String(other.id)), { recursive: true, force: true })
+    service.send(other.id)
+    await later(11_000)
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    service.discardDraft(other.id)
+    expect(service.accounts()[0]?.error).toBeNull()
   })
 
   it('sends nothing called back, changed or thrown away while another message was going', async () => {
