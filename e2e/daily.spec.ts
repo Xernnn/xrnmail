@@ -1564,6 +1564,30 @@ test('Snoozed says when each thread comes back, and Unsnooze brings one back now
   await expect(tools.getByRole('button', { name: 'Unsnooze' })).toHaveCount(0)
 })
 
+// A menu's own button, pressed again, closed the menu as a click outside it, and the click then
+// opened it again: Snooze, More and Send later could only be closed by clicking somewhere else.
+test('a menu\'s button pressed again closes it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plans' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Plans').click()
+  const tools = page.getByRole('toolbar', { name: 'Thread', exact: true })
+  const menu = page.locator('.popover')
+  for (const name of ['Snooze', 'More', 'Labels']) {
+    await tools.getByRole('button', { name, exact: true }).click()
+    await expect(menu).toHaveCount(1)
+    await tools.getByRole('button', { name, exact: true }).click()
+    await expect(menu).toHaveCount(0)
+  }
+  await page.keyboard.press('c')
+  const later = composer(page).getByRole('button', { name: 'Send later' })
+  await later.click()
+  await expect(menu).toHaveCount(1)
+  await later.click()
+  await expect(menu).toHaveCount(0)
+})
+
 test('Settings say what Tomorrow, the weekend and Next week mean, for snoozing and for sending later', async () => {
   run = await launch()
   const { page, gmail } = run
