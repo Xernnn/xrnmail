@@ -781,7 +781,10 @@ export function App(): ReactNode {
       // A ticked checkbox keeps the focus, and that shouldn't cost the keyboard. Keys forwarded from
       // a message's frame have the window as their target, which isn't an element at all.
       const typing = element.matches?.('input:not([type=checkbox]), textarea, select') || element.isContentEditable
-      if (typing || settings || help || composing || question) {
+      // The composer sits docked over the reader, so the list and the thread go on hearing keys
+      // beside it; only what's pressed inside it is its own. A composer of its own is all its window has.
+      const writing = Boolean(element.closest?.('.composer')) || SOLO?.kind === 'draft'
+      if (typing || settings || help || writing || question) {
         if (event.key === 'Escape' && event.target === searchBox.current) {
           setSearch('')
           searchBox.current?.blur()

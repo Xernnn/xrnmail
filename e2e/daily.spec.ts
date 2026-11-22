@@ -1344,6 +1344,33 @@ test('keys work after clicking inside a message', async () => {
   await expect(page.locator('.threads').getByText('Styled')).toHaveCount(0)
 })
 
+// Every key went dead while a composer was open, though it sits docked in a corner and the list and
+// the thread are there beside it to go on reading.
+test('keys work beside an open composer, and none of them act from inside it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (const [i, subject] of ['Oldest', 'Middle', 'Newest'].entries()) gmail.add(rawMail({ subject }), { arrived: earlier(5 - i) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const reading = page.locator('.thread-subject')
+  await list.getByText('Newest').click()
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await expect(box.getByLabel('To')).toBeFocused()
+  await box.getByRole('button', { name: 'Bold' }).focus()
+  await page.keyboard.press('j')
+  await page.keyboard.press('e')
+  await expect(reading).toHaveText('Newest')
+  await expect(list.getByText('Newest')).toBeVisible()
+  await list.getByText('Newest').click()
+  await page.keyboard.press('j')
+  await expect(reading).toHaveText('Middle')
+  await page.keyboard.press('e')
+  await expect(list.getByText('Middle')).toHaveCount(0)
+  await expect(page.getByText('Archived')).toBeVisible()
+  await expect(box).toBeVisible()
+})
+
 test('snoozing takes a thread away until its time, and it can be found meanwhile', async () => {
   run = await launch()
   const { page, gmail } = run
