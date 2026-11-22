@@ -164,8 +164,19 @@ export function App(): ReactNode {
   const starting = useRef<{ off: boolean } | null>(null)
   /** Messages sent from here and not yet gone, by draft. */
   const going = useRef(new Set<number>())
+  /** The open composer's draft, and its Close. */
+  const closing = useRef<{ id: number; close(): Promise<void> } | null>(null)
 
   const bump = useCallback(() => setVersion((v) => v + 1), [])
+  /** One composer at a time. The one open is closed first, as its own Close would close it, so what's
+   *  written there is kept in Drafts and a reply nobody wrote in goes. The same draft stays as it is. */
+  const showComposer = useCallback(async (draft: Draft, fresh = false): Promise<void> => {
+    const shown = closing.current
+    if (shown?.id === draft.id) return
+    if (shown) await shown.close().catch(() => undefined)
+    if (fresh) setStarted(draft)
+    setComposing(draft)
+  }, [])
   const say = useCallback((text: string): void => setToast({ text }), [])
 
   /** "Are you sure", answered in the app's own dialog. */
@@ -179,7 +190,7 @@ export function App(): ReactNode {
   useEffect(() => {
     if (!SOLO) void window.mail.searches().then(setSearches).catch(() => undefined)
   }, [])
-  useEffect(() => window.mail.onCompose(setComposing), [])
+  useEffect(() => window.mail.onCompose((draft) => void showComposer(draft)), [])
   // The notice for a new message leads to it, in the inbox it came to.
   useEffect(() => window.mail.onOpenThread((ref) => {
     setView({ kind: 'inbox' })
@@ -446,14 +457,13 @@ export function App(): ReactNode {
       starting.current = attempt
       try {
         const draft = await window.mail.startDraft(start)
-        setStarted(draft)
-        setComposing(draft)
+        await showComposer(draft, true)
       } catch (e) {
         if (starting.current === attempt) starting.current = null
         say(problem(e))
       }
     },
-    [say]
+    [say, showComposer]
   )
 
   // Once the composer is on screen it hears its own keys.
@@ -491,7 +501,7 @@ export function App(): ReactNode {
       // Being written in a window of its own: that window comes forward, and there's still one editor.
       if (draft.state !== 'queued' && await window.mail.showDraftWindow(draft.id)) return
       if (draft.state === 'queued') await window.mail.unsend(draft.id)
-      setComposing({ ...draft, state: 'draft', sendAt: null })
+      await showComposer({ ...draft, state: 'draft', sendAt: null })
     } catch (e) {
       say(problem(e))
     }
@@ -516,7 +526,7 @@ export function App(): ReactNode {
       try {
         await window.mail.unsend(id)
         const draft = (await window.mail.drafts()).find((d) => d.id === id)
-        if (draft) setComposing(draft)
+        if (draft) await showComposer(draft)
       } catch (e) {
         say(problem(e))
       }
@@ -549,7 +559,7 @@ export function App(): ReactNode {
   const unsubscribe = async (message: number): Promise<void> => {
     try {
       const result = await window.mail.unsubscribe(message)
-      if (result.kind === 'draft') setComposing(result.draft)
+      if (result.kind === 'draft') await showComposer(result.draft)
       else say(result.kind === 'done' ? 'Unsubscribed' : 'Opened their page in your browser')
       bump()
     } catch (e) {
@@ -981,7 +991,7 @@ export function App(): ReactNode {
     <>
       {composing && (
         <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          solo={SOLO?.kind === 'draft'} leaving={leaving} fresh={composing === started}
+          solo={SOLO?.kind === 'draft'} leaving={leaving} closing={closing} fresh={composing === started}
           moveOut={(id) => {
             setComposing(null)
             void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))

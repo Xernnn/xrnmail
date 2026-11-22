@@ -126,6 +126,8 @@ export function Composer(props: {
   moveOut(id: number): void
   /** Filled in while it's open with what to do before its window closes. */
   leaving: { current: (() => Promise<void>) | null }
+  /** Filled in while it's open with its own Close, for when another composer takes its place. */
+  closing?: { current: { id: number; close(): Promise<void> } | null }
   /** Just started here, by Reply, Forward or a new message: closed as it started, it goes. */
   fresh?: boolean
 }): ReactNode {
@@ -240,6 +242,14 @@ export function Composer(props: {
     gone.current = true
     props.close(true)
   }
+
+  useEffect(() => {
+    const { closing } = props
+    if (!closing) return undefined
+    const mine = { id: draft.id, close: closeUp }
+    closing.current = mine
+    return () => { if (closing.current === mine) closing.current = null }
+  })
 
   // An Esc pressed while this was on its way counts as pressed here.
   useLayoutEffect(() => {
