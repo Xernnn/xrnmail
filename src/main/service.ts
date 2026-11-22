@@ -194,6 +194,9 @@ export function cleanBatch(batch: BatchSettings): BatchSettings {
   }
 }
 
+/** What's said while a service can't be reached, which a pass that gets through takes away. */
+const unreachable = (service: string): string => `Couldn't reach ${service}.`
+
 /** Fixed words: what a server says is never shown, and can't carry anything back to the page. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
   const e = error as { authenticationFailed?: boolean; message?: string }
@@ -202,7 +205,7 @@ export function describeFailure(error: unknown, service = 'the mail server'): st
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
-  return `Couldn't reach ${service}.`
+  return unreachable(service)
 }
 
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i
@@ -246,6 +249,10 @@ type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progr
 const WORTH_SHOWING = 40
 /** How long a lost watch on the inbox waits before trying again. Syncs carry on regardless. */
 const WATCH_RETRY_MS = 60_000
+/** How long an account waits to try again after a pass that couldn't reach its server, longer each
+ *  time it fails again: the network is often back within seconds of waking or of a VPN reconnecting.
+ *  After the last, the three-minute passes carry on as usual. */
+export const PASS_RETRY_MS = [5_000, 15_000, 30_000, 60_000]
 /** How many previews are remade at a time, so the app stays quick while it happens. */
 const SNIPPET_STEP = 50
 /** How long a watch waits after the server's last word before syncing, so a burst of them (a
@@ -284,6 +291,8 @@ export class MailService {
   private rewatch: NodeJS.Timeout | null = null
   /** Something arrived during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
+  private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
    *  changes, even if the account has been added back since. */
   private removals = new Map<string, number>()
@@ -567,6 +576,7 @@ export class MailService {
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
+    this.stopRetrying(email)
     this.deps.secrets.remove(`account:${email}`)
     this.store.deleteMeta(`config:${email}`)
     this.store.deleteMeta(`folders:${email}`)
@@ -588,6 +598,38 @@ export class MailService {
 
   async syncAll(): Promise<void> {
     await Promise.all(this.emails().map((email) => this.syncOne(email)))
+  }
+
+  /** After waking from sleep: every connection may be dead, so each watch starts again, the waits
+   *  between tries start over, and every account syncs. A pass that runs before the network is
+   *  back is tried again within seconds. */
+  async reconnect(): Promise<void> {
+    for (const email of [...this.retries.keys()]) this.stopRetrying(email)
+    if (this.watching) {
+      this.stopWatching()
+      this.watchAll()
+    }
+    await this.syncAll()
+  }
+
+  /** Soon after a pass that couldn't get through, and a little later each time it fails again. */
+  private retrySoon(email: string): void {
+    const retry = this.retries.get(email) ?? { tries: 0, timer: null }
+    this.retries.set(email, retry)
+    const wait = PASS_RETRY_MS[retry.tries]
+    if (retry.timer || wait === undefined) return
+    retry.tries++
+    retry.timer = setTimeout(() => {
+      retry.timer = null
+      background(this.syncOne(email))
+    }, wait)
+    retry.timer.unref?.()
+  }
+
+  private stopRetrying(email: string): void {
+    const retry = this.retries.get(email)
+    if (retry?.timer) clearTimeout(retry.timer)
+    this.retries.delete(email)
   }
 
   private async syncOne(email: string): Promise<void> {
@@ -731,8 +773,11 @@ export class MailService {
       await this.readDrafts(email, source, this.deps.now() - settings.backfillDays * DAY_MS, removed)
       status.syncedAt = this.deps.now()
       status.error = null
+      this.stopRetrying(email)
     } catch (e) {
-      status.error = describeFailure(e, this.serviceName(email))
+      const service = this.serviceName(email)
+      status.error = describeFailure(e, service)
+      if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
     } finally {
       await source?.close().catch(() => undefined)
       status.syncing = false

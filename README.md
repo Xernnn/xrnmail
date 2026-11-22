@@ -239,8 +239,9 @@ to wait for.
   after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
 - **A server gone quiet** is given up on rather than waited for: 30 seconds to connect, 20 to be
   greeted, and a minute with a command out and nothing heard. The status line says it couldn't reach
-  the service, and the next sync goes as usual. A change that was on its way then waits and goes
-  again; it isn't counted as refused.
+  the service, and it tries again after 5 seconds, then 15, 30 and 60, and from then on with the
+  three-minute passes; waking from sleep starts that over. A change that was on its way then waits
+  and goes again; it isn't counted as refused.
 - **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
   go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
   project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,

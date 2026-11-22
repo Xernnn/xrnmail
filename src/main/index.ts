@@ -798,11 +798,7 @@ void app.whenReady().then(() => {
   service.watchAll()
   const syncing = setInterval(() => background(service.syncAll()), SYNC_MS)
   const ticking = setInterval(() => background(service.tick()), TICK_MS)
-  powerMonitor.on('resume', () => {
-    service.stopWatching()
-    service.watchAll()
-    background(service.syncAll())
-  })
+  powerMonitor.on('resume', () => background(service.reconnect()))
   let finished = false
   app.on('before-quit', (event) => {
     quitting = true

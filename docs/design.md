@@ -189,6 +189,12 @@ Every three minutes, and on waking, each account connects, syncs and logs out. B
 depends on being fast, so these passes are what the app relies on; watching the inbox, below, only
 brings the next one forward.
 
+A pass that can't reach the server is tried again after 5 seconds, then 15, 30 and 60 (`PASS_RETRY_MS`),
+and after that the three-minute passes carry on as usual. Waking from sleep is often seconds ahead of
+the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the quick tries, "Couldn't
+reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
+that gets through ends them. A refused password isn't tried again this way: asking again won't help.
+
 A pass goes through each folder in turn, inbox first. For each it fetches what's missing, newest first,
 then applies label and flag changes, then forgets what's gone. A folder the server has stopped listing
 is forgotten too, and an ordinary folder that refuses to open or to be searched is skipped rather than
