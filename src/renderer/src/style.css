@@ -372,6 +372,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .count { flex: none; font-size: 15px; }
 .thread.unread .count { font-weight: 700; }
 .thread time { flex: none; margin-left: auto; padding-left: 10px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.thread time.back { display: inline-flex; align-items: center; gap: 4px; }
 .thread-mid { display: flex; align-items: center; gap: 6px; min-width: 0; height: 22px; }
 .subject { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .thread.unread .subject { font-weight: 700; }

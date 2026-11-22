@@ -1475,6 +1475,42 @@ test('snoozing takes a thread away until its time, and it can be found meanwhile
   await expect(page.locator('.threads').getByText('Later please')).toBeVisible()
 })
 
+// Snoozed showed each thread's own date, not when it comes back, and only the snooze toast's Undo
+// could bring one back early.
+test('Snoozed says when each thread comes back, and Unsnooze brings one back now', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Later please' }), { arrived: earlier(30) })
+  gmail.add(rawMail({ subject: 'Also later' }), { arrived: earlier(29) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  for (const subject of ['Later please', 'Also later']) {
+    await list.getByText(subject).click()
+    await page.keyboard.press('b')
+    await page.getByRole('button', { name: /^Tomorrow/ }).click()
+    await expect(list.getByText(subject)).toHaveCount(0)
+  }
+  await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+  const row = list.locator('.thread', { hasText: 'Later please' })
+  await expect(row.locator('time')).toContainText('09:00') // Tomorrow, as Settings have it
+  await row.getByText('Later please').click()
+  const tools = page.getByRole('toolbar', { name: 'Thread', exact: true })
+  await tools.getByRole('button', { name: 'Unsnooze' }).click()
+  await expect(page.getByRole('status')).toHaveText(/^Unsnoozed/)
+  await expect(list.getByText('Later please')).toHaveCount(0)
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  await expect(list.getByText('Later please')).toBeVisible()
+
+  await list.getByText('Also later').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Unsnooze' }).click()
+  await expect(list.getByText('Also later')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  await expect(list.locator('.thread .subject')).toHaveText(['Also later'])
+  await list.getByText('Also later').click()
+  await expect(tools.getByRole('button', { name: 'Snooze' })).toBeVisible()
+  await expect(tools.getByRole('button', { name: 'Unsnooze' })).toHaveCount(0)
+})
+
 test('Settings say what Tomorrow, the weekend and Next week mean, for snoozing and for sending later', async () => {
   run = await launch()
   const { page, gmail } = run

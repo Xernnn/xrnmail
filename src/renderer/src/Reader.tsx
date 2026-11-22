@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
+  AlarmClockOff, ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
@@ -280,6 +280,8 @@ export function Reader(props: {
   popOut?: () => void
   act(action: MailAction, label?: string): void
   snooze(at: number): void
+  /** It's snoozed, and can be brought back now. */
+  unsnooze?: () => void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
   block(address: string): void
@@ -411,6 +413,7 @@ export function Reader(props: {
               <IconButton icon={Clock} label="Snooze" hint="b" click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
               {panel === 'snooze' && <TimeMenu title="Snooze until" right pick={props.snooze} close={() => setPanel(null)} />}
             </div>
+            {props.unsnooze && <IconButton icon={AlarmClockOff} label="Unsnooze" click={props.unsnooze} />}
           </>
         )}
         <div className="anchor">

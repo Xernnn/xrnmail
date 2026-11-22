@@ -105,7 +105,9 @@ kept on the laptop.
 - **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
   Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
   the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
-  today is offered only while it's still today, and This evening only before it comes.
+  today is offered only while it's still today, and This evening only before it comes. Snoozed shows
+  when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
+  it back now.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.

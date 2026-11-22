@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
+  AlarmClockOff, Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
   SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
 import {
@@ -451,6 +451,28 @@ export function App(): ReactNode {
     [leave, say]
   )
 
+  /** Back from snooze now. Undo snoozes each again until its own time, if that's still to come. */
+  const unsnooze = useCallback(
+    async (refs: ThreadRef[]) => {
+      const until = new Map(refs.map((ref) => [keyOf(ref), list.find((r) => keyOf(r) === keyOf(ref))?.snoozedUntil ?? null]))
+      try {
+        if (!SOLO && active.kind === 'snoozed') leave(refs)
+        await window.mail.unsnooze(refs)
+        setPicked(new Set())
+        setToast({
+          text: refs.length > 1 ? `Unsnoozed: ${refs.length} threads` : 'Unsnoozed',
+          undo: async () => {
+            const times = new Set([...until.values()].filter((at): at is number => at !== null && at > Date.now()))
+            for (const at of times) await window.mail.snooze(refs.filter((ref) => until.get(keyOf(ref)) === at), at)
+          }
+        })
+      } catch (e) {
+        say(problem(e))
+      }
+    },
+    [leave, say, list, active.kind]
+  )
+
   const compose = useCallback(
     async (start: DraftStart) => {
       const attempt = { off: false }
@@ -795,6 +817,7 @@ export function App(): ReactNode {
       'gap',
       { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
       { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
+      ...(active.kind === 'snoozed' ? [{ label: 'Unsnooze', icon: AlarmClockOff, run: () => void unsnooze(refs) }] : []),
       { label: 'Report spam', icon: OctagonAlert, run: () => void run(refs, { kind: 'spam' }, 'Reported as spam') },
       { label: 'Delete', icon: Trash2, danger: true, run: () => void run(refs, { kind: 'trash' }, 'Moved to Trash') },
       'gap',
@@ -971,6 +994,8 @@ export function App(): ReactNode {
   // Live, nothing waits for a delivery, so there's nobody to let straight through.
   const batching = profile ? !profile.batch.live && profile.batch.times.length > 0 : false
 
+  // Snoozed lists what's away; elsewhere a snoozed thread is one a reply has woken.
+  const openSnoozed = active.kind === 'snoozed' && open !== null && list.some((r) => keyOf(r) === keyOf(open))
   const popOut = (): void => {
     if (!open) return
     // It's read there from now on. Left open here as well, this window would mark it read again
@@ -991,6 +1016,7 @@ export function App(): ReactNode {
       labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
+      unsnooze={openSnoozed ? () => void unsnooze(open ? [open] : []) : undefined}
       reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address, open ? [open] : [])} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
@@ -1163,7 +1189,7 @@ export function App(): ReactNode {
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
                 <Fragment key={keyOf(row)}>
                 {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
-                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
+                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'} snoozed={active.kind === 'snoozed'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
                   swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true} importance={profile?.importanceMarks ?? true}
@@ -1208,6 +1234,7 @@ export function App(): ReactNode {
                   )}
                   <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
                   <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
+                  {active.kind === 'snoozed' && <IconButton icon={AlarmClockOff} label="Unsnooze selected" click={() => void unsnooze(refs)} />}
                   {!bins && (
                     <div className="anchor">
                       <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
