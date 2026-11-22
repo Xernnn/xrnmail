@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { imagesLoad } from '@shared/images'
@@ -329,6 +329,9 @@ export function Reader(props: {
     })
 
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
+  // Opened, a thread is read at once unless Settings say to wait or to leave it to you; then it can
+  // be marked read from here.
+  const unread = (settings?.readAfter ?? 0) !== 0 && messages.some((m) => !m.seen)
   const starred = messages.some((m) => m.flagged)
   const pinned = messages.some((m) => m.pinned)
   const important = messages.some((m) => m.labels.includes(IMPORTANT))
@@ -395,7 +398,9 @@ export function Reader(props: {
             <IconButton icon={Trash2} label="Delete" hint="#" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
             <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint="s" on={starred}
               click={() => act({ kind: starred ? 'unstar' : 'star' })} />
-            <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />
+            {unread
+              ? <IconButton icon={MailOpen} label="Mark read" hint="Shift+I" click={() => act({ kind: 'read' })} />
+              : <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />}
             <div className="anchor">
               <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint="l" click={() => setPanel(panel === 'labels' ? null : 'labels')} />
               {panel === 'labels' && (gmail

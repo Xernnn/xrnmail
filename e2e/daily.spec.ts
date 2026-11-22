@@ -1106,6 +1106,17 @@ test('Settings choose when an open thread is marked read: at once, after a while
   await expect(dot('Charlie')).toHaveCount(0)
   expect(gmail.mails.filter((m) => m.flags.includes('\\Seen')).length).toBeLessThanOrEqual(2)
   await expect.poll(() => gmail.mails.filter((m) => m.raw.toString().includes('Alpha') && m.flags.includes('\\Seen')).length, LONG).toBe(0)
+
+  // And by the button over the thread, which says Mark read while it's unread. It only said Mark
+  // unread, which on a thread not yet read closed it and did nothing else.
+  const tools = page.getByRole('toolbar', { name: 'Thread', exact: true })
+  await list.getByText('Alpha').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Alpha')
+  await expect(tools.getByRole('button', { name: 'Mark unread' })).toHaveCount(0)
+  await tools.getByRole('button', { name: 'Mark read' }).click()
+  await expect(dot('Alpha')).toHaveCount(0)
+  await expect(page.locator('.thread-subject')).toHaveText('Alpha')
+  await expect(tools.getByRole('button', { name: 'Mark unread' })).toBeVisible()
 })
 
 test('Settings can show a thread newest first: the newest on top and open, what is folded under it, and Reply still answers the newest', async () => {
