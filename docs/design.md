@@ -430,11 +430,20 @@ wanted, rather than showing initials until its month is out.
 
 Each lookup tells someone something, so the rules are about when and how:
 
-- **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
-  mail that arrived after the account was added), and a list's rows, which ask for everyone they
-  name. The reader, the composer's suggestions and the drafts only ask what's already known
-  (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
-  with a sender warning ask nothing for that sender and show initials.
+- **When.** Only a list's rows ask for lookups, for everyone they name. Mail arriving doesn't
+  (the service's `noticed` is left unused): a lookup then told a sender, by a TXT query for a name
+  only they used and a logo fetched from where they said, that the address works and when the mail
+  got here, even for mail still waiting for its batch. The reader, the composer's suggestions and
+  the drafts only ask what's already known (`faces(addresses, false)`), so opening a message never
+  makes a request anyone else can see. Rows with a sender warning ask nothing for that sender and
+  show initials. With Show faces off (`faces` in Settings), nothing is looked up and only an
+  account's chosen photo shows; turning it off or on has the page ask for every face again.
+- **Logos.** A company's logo, BIMI or site icon, is looked up and shown only for an address whose
+  newest mail here passed DMARC by the account's own server (`Store.passedDmarc`), so for its own
+  domain: a stranger writing a company's address gets initials, and any domain can name any SVG in
+  its BIMI record, so one with no checks of its own can't put a bank's logo on its mail. A domain
+  that passes its own DMARC still shows whatever logo it names: the certificate a BIMI record can
+  point to (`a=`) isn't checked.
 - **How.** The main process does all of it with Node's own fetch, which the page's network walls
   don't cover and don't need to. Only https to a public name that resolves to no private, loopback,
   shared (carrier NAT, Tailscale) or link-local address, GET, no redirects, no cookies, a time

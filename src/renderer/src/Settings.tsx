@@ -42,7 +42,7 @@ const TABS: [Tab, string, TabIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images faces photos logos gravatar tray background start login',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
@@ -353,6 +353,7 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
       <section>
         <h3>Reading</h3>
         <Check label="Load the pictures in a message without asking" on={settings.images === 'always'} set={(on) => save({ images: on ? 'always' : 'ask' })} />
+        <Check label="Show faces" on={settings.faces} set={(faces) => save({ faces })} />
         <Choice label="Mark a thread read" value={settings.readAfter} set={(readAfter) => save({ readAfter })}
           options={[[0, 'As soon as it opens'], [1, 'After 1 second'], [2, 'After 2 seconds'], [5, 'After 5 seconds'], [-1, 'Only when I mark it read']]} />
         <Choice label="Messages in a thread" value={settings.threadOrder} set={(threadOrder) => save({ threadOrder })}

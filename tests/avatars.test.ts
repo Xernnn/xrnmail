@@ -330,6 +330,42 @@ describe('keeping faces', () => {
     }
   })
 
+  // Any domain could publish a BIMI record naming a bank's logo, and a lookalike passing its own
+  // checks got it, as did a stranger's mail with a company's address on it.
+  it('gives a company\'s logo only to a sender whose mail passed DMARC, and looks one up for no one else', async () => {
+    const sources = made({}, { 'shop.example': svg, 'bank-login.example': svg })
+    const passed = new Set(['orders@shop.example'])
+    const avatars = new Avatars({ dir: null, sources, now: () => 0, vouched: (addresses) => new Set(addresses.filter((a) => passed.has(a))) })
+    avatars.faces(['x@bank-login.example', 'news@e.shop.example'], true)
+    await avatars.idle()
+    expect(sources.asked.sort()).toEqual(['photo:news@e.shop.example', 'photo:x@bank-login.example'])
+    avatars.faces(['orders@shop.example'], true)
+    await avatars.idle()
+    expect(sources.asked).toContain('logo:shop.example')
+    expect(sources.asked).not.toContain('logo:bank-login.example')
+    const faces = avatars.faces(['orders@shop.example', 'news@e.shop.example'], false)
+    expect(faces['orders@shop.example']).toMatchObject({ logo: true })
+    expect(faces['news@e.shop.example']).toBeNull() // the company's logo is known, but this mail isn't proved
+  })
+
+  it('with Faces off, looks nothing up and shows nothing but a chosen photo', async () => {
+    const sources = made({ 'mai@example.com': png }, { 'shop.example': svg })
+    let on = true
+    const avatars = new Avatars({ dir: null, sources, now: () => 0, on: () => on, ownerOf: (a) => (a === 'me@example.com' ? a : null) })
+    avatars.faces(['mai@example.com', 'news@shop.example'], true)
+    await avatars.idle()
+    avatars.choose('me@example.com', png)
+    expect(avatars.faces(['mai@example.com'], false)['mai@example.com']).toMatchObject({ logo: false })
+    on = false
+    const before = sources.asked.length
+    expect(avatars.faces(['mai@example.com', 'news@shop.example', 'me@example.com', 'linh@example.com'], true)).toEqual({
+      'mai@example.com': null, 'news@shop.example': null, 'me@example.com': expect.objectContaining({ logo: false }), 'linh@example.com': null
+    })
+    avatars.want(['linh@example.com'])
+    await avatars.idle()
+    expect(sources.asked.length).toBe(before)
+  })
+
   it('shows an account\'s chosen photo on every address of it, until it is taken away', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'xrnmail-avatars-'))
     try {

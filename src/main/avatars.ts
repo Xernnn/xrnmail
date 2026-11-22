@@ -9,10 +9,12 @@ import { isPrivateAddress, isPublicHttps } from './safe-url'
  * its BIMI record or, failing that, DuckDuckGo's icon for its domain, and initials when there's none.
  *
  * Every lookup tells someone something, so it's done here in the main process, only over https, for
- * a sender when their mail arrives or when they're first shown in a list, never because a message
- * was opened. What's found, and what isn't, is kept on disk for weeks, so each one is asked rarely.
- * A picture is decoration: anyone can publish one for their own address or domain, so it proves
- * nothing about who sent a message, and the page shows initials for mail with a sender warning.
+ * a sender when they're first shown in a list, never as their mail arrives (that would tell them it
+ * had) and never because a message was opened. What's found, and what isn't, is kept on disk for
+ * weeks, so each one is asked rarely. A picture is decoration: anyone can publish one for their own
+ * address or domain, so it proves nothing about who sent a message. The page shows initials for mail
+ * with a sender warning, and a company's logo only for a sender whose mail passed DMARC, so a
+ * lookalike domain can't borrow a bank's.
  */
 
 export type PictureType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/x-icon' | 'image/svg+xml'
@@ -213,6 +215,11 @@ export interface AvatarOptions {
   /** Which account an address is yours on, if it is: your accounts show your own photo, and never
    *  a company's logo. */
   ownerOf?(address: string): string | null
+  /** Faces are on (Settings). Off, nothing is looked up and only an account's chosen photo shows. */
+  on?(): boolean
+  /** Of these addresses, the ones whose mail passed DMARC, which alone get a company's logo. Without
+   *  it, all of them do. */
+  vouched?(addresses: string[]): Set<string>
 }
 
 const INDEX = 'index.json'
@@ -228,6 +235,8 @@ export class Avatars {
   private memory = new Map<string, Buffer>()
   private urls = new Map<string, string>()
   private queue: string[] = []
+  /** Addresses queued whose company's logo may be looked up too. */
+  private logos = new Set<string>()
   private queued = new Set<string>()
   /** Companies being asked about now. */
   private asking = new Set<string>()
@@ -256,30 +265,35 @@ export class Avatars {
    *  scenes, and `found` says when there's more. */
   faces(addresses: string[], lookUp: boolean): Record<string, Face | null> {
     const answer: Record<string, Face | null> = {}
-    for (const raw of addresses.slice(0, 500)) {
-      const address = raw.trim().toLowerCase()
-      if (!address || address in answer) continue
-      answer[address] = this.faceOf(address)
-      if (lookUp) this.want([address])
-    }
+    const on = this.options.on?.() ?? true
+    const asked = [...new Set(addresses.slice(0, 500).map((raw) => raw.trim().toLowerCase()).filter(Boolean))]
+    const vouched = on ? this.vouching(asked) : () => false
+    for (const address of asked) answer[address] = on ? this.faceOf(address, vouched(address)) : this.ownFace(address)
+    if (lookUp && on) this.queueUp(asked, vouched)
     return answer
   }
 
   /** Looks these up if they're not known or are due again, without waiting. */
   want(addresses: string[]): void {
+    if (this.options.on?.() === false) return
+    const asked = addresses.map((raw) => raw.trim().toLowerCase())
+    this.queueUp(asked, this.vouching(asked))
+  }
+
+  private queueUp(asked: string[], vouched: (address: string) => boolean): void {
     if (!this.options.sources) return
     const now = this.options.now()
-    for (const raw of addresses) {
-      const address = raw.trim().toLowerCase()
+    for (const address of asked) {
       if (!domainOf(address) || this.queued.has(address)) continue
       const person = this.entries.get(`p:${address}`)
-      const domain = this.logoDomain(address)
+      const domain = vouched(address) ? this.logoDomain(address) : null
       const company = domain ? this.entries.get(`d:${domain}`) : undefined
       const personDue = !person || person.until <= now
       // A person with a photo needs nothing more; without one, their company's logo is wanted.
       const companyDue = domain !== null && !person?.file && (!company || company.until <= now)
       if (!personDue && !companyDue) continue
       this.queued.add(address)
+      if (domain) this.logos.add(address)
       this.queue.push(address)
     }
     this.pump()
@@ -313,15 +327,25 @@ export class Avatars {
     return organization(domain)
   }
 
-  private faceOf(address: string): Face | null {
+  /** Who of these may have a company's logo: those whose mail passed DMARC. */
+  private vouching(addresses: string[]): (address: string) => boolean {
+    const vouched = this.options.vouched?.(addresses)
+    return vouched ? (address) => vouched.has(address) : () => true
+  }
+
+  /** An account's own chosen photo, which is this laptop's and asks nobody anything. */
+  private ownFace(address: string): Face | null {
     const owner = this.options.ownerOf?.(address)
-    if (owner) {
-      const mine = this.urlOf(`own:${owner.toLowerCase()}`)
-      if (mine) return { url: mine, logo: false }
-    }
+    const mine = owner ? this.urlOf(`own:${owner.toLowerCase()}`) : null
+    return mine ? { url: mine, logo: false } : null
+  }
+
+  private faceOf(address: string, logos: boolean): Face | null {
+    const mine = this.ownFace(address)
+    if (mine) return mine
     const photo = this.urlOf(`p:${address}`)
     if (photo) return { url: photo, logo: false }
-    const domain = this.logoDomain(address)
+    const domain = logos ? this.logoDomain(address) : null
     const logo = domain ? this.urlOf(`d:${domain}`) : null
     return logo ? { url: logo, logo: true } : null
   }
@@ -360,7 +384,9 @@ export class Avatars {
     while (this.running < PARALLEL && this.queue.length > 0) {
       const address = this.queue.shift() as string
       this.running++
-      void this.lookUp(address).catch(() => undefined).finally(() => {
+      const logo = this.logos.has(address)
+      this.logos.delete(address)
+      void this.lookUp(address, logo).catch(() => undefined).finally(() => {
         this.running--
         this.queued.delete(address)
         this.pump()
@@ -368,7 +394,7 @@ export class Avatars {
     }
   }
 
-  private async lookUp(address: string): Promise<void> {
+  private async lookUp(address: string, logo: boolean): Promise<void> {
     const sources = this.options.sources
     if (!sources) return
     const now = this.options.now()
@@ -376,7 +402,7 @@ export class Avatars {
     const person = this.entries.get(personKey)
     let photo = Boolean(person?.file)
     if (!person || person.until <= now) photo = await this.ask(personKey, () => sources.photo(address))
-    if (photo) return
+    if (photo || !logo) return
     const domain = this.logoDomain(address)
     if (!domain) return
     const company = this.entries.get(`d:${domain}`)

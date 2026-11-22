@@ -21,9 +21,9 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   if (!started && typeof window !== 'undefined' && window.mail?.onFaces) {
     started = true
-    // Something new was found: what had none is asked about again.
-    window.mail.onFaces(() => {
-      for (const [address, face] of known) if (face === null) known.delete(address)
+    // Something new was found: what had none is asked about again. Faces turned off or on: all is.
+    window.mail.onFaces((again) => {
+      for (const [address, face] of known) if (again || face === null) known.delete(address)
       tell()
     })
   }

@@ -97,7 +97,8 @@ const DEFAULT_SETTINGS: Settings = {
   imagesFrom: [],
   readAfter: 0,
   threadOrder: 'oldest',
-  later: DEFAULT_LATER
+  later: DEFAULT_LATER,
+  faces: true
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -1808,6 +1809,7 @@ export class MailService {
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
       readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
       threadOrder: patch.threadOrder === 'oldest' || patch.threadOrder === 'newest' ? patch.threadOrder : settings.threadOrder,
+      faces: patch.faces ?? settings.faces,
       // Only the times named change, so two set one after the other both stay.
       later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })

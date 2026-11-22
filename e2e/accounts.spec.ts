@@ -228,6 +228,7 @@ test('the account a thread is in shows as a broad bar of its colour, in every li
 test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own photo, and never a lookup for opening a message', async () => {
   run = await launch({
     pictures: {
+      'logo:offers.example': svgLogo('#0f766e', 'O'),
       'photo:mai@example.com': png(96, [40, 90, 160]),
       'photo:linh@example.com': png(96, [160, 90, 40]),
       [`photo:${ME}`]: png(96, [150, 60, 40]),
@@ -239,7 +240,12 @@ test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own 
   const { page, gmail, app } = run
   gmail.add(rawMail({ subject: 'Trip', from: 'Linh Pham <linh@example.com>', text: 'Bus at seven?' }), { arrived: earlier(5), thread: 61n })
   gmail.add(rawMail({ subject: 'Re: Trip', from: 'Mai Tran <mai@example.com>', text: 'Yes!' }), { arrived: earlier(4), thread: 61n })
-  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <news@e.shop.example>' }), { arrived: earlier(3) })
+  gmail.add(rawMail({
+    subject: 'Deals', from: 'Shop <news@e.shop.example>',
+    headers: ['Authentication-Results: mx.google.com; dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=e.shop.example']
+  }), { arrived: earlier(3) })
+  // A company's logo is there for this domain too, but nothing proves the mail is the company's.
+  gmail.add(rawMail({ subject: 'Offers', from: 'Offers <hi@offers.example>' }), { arrived: earlier(3) })
   gmail.add(rawMail({ subject: 'Plain', from: 'Bo <bo@example.com>' }), { arrived: earlier(2) })
   gmail.add(rawMail({ subject: 'Locked', from: 'Bank <x@bank-login.example>', headers: ['Authentication-Results: mx.example; dmarc=fail'] }), { arrived: earlier(1) })
   await signIn(run)
@@ -249,6 +255,8 @@ test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own 
   await expect(face('Re: Trip')).not.toHaveClass(/logo/)
   await expect(face('Deals').locator('img')).toHaveAttribute('src', /^data:image\/svg\+xml;base64,/)
   await expect(face('Deals')).toHaveClass(/logo/)
+  await expect(face('Offers')).toHaveText('O')
+  await expect(face('Offers').locator('img')).toHaveCount(0)
   await expect(face('Plain')).toHaveText('B') // nobody has a picture for Bo
   await expect(face('Plain').locator('img')).toHaveCount(0)
   // A sender with a warning shows initials, whatever pictures there are for their address.
@@ -270,6 +278,14 @@ test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own 
   await page.waitForTimeout(600)
   expect(await lookups()).toEqual(before)
   expect((await asks()).slice(askedBefore).filter(([, lookUp]) => lookUp)).toEqual([])
+  expect(before).not.toContain('logo:offers.example')
+
+  // Mail that has arrived but waits for its batch isn't in any list, and its sender is asked about
+  // by nobody: a lookup as it arrived told them it had.
+  gmail.add(rawMail({ subject: 'Waiting', from: 'Kim <kim@example.com>' }), { arrived: new Date() })
+  await syncAndSettle(page)
+  await page.waitForTimeout(600)
+  expect(await lookups()).toEqual(before)
 
   // A photo of your own, chosen from a file, kept here.
   const chosen = join(run.savedTo, '..', 'me.png')
@@ -290,6 +306,26 @@ test('faces: a person\'s photo, a company\'s logo, initials otherwise, your own 
   await expect(page.getByRole('button', { name: `Choose a photo for ${ME}` })).toBeVisible()
   await page.getByRole('button', { name: 'Done' }).click()
   await expect.poll(() => page.locator('.sidebar .account-face img').getAttribute('src')).toBe(was)
+
+  // Faces off: initials for everyone, your own Gravatar too, and nothing looked up.
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'General' }).click()
+  await page.getByLabel('Show faces').uncheck()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(face('Re: Trip').locator('img')).toHaveCount(0)
+  await expect(face('Deals').locator('img')).toHaveCount(0)
+  await expect(page.locator('.sidebar .account-face img')).toHaveCount(0)
+  const off = await lookups()
+  gmail.add(rawMail({ subject: 'New face', from: 'Lan <lan@example.com>' }), { arrived: earlier(1) })
+  await syncAndSettle(page)
+  await expect(page.locator('.threads').getByText('New face')).toBeVisible()
+  await page.waitForTimeout(600)
+  expect(await lookups()).toEqual(off)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'General' }).click()
+  await page.getByLabel('Show faces').check()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(face('Re: Trip').locator('img')).toHaveAttribute('src', /^data:image\/png/)
 })
 
 test('the Assistant: parcels, and a Track link that was never in the message', async () => {

@@ -2184,7 +2184,7 @@ describe('faces', () => {
   it('believes only the lines the account\'s own server wrote', async () => {
     const pass = 'dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=shop.example'
     gmail.add(rawMail({ subject: 'Planted', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.evil.example; ${pass}`] }), { arrived: new Date(at(9)) })
-    gmail.add(rawMail({ subject: 'Real', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.google.com; ${pass}`] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Real', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.google.com; ${pass}`] }), { arrived: new Date(at(9, 5)) })
     gmail.add(rawMail({ subject: 'Me?', from: `Me <${ME}>`, headers: ['Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'] }), { arrived: new Date(at(9)) })
     await signedIn()
     const open = (subject: string) => {
@@ -2196,6 +2196,8 @@ describe('faces', () => {
     expect(open('Real')?.authenticated).toBe(true)
     expect((await service.details(open('Real')?.id ?? 0)).checks?.dmarc).toBe('pass')
     expect(open('Me?')?.warnings).toEqual(['self'])
+    // A company's logo is for the sender whose newest mail passed, by the account's own server.
+    expect([...store.passedDmarc(['NEWS@shop.example', 'me@example.com', 'nobody@example.com'])]).toEqual(['news@shop.example'])
   })
 
   it('knows which of your accounts an address is, aliases too', async () => {

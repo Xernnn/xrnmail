@@ -149,8 +149,9 @@ function redraw(picture: Picture, side = 128, square = false): Picture | null {
 /** A chosen photo can be large, but not this large. */
 const MOST_CHOSEN = 10 * 1024 * 1024
 
-const tellFaces = (): void => {
-  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces')
+/** Something new was found; with [again], Faces was turned off or on, and every face is asked anew. */
+const tellFaces = (again = false): void => {
+  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces', again)
 }
 
 function bringForward(shown: BrowserWindow | null): void {
@@ -364,7 +365,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -573,6 +574,7 @@ function register(service: MailService, avatars: Avatars): void {
     const clean = profile(patch)
     service.saveProfile(clean)
     if (clean.startAtLogin !== undefined) setStartAtLogin(clean.startAtLogin)
+    if (clean.faces !== undefined) tellFaces(true)
   })
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
@@ -734,9 +736,11 @@ void app.whenReady().then(() => {
     dir: join(app.getPath('userData'), 'faces'),
     sources,
     now: () => Date.now(),
-    found: tellFaces,
+    found: () => tellFaces(),
     redraw: (picture) => redraw(picture),
-    ownerOf: (address) => mail?.ownerOf(address) ?? null
+    ownerOf: (address) => mail?.ownerOf(address) ?? null,
+    on: () => mail?.settings().faces ?? true,
+    vouched: (addresses) => store.passedDmarc(addresses)
   })
   const parser = new Parser(() => readMail({}))
   const service = new MailService({
@@ -752,7 +756,6 @@ void app.whenReady().then(() => {
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),
     changed: tellPage,
-    noticed: (addresses) => avatars.want(addresses),
     // A notice for one message opens it; one for several brings the window up.
     landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
       showWindow()
