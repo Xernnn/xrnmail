@@ -500,6 +500,12 @@ export class Store {
     return new Set(this.all('SELECT uid FROM messages WHERE account = ? AND box = ?', account, box).map((r) => Number(r['uid'])))
   }
 
+  /** Of these UIDs in a folder, the ones kept here as mail of the window. */
+  kept(account: string, box: string, uids: number[]): Set<number> {
+    const rows = this.all('SELECT uid FROM messages WHERE account = ? AND box = ? AND uid IN (SELECT value FROM json_each(?))', account, box, JSON.stringify(uids))
+    return new Set(rows.map((r) => Number(r['uid'])))
+  }
+
   /** The new row's id, or null if it was already here. */
   addMail(mail: StoredMail): number | null {
     return this.inTransaction(() => {

@@ -1102,6 +1102,7 @@ export function App(): ReactNode {
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
                 <Fragment key={keyOf(row)}>
                 {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
+                {row.older && !list[index - 1]?.older && <div className="summary-head older-head"><strong>Older</strong></div>}
                 <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}

@@ -239,6 +239,24 @@ There's one watch per account, counted from when it starts signing in. Waking fr
 them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
 connection running that nothing will close. Gmail allows fifteen at once.
 
+### Mail from before the window
+
+Only the keeping window is read, so a search would never find anything older. It asks the servers as
+well (`server-search.ts`), on read-only connections through `MailSource` like a sync. The search box
+shows what's kept here at once, and 500 ms after the text last changed every account is asked about
+mail from before the window: Gmail with `X-GM-RAW` over All Mail, in Gmail's own language and mostly
+as typed (`gmailQuery`), anything else with IMAP SEARCH in each folder but Trash and Junk
+(`imapPlan`), where a term without a SEARCH key is tried on the headers that come back. Both ask
+only about mail from before the window starts (to the next day, since a server's days are its own),
+so held mail stays out, and what's kept here already is left out of the answer.
+
+- Only the newest 200 found on each account are read, and only their headers (`HEADER.FIELDS`, with
+  `BODY.PEEK`), which is all a row needs. Their rows go below what's kept here, once that's all shown.
+- A new search, or leaving search, drops the connections of the one before at once, mid-command,
+  rather than waiting for a slow server to answer what nobody's asking any more.
+- A server that can't be reached, or won't search, adds nothing and says nothing: the search is what's
+  kept here, as it was before servers were asked.
+
 ## Staying open
 
 Closing the window hides it while the tray exists and "Keep running in the tray" is on, so
