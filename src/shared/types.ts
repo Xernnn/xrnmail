@@ -237,7 +237,7 @@ export type Facts =
 export type AssistantSection = 'packages' | 'travel' | 'money' | 'events'
 
 /** Why a sender may not be who they say. Words for each are in the page; a server's are never shown. */
-export type SenderWarning = 'forged' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere' | 'hidden'
+export type SenderWarning = 'forged' | 'self' | 'unverified' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere' | 'hidden'
 
 export interface Subscription {
   account: string

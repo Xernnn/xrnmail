@@ -2,7 +2,7 @@ import { labelsOf } from './actions'
 import type { Sorted } from './assistant'
 import { holdOf, type BatchRules } from './batches'
 import { NO_DETAILS } from './details'
-import { MAX_SOURCE, parseMail, type ParsedMail } from './parse'
+import { checkedBy, MAX_SOURCE, parseMail, type ParsedMail, type Receiver } from './parse'
 import { threadOf, type MailboxRef, type MailSource, type RemoteMail } from './source'
 import type { Store, StoredMail } from './store'
 
@@ -30,6 +30,9 @@ export interface SyncOptions {
   sort?: (mail: ParsedMail) => Sorted
   /** How a message is read; parseMail, here, unless it's given somewhere better (parser.ts). */
   parse?: (source: Buffer) => Promise<ParsedMail>
+  /** Which Authentication-Results the account's server wrote, and the account's addresses, so its
+   *  warnings and checks come from those alone. */
+  receiver?: Receiver
   /** True once the account has been removed. Asked before every folder, batch and message, so a
    *  pass that's under way stops instead of putting the mail back. */
   stopped?: () => boolean
@@ -65,6 +68,7 @@ const UNREADABLE: ParsedMail = {
   attachments: [],
   bulk: false,
   warnings: [],
+  authentication: [],
   invite: null,
   details: NO_DETAILS
 }
@@ -76,6 +80,7 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
   } catch {
     // A mail that won't parse still arrived, so it stays listed.
   }
+  const checked = options.receiver && mail !== UNREADABLE ? checkedBy(mail, options.receiver) : mail
   const labels = labelsOf(box, remote.labels, gmail)
   const sorted = options.sort?.(mail) ?? { focused: true, facts: null }
   const rules = typeof options.rules === 'function' ? options.rules() : options.rules
@@ -109,8 +114,8 @@ async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, opt
     summary: hold.summary,
     focused: sorted.focused,
     facts: sorted.facts,
-    warnings: mail.warnings,
-    details: mail === UNREADABLE ? null : mail.details
+    warnings: checked.warnings,
+    details: mail === UNREADABLE ? null : checked.details
   }
 }
 

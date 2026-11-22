@@ -269,12 +269,30 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
   any other, so it waits out Undo and goes through the same door. Nothing goes out unless a button is
   pressed.
 
-Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
-server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
-work and on a server that adds no line of its own the top one is too. The one thing a pass there
-does is let the pictures of a sender trusted for them load by themselves (`shared/images.ts`): on a
-server that adds no line, a sender who writes a passing one of their own above the rest still gets
-that far.
+Sender warnings only ever warn. They read the `Authentication-Results` lines the account's own
+server wrote, and a pass is never shown as a mark of trust. A server names itself at the start of
+its line (its authserv-id, RFC 8601 §5), so only lines with the account's server's name count
+(`receiverOf` in parse.ts): Gmail's are `mx.google.com` (so are a Workspace account's), Microsoft's
+name nobody, Yahoo, AOL, iCloud, Fastmail and Zoho sign under their own companies, and any other
+server under the company its IMAP server or the address belongs to. The top line counts if it's
+the server's, and so do the ones straight under it that the same server wrote under other names
+(iCloud writes one per check); the first naming anyone else, or a name already read, is where a
+sender's own begin, since servers put theirs on top. A failure is taken from the top line whoever
+wrote it, since a sender can only forge one against themselves. What a pass from those lines does:
+it lets the pictures of a sender trusted for them load by themselves (`shared/images.ts`), lets a
+company's logo show (Faces), and lets a list's headers excuse replies going elsewhere.
+
+- **Forged:** DMARC failed, or SPF and DKIM both did.
+- **Unverified:** SPF failed or soft-failed, and neither DMARC nor a DKIM signature of the From
+  line's domain spoke for it, as a spoof of a domain without DMARC is.
+- **From you:** your own address on mail the server checked and couldn't tie to your domain, by
+  DMARC, a DKIM signature or an SPF pass for it. What you sent never came in from outside, so it
+  has no such line and gets no warning.
+- **Name and address:** a name showing another address, a name with hidden characters (below), and
+  a domain with characters that can imitate others.
+- **Replies elsewhere:** Reply-To at another company, by the part of a domain that's bought
+  (`organization`), so bank.com.au and evil.com.au differ. List-Id, Precedence and Auto-Submitted
+  are the sender's own words, so they excuse it only on mail proved to be the sender's.
 
 Names, subjects and attachment names lose, as a message is read, the characters that turn text
 around (U+202A–202E, U+2066–2069), the marks that steer it (U+200E, U+200F, U+061C) and what draws
@@ -285,8 +303,9 @@ in `<bdi>`, so even a right-to-left one can't move the address beside it.
 
 A message's details show those results all the same, as Gmail's details do, labelled as what the
 receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
-strings are dropped before a result is looked for, only the top `Authentication-Results`,
-`Delivered-To` and the topmost `Received` line that names where it came from are read, every value is
+strings are dropped before a result is looked for, only the account's server's
+`Authentication-Results` (as above; none when the top line isn't its), the top `Delivered-To` and the
+topmost `Received` line that names where it came from are read, every value is
 cut short and stripped of control and bidirectional characters, and all of it is shown as text. They
 are kept with the message when it arrives (`details`, as JSON). Mail stored before that has none; the
 first time its details are opened its header alone is fetched, with `BODY.PEEK[HEADER]` so nothing
@@ -348,9 +367,9 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
 4. The main process cancels every request from the page, whatever the CSP says, except images while
    "Show images" is on. That resets on leaving the thread. Images can be set to always load, or for
    one sender at a time, but that only presses the same button for you: it goes through the same switch
-   in the main process. The default is to ask. A sender's own load only on mail the top
-   `Authentication-Results` says is theirs, by DMARC or by a DKIM signature from their domain, since
-   anyone can write their address on a From line; the rest asks, as a stranger's does.
+   in the main process. The default is to ask. A sender's own load only on mail the account's server
+   says is theirs, by DMARC or by a DKIM signature from their domain, since anyone can write their
+   address on a From line; the rest asks, as a stranger's does.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
    It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.

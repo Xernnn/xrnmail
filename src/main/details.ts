@@ -68,6 +68,45 @@ export function readChecks(header: string): Pick<HeaderDetails, 'checks' | 'mail
   return { checks: { by, spf, dkim, dmarc }, mailedBy, signedBy: signedBy.slice(0, 4) }
 }
 
+/** The name a server signs an Authentication-Results line with, its authserv-id: '' for
+ *  Microsoft's, which start straight with a result. */
+export function authservId(header: string): string {
+  const first = header.slice(0, 1024).replace(/"[^"]*"|\([^()]*\)/g, ' ').split(';')[0]?.trim() ?? ''
+  return /^[a-z][\w-]*\s*=/i.test(first) ? '' : (first.split(/\s+/)[0] ?? '').toLowerCase()
+}
+
+/** Lines read at most, from the top: the receiving server's are there, and the rest are a sender's. */
+const AUTHENTICATION_READ = 8
+
+/**
+ * What the receiving server found, from the Authentication-Results it put on top. With [checks],
+ * which says whether an authserv-id is the account's own server's, the top line counts only if it
+ * is, and so do the lines straight under it that the same server wrote under other names, as
+ * iCloud writes one for each check. The first line naming another, or one already read, is where a
+ * sender's own begin (RFC 8601 §5). Without [checks], the top line, whoever wrote it.
+ */
+export function trustedChecks(lines: readonly string[], checks?: (id: string) => boolean): Pick<HeaderDetails, 'checks' | 'mailedBy' | 'signedBy'> {
+  const none = { checks: null, mailedBy: '', signedBy: [] }
+  const read: ReturnType<typeof readChecks>[] = []
+  const seen = new Set<string>()
+  for (const line of lines.slice(0, checks ? AUTHENTICATION_READ : 1)) {
+    const id = authservId(line)
+    if (checks && (!checks(id) || seen.has(id))) break
+    seen.add(id)
+    read.push(readChecks(line))
+  }
+  const found = read.filter((one) => one.checks)
+  const first = found[0]
+  if (!first?.checks) return none
+  const pick = (method: 'spf' | 'dkim' | 'dmarc'): string => found.find((one) => one.checks?.[method])?.checks?.[method] ?? ''
+  const spf = found.find((one) => one.checks?.spf)
+  return {
+    checks: { by: first.checks.by, spf: pick('spf'), dkim: found.some((one) => one.checks?.dkim === 'pass') ? 'pass' : pick('dkim'), dmarc: pick('dmarc') },
+    mailedBy: spf?.mailedBy ?? '',
+    signedBy: [...new Set(found.flatMap((one) => one.signedBy))].slice(0, 4)
+  }
+}
+
 /** How the message reached the server that received it, from the topmost Received line that says
  *  where it came from: "TLS 1.3", "TLS", or nothing when that line doesn't say. */
 export function readTls(received: string[]): string {
@@ -90,15 +129,16 @@ export function readList(header: string): HeaderDetails['list'] {
 /** For a message whose headers couldn't be read. */
 export const NO_DETAILS: HeaderDetails = { bcc: [], deliveredTo: '', checks: null, mailedBy: '', signedBy: [], tls: '', list: null, sent: null }
 
-/** Everything the panel needs from a message's headers. [date] is what the parser made of Date. */
-export function headerDetails(lines: Lines, bcc: { name: string; address: string }[], date: Date | undefined): HeaderDetails {
+/** Everything the panel needs from a message's headers. [date] is what the parser made of Date;
+ *  [checks] says which Authentication-Results are the account's own server's (`trustedChecks`). */
+export function headerDetails(lines: Lines, bcc: { name: string; address: string }[], date: Date | undefined, checks?: (id: string) => boolean): HeaderDetails {
   const top = (key: string): string => all(lines, key)[0] ?? ''
   const delivered = /[^\s<>"]+@[^\s<>"]+/.exec(top('delivered-to') || top('x-original-to'))?.[0] ?? ''
   const sent = date && Number.isFinite(date.getTime()) ? date.getTime() : null
   return {
     bcc: bcc.slice(0, 50).map((who) => ({ name: tidy(who.name, 200), address: tidy(who.address, 320) })),
     deliveredTo: tidy(delivered.toLowerCase(), 320),
-    ...readChecks(top('authentication-results')),
+    ...trustedChecks(all(lines, 'authentication-results'), checks),
     tls: readTls(all(lines, 'received')),
     list: readList(top('list-id')),
     sent

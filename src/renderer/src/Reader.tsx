@@ -29,6 +29,8 @@ const LONG_THREAD = 4
 
 const CAUTIONS: Record<SenderWarning, (m: MessageView) => string> = {
   forged: () => "This message failed the checks that prove who sent it. It may not be from who it says.",
+  self: () => "This says it's from you, but your mail service couldn't confirm it.",
+  unverified: () => "Your mail service couldn't confirm who sent this.",
   'name-mismatch': (m) => `The name on this message shows a different address from the one it came from: ${m.from.address}.`,
   lookalike: () => 'This sender\'s address uses characters that can imitate another one.',
   'replies-elsewhere': (m) => `Replies to this go to a different address: ${m.replyTo[0]?.address ?? ''}.`,

@@ -17,7 +17,7 @@ import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
 import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
@@ -714,6 +714,7 @@ export class MailService {
         stopped: removed,
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         parse: this.deps.parse,
+        receiver: receiverOf(config, own),
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           const current = this.settings() // a sender blocked or muted meanwhile counts
@@ -1057,7 +1058,7 @@ export class MailService {
           await source.open(box)
           const header = await source.header(message.uid)
           if (header) {
-            found = await detailsOf(header)
+            found = await detailsOf(header, receiverOf(this.config(message.account)).checks)
             this.store.saveDetails(id, found)
           }
         }

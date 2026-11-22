@@ -2179,6 +2179,25 @@ describe('faces', () => {
     expect(Object.fromEntries(service.list({ kind: 'inbox' }).map((r) => [r.subject, r.warned]))).toEqual({ Locked: true, Fine: false })
   })
 
+  // The top Authentication-Results line was believed whoever wrote it. On a server that adds none,
+  // a sender's own "dmarc=pass" there loaded a trusted sender's pictures and showed as a pass.
+  it('believes only the lines the account\'s own server wrote', async () => {
+    const pass = 'dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=shop.example'
+    gmail.add(rawMail({ subject: 'Planted', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.evil.example; ${pass}`] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Real', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.google.com; ${pass}`] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Me?', from: `Me <${ME}>`, headers: ['Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'] }), { arrived: new Date(at(9)) })
+    await signedIn()
+    const open = (subject: string) => {
+      const row = service.list({ kind: 'all' }).find((r) => r.subject === subject)
+      return store.thread(ME, row?.thread ?? '', clock).find((m) => m.subject === subject)
+    }
+    expect(open('Planted')?.authenticated).toBe(false)
+    expect((await service.details(open('Planted')?.id ?? 0)).checks).toBeNull()
+    expect(open('Real')?.authenticated).toBe(true)
+    expect((await service.details(open('Real')?.id ?? 0)).checks?.dmarc).toBe('pass')
+    expect(open('Me?')?.warnings).toEqual(['self'])
+  })
+
   it('knows which of your accounts an address is, aliases too', async () => {
     await signedIn()
     service.saveProfile({ identities: { [ME]: { name: '', signature: '', aliases: ['Alias@Example.net'], color: '', notify: true } } })

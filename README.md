@@ -87,8 +87,10 @@ kept on the laptop.
   Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
   of the inbox has one entry for it until it's read. Its mail is under Summary in the sidebar, each
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
-- **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, a name
-  with hidden characters that turn it around, replies going somewhere else. It warns; it never vouches.
+- **Sender warnings:** forged mail, mail your service couldn't tie to its sender, mail that says it's
+  from you and isn't, lookalike addresses, a name showing a different address, a name with hidden
+  characters that turn it around, replies going somewhere else. Only your own service's checks count,
+  not ones a sender wrote in. It warns; it never vouches.
 - **Message details:** "To: me ⌄" over a message opens everything about it, with what Gmail's
   details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full date and the one the
   sender wrote if it's far off, the account and where it is, the address it was
