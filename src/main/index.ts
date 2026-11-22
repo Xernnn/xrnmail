@@ -395,6 +395,10 @@ function rsvp(value: unknown): Rsvp {
   return answer
 }
 
+/** The name a save suggests is a stranger's, in Downloads, and GTK's dialog writes over a file of that
+ *  name there without asking unless it's told to. */
+const SAVING: ('showOverwriteConfirmation' | 'createDirectory')[] = ['showOverwriteConfirmation', 'createDirectory']
+
 let openedFiles: string | null = null
 
 /** A private folder for attachments being looked at, gone when the app quits. */
@@ -461,7 +465,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveAttachment', async (message: unknown, index: unknown) => {
     const found = await service.attachment(number(message), number(index))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)) }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.content, { mode: 0o600 })
@@ -481,7 +485,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveOriginal', async (message: unknown) => {
     const found = await service.original(number(message))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }] }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }], properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })

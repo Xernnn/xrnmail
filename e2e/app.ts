@@ -53,13 +53,17 @@ export async function launch(options: {
   await app.evaluate(({ dialog, shell }, savedTo) => {
     const seen: string[] = []
     const files: string[] = []
-    Object.assign(globalThis, { openedLinks: seen, openedFiles: files })
+    const saves: unknown[] = []
+    Object.assign(globalThis, { openedLinks: seen, openedFiles: files, saveDialogs: saves })
     shell.openExternal = async (url: string) => void seen.push(url)
     shell.openPath = async (path: string) => {
       files.push(path)
       return ''
     }
-    dialog.showSaveDialog = (async () => ({ canceled: false, filePath: savedTo })) as typeof dialog.showSaveDialog
+    dialog.showSaveDialog = (async (...args: unknown[]) => {
+      saves.push(args.at(-1))
+      return { canceled: false, filePath: savedTo }
+    }) as typeof dialog.showSaveDialog
   }, join(data, 'saved-attachment'))
   const page = await app.firstWindow()
   if (options.size) {

@@ -1310,6 +1310,11 @@ test('attachments: saved exactly, opened only when safe', async () => {
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
   await expect.poll(() => readFileSync(run.savedTo, 'utf8')).toBe('[Desktop Entry]\nExec=rm -rf ~')
   expect(await run.openedFiles()).toHaveLength(1)
+  // The name is a stranger's, in Downloads: a file already there of that name isn't written over
+  // unasked, as GTK's dialog does without being told to ask.
+  const dialogs = await run.app.evaluate(() => (globalThis as unknown as { saveDialogs: { properties?: string[] }[] }).saveDialogs)
+  expect(dialogs).toHaveLength(2)
+  for (const options of dialogs) expect(options.properties).toContain('showOverwriteConfirmation')
 })
 
 test('View original shows a message as the server has it, as text, and saves it as .eml', async () => {
@@ -1332,6 +1337,8 @@ test('View original shows a message as the server has it, as text, and saves it 
   await expect(page.locator('.threads').getByText('Plans: Friday')).toBeVisible()
   await sheet.getByRole('button', { name: 'Save as .eml' }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  const [dialog] = await run.app.evaluate(() => (globalThis as unknown as { saveDialogs: { properties?: string[] }[] }).saveDialogs)
+  expect(dialog?.properties).toContain('showOverwriteConfirmation')
   const saved = readFileSync(run.savedTo, 'utf8')
   expect(saved).toContain('X-Mailer: Made Up 1.0')
   expect(saved.replace(/\r\n/g, '\n')).toBe(gmail.mails[0]?.raw.toString().replace(/\r\n/g, '\n'))
