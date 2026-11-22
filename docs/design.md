@@ -195,6 +195,11 @@ the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the 
 reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
 that gets through ends them. A refused password isn't tried again this way: asking again won't help.
 
+A sync asked for while one is running (waking, the window coming back, F5, the button) goes once
+more when that one ends, however many times it was asked. The one running may be stuck on a
+connection that died with the lid shut, and turning the asks away left its error up until the next
+three-minute pass.
+
 A pass goes through each folder in turn, inbox first. For each it fetches what's missing, newest first,
 then applies label and flag changes, then forgets what's gone. A folder the server has stopped listing
 is forgotten too, and an ordinary folder that refuses to open or to be searched is skipped rather than

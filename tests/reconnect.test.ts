@@ -150,3 +150,30 @@ describe('a pass that could not get through', () => {
     }
   })
 })
+
+describe('a sync asked for while one is running', () => {
+  it('runs once more when the one running ends, so one stuck on a dead connection is followed at once', async () => {
+    timeouts = { connect: 1000, greeting: 600, quiet: 800 }
+    gmail.stall = /^LIST$/ // the laptop slept with this pass on the wire
+    const stuck = service.syncAll()
+    await eventually(() => expect(gmail.commands.at(-1)).toMatch(/^LIST/))
+    gmail.stall = null // awake, and the network is back
+    const before = passes()
+    await service.syncAll() // waking, the window coming back, or F5
+    await stuck
+    expect(passes() - before).toBe(1)
+    expect(error()).toBeNull()
+  })
+
+  it('asked for many times, runs once more, not once for each', async () => {
+    gmail.hold = /^LIST$/
+    const first = service.syncAll()
+    await eventually(() => expect(gmail.holding).toHaveLength(1))
+    const before = passes()
+    for (let i = 0; i < 5; i++) void service.syncAll()
+    gmail.release()
+    await first
+    await eventually(() => expect(service.accounts()[0]?.syncing).toBe(false))
+    expect(passes() - before).toBe(2) // the one held, then one more
+  })
+})

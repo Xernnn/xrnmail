@@ -289,7 +289,7 @@ export class MailService {
   private watchers = new Map<string, Watch>()
   private watching = false
   private rewatch: NodeJS.Timeout | null = null
-  /** Something arrived during a sync, too late for it to have seen. */
+  /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
   /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
   private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
@@ -635,7 +635,10 @@ export class MailService {
   private async syncOne(email: string): Promise<void> {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
-    if (status.syncing) return
+    // Asked for while one runs, by waking, the window coming back or the button, it goes again once
+    // that one ends: the one running may be stuck on a connection that died, and dropping this left
+    // its error up until the next three-minute pass.
+    if (status.syncing) return void this.syncAgain.add(email)
     status.syncing = true
     this.deps.changed()
     await this.inLane(email, async () => {

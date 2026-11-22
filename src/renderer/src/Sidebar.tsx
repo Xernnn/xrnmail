@@ -354,7 +354,7 @@ export function Sidebar(props: {
       <div className="sidebar-top">
         <button className="compose" title="New message (c)" onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
         <span className="grow" />
-        <button className="icon" disabled={syncing} aria-label={syncing ? 'Syncing' : 'Sync'} title="Check for mail (F5)" onClick={() => void window.mail.syncNow()}>
+        <button className="icon" aria-label={syncing ? 'Syncing' : 'Sync'} title="Check for mail (F5)" onClick={() => void window.mail.syncNow()}>
           <RotateCw className={syncing ? 'spin' : ''} size={17} aria-hidden="true" />
         </button>
       </div>
