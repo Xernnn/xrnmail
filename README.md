@@ -424,9 +424,12 @@ so it works offline and survives a restart. [docs/design.md](docs/design.md) exp
 why it's built that way.
 
 The profile is `~/.config/xrnmail`: `mail.sqlite` (the mail kept here, the queue of changes, drafts,
-snoozes, pins and settings), `drafts` (files attached to drafts) and `faces`. It's readable only by
-you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're in the
-keyring.
+snoozes, pins and settings), `drafts` (files attached to drafts), `faces`, and `sync.log`, a line for
+each connection that failed: when, which service (with a short hash, never the address), what it was
+doing, how far it got, the error's code, how long it took and the server addresses tried, never what
+a server said or anything of the mail. It keeps 256 KB and the 256 KB before. The profile is readable
+only by you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're
+in the keyring.
 
 ## Building and installing
 

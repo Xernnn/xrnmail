@@ -3,6 +3,7 @@ import { createTransport } from 'nodemailer'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import type { OutgoingMail } from './compose'
 import type { ImapConfig } from './source'
+import { noteAttempts } from './sync-log'
 
 /** What left, for filing a copy where the server doesn't. */
 export interface SentCopy {
@@ -85,13 +86,13 @@ export class SmtpSender implements MailSender {
    *  server may already have the message. */
   private async reachable(): Promise<void> {
     try {
-      await this.transport.verify()
+      await noteAttempts(() => this.transport.verify())
     } catch (e) {
       // A 4xx is SMTP for "not now": too many sign-ins, say. It's waited out, not taken for a
       // wrong password.
       const { code, responseCode = 0 } = e as { code?: string; responseCode?: number }
       if (code === 'EAUTH' && !(responseCode >= 400 && responseCode < 500)) throw e
-      throw new NeverLeft('no connection')
+      throw new NeverLeft('no connection', { cause: e })
     }
   }
 

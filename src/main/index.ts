@@ -28,6 +28,7 @@ import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
 import { ADDRESS_ATTEMPT_MS, ImapSource, ImapWatcher, type ImapConfig } from './source'
 import { Store } from './store'
+import { SyncLog } from './sync-log'
 import { ImapWriter } from './writer'
 
 const SYNC_MS = 3 * 60_000 // what's missed while the inbox is being watched, and the rest of the account
@@ -749,6 +750,7 @@ void app.whenReady().then(() => {
     ownerOf: (address) => mail?.ownerOf(address) ?? null
   })
   const parser = new Parser(() => readMail({}))
+  const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
   const service = new MailService({
     store,
     secrets,
@@ -772,7 +774,8 @@ void app.whenReady().then(() => {
       showWindow()
       tellCommand('summary')
     }),
-    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
+    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined,
+    failed: (failure) => syncLog.write(failure)
   })
   mail = service
   register(service, avatars)

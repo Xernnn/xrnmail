@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { SmtpSender } from '@main/sender'
 import { describeFailure, MailService, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
+import { SyncLog } from '@main/sync-log'
 import { ImapWriter } from '@main/writer'
 import { FakeGmail, rawMail } from './fake-gmail'
 import { FakeSmtp } from './fake-smtp'
@@ -348,5 +349,50 @@ describe('a server too busy to sign in just now', () => {
     clock += 61_000
     await service.tick()
     expect(smtp.sent).toHaveLength(1)
+  })
+})
+
+describe('the log of failures', () => {
+  const read = (): string[] => {
+    try {
+      return readFileSync(join(folder, 'sync.log'), 'utf8').trimEnd().split('\n')
+    } catch {
+      return []
+    }
+  }
+
+  beforeEach(() => {
+    const log = new SyncLog(join(folder, 'sync.log'))
+    service = make({ failed: (failure) => log.write(failure) })
+  })
+
+  it('has a line for a pass that couldn\'t connect, with the address tried, and nothing private', async () => {
+    fakeTimers()
+    const open = port
+    port = await closedPort()
+    try {
+      await service.syncAll()
+    } finally {
+      port = open
+    }
+    expect(read()).toHaveLength(1)
+    expect(read()[0]).toMatch(/^\S+Z gmail:[0-9a-f]{6} sync connect ECONNREFUSED \d+ms ipv4 127\.0\.0\.1:\d+ ECONNREFUSED$/)
+    expect(read()[0]).not.toContain(ME.split('@')[0])
+    expect(read()[0]).not.toContain(gmail.secret)
+  })
+
+  it('has a line for a watch whose connection went', async () => {
+    service.watchAll()
+    await eventually(() => expect(gmail.idling).toBe(1))
+    await gmail.stop()
+    await eventually(() => expect(read().some((line) => / watch idle \S+ \d+ms/.test(line))).toBe(true))
+  })
+
+  it('has nothing for a watch stopped on purpose', async () => {
+    service.watchAll()
+    await eventually(() => expect(gmail.idling).toBe(1))
+    service.stopWatching()
+    await eventually(() => expect(gmail.connections).toBe(0))
+    expect(read()).toEqual([])
   })
 })

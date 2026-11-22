@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type { TcpNetConnectOpts } from 'node:net'
 import type { ConnectionOptions } from 'node:tls'
 import type { Security } from '@shared/providers'
+import { noteAttempts } from './sync-log'
 
 /**
  * The mailbox, as syncing sees it. This interface has no way to change anything, and `ImapSource`
@@ -167,6 +168,9 @@ export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number; so
     tls: SOCKET
   })
   client.on('error', () => undefined) // the work in progress fails on its own; unhandled this ends the app
+  // Each address the connection tries is noted, for the log of failures.
+  const connect = client.connect.bind(client)
+  client.connect = () => noteAttempts(connect)
   return client
 }
 
@@ -197,6 +201,8 @@ export class ImapWatcher implements MailWatcher {
    *  started again every few minutes (`maxIdleTime`), and imapflow starts it again by itself after
    *  anything else on this connection, so it's asked for once. */
   async watch(changed: () => void, opened?: () => void): Promise<void> {
+    let failed: unknown = null
+    this.client.on('error', (e: unknown) => (failed = e))
     const ended = new Promise<void>((resolve) => this.client.once('close', () => resolve()))
     try {
       await this.client.connect()
@@ -210,6 +216,7 @@ export class ImapWatcher implements MailWatcher {
     void this.client.idle().catch(() => undefined)
     opened?.()
     await ended
+    if (failed) throw failed // what ended it, for the log
   }
 
   async close(): Promise<void> {

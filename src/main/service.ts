@@ -23,6 +23,7 @@ import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './saf
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
@@ -154,6 +155,8 @@ export interface ServiceDeps {
   records?: DomainRecords
   /** How synced mail is read, when not on this thread. */
   parse?: (source: Buffer) => Promise<ParsedMail>
+  /** A connection failed: for the log of failures, which keeps its codes and never its words. */
+  failed?(failure: Failure): void
   earlyWaitSeconds?: number
 }
 
@@ -648,6 +651,11 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
+  private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
+    this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
+  }
+
   private stopRetrying(email: string): void {
     const retry = this.retries.get(email)
     if (retry?.timer) clearTimeout(retry.timer)
@@ -699,6 +707,8 @@ export class MailService {
     if (!open || !this.watching || this.watchers.has(email)) return
     const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
+    const started = performance.now()
+    let up = false
     // Mail landing, leaving the inbox, or read or flagged elsewhere: each is a reason to look, and
     // what's said in one burst is one look.
     const changed = (): void => {
@@ -716,6 +726,7 @@ export class MailService {
       if (mine.stopped || !this.emails().includes(email)) return
       mine.watcher = open(this.config(email), login)
       await mine.watcher.watch(changed, () => {
+        up = true
         if (mine.stopped) return
         // Back after being lost: the server only tells of what happens from now on, so what landed
         // meanwhile is looked for now rather than at the next pass.
@@ -744,7 +755,10 @@ export class MailService {
       }, wait)
       rewatch.timer.unref?.()
     }
-    void run().catch(() => undefined).finally(lost)
+    const ended = (error: unknown): void => {
+      if (!mine.stopped && (up || error)) this.logFailure(email, 'watch', error, started, up)
+    }
+    void run().then(() => ended(null), ended).finally(lost)
   }
 
   private async pass(email: string): Promise<void> {
@@ -774,6 +788,7 @@ export class MailService {
     const senders: string[] = []
     const blocked: number[] = []
     let source: MailSource | null = null
+    const started = performance.now()
     try {
       source = this.deps.openSource(config, await this.login(email))
       await source.connect()
@@ -815,6 +830,7 @@ export class MailService {
     } catch (e) {
       const service = this.serviceName(email)
       status.error = describeFailure(e, service)
+      if (!removed()) this.logFailure(email, 'sync', e, started)
       if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
     } finally {
       await source?.close().catch(() => undefined)
@@ -958,12 +974,14 @@ export class MailService {
     const due = this.store.dueActions(email, this.deps.now())
     if (due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
       this.reached(email)
       for (const item of due) await this.perform(writer, email, item)
     } catch (e) {
+      this.logFailure(email, 'changes', e, started)
       // Not reached, so nothing is lost: it all goes again later, in the same order.
       this.statusOf(email).error = describeFailure(e, this.serviceName(email))
       const later = this.deps.now() + RETRY_MS
@@ -1443,6 +1461,7 @@ export class MailService {
     const due = this.dueDrafts(email, all)
     if (copies.length === 0 && due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
@@ -1450,7 +1469,8 @@ export class MailService {
       for (const copy of copies) await this.deleteCopy(writer, email, copy)
       for (const { id } of due) await this.pushDraft(writer, email, id)
       this.draftsRetryAt.delete(email)
-    } catch {
+    } catch (e) {
+      this.logFailure(email, 'drafts', e, started)
       this.draftsRetryAt.set(email, this.deps.now() + RETRY_MS)
     } finally {
       await writer?.close().catch(() => undefined)
@@ -1719,10 +1739,12 @@ export class MailService {
     }
     const account = due()?.account
     if (!account) return null
+    const started = performance.now()
     let login: Login
     try {
       login = await this.login(account)
     } catch (e) {
+      this.logFailure(account, 'send', e, started)
       const draft = due()
       if (!draft) return null
       // Nothing has left. A lost connection or a keyring not open yet can wait; a sign-in that's gone
@@ -1750,6 +1772,7 @@ export class MailService {
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
       return draft.account
     } catch (e) {
+      if (!(e instanceof Unmade)) this.logFailure(draft.account, 'send', e, started)
       if (e instanceof NeverLeft) {
         this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
       } else if (e instanceof Unmade) {
@@ -1769,12 +1792,14 @@ export class MailService {
   private async fileCopy(email: string, raw: Buffer, messageId: string): Promise<void> {
     await this.inLane(email, async () => {
       let writer: MailWriter | null = null
+      const started = performance.now()
       try {
         writer = this.deps.openWriter(this.config(email), await this.login(email))
         await writer.connect()
         this.reached(email)
         await writer.fileSent(raw, messageId)
-      } catch {
+      } catch (e) {
+        this.logFailure(email, 'sent', e, started)
         this.note(email, 'Sent, but no copy could be kept in Sent.')
       } finally {
         await writer?.close().catch(() => undefined)

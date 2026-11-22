@@ -260,6 +260,27 @@ network changing, replaces them all, and an old one finishing its goodbye only e
 place, so a wake can't leave a connection running that nothing will close. Gmail allows fifteen at
 once.
 
+### The log of failures
+
+Every connection that fails (a pass, a watch, a change, drafts, a copy for Sent, a message sent)
+adds a line to `sync.log` in the profile, so "Couldn't reach" can be looked into afterwards:
+
+```
+2026-11-23T01:02:03.456Z gmail:3f2a9c sync connect CONNECT_TIMEOUT 30012ms ipv4 142.250.4.108:993 timeout, ipv6 [2404:6800:4003:c00::6c]:993 no answer
+```
+
+The account is its service and the first six hex of a SHA-256 of its address. The stage is how far
+the connection got (`dns`, `connect`, `tls`, `greeting`, `login`, `command`, `idle` for a watch
+that had opened, `smtp`). Only codes are kept, Node's (`ECONNREFUSED`), imapflow's
+(`GREETING_TIMEOUT`), the IMAP status and response code (`NO [UNAVAILABLE]`) or an SMTP reply's
+number, each checked to be a short code: a server's words, which could carry anything, never go in.
+The addresses tried come from Node itself: `imapClient` and `SmtpSender` connect inside
+`noteAttempts`, and every socket opened meanwhile is followed through the `net.client.socket`
+diagnostics channel, each address with what came of it (`up`, `timeout` for Node's per-address
+wait, an error code, or `no answer` when the whole connection gave up first). That's the line that
+would have shown the VPN's IPv4 tries dropped after 250 ms and the IPv6 one swallowed. Past 256 KB
+the file becomes `sync.log.1` and a new one starts. A log that can't be written changes nothing.
+
 ### Noticing the network change
 
 Linux tells an app nothing when a VPN reconnects, its kill switch comes up or the Wi-Fi changes, and
