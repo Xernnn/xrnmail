@@ -1105,6 +1105,38 @@ test('a place in the sidebar can be right-clicked to mark all of it read', async
   await expect(page.getByText('Nothing unread there')).toBeVisible()
 })
 
+// A thread ticked before a search stayed ticked once the search had left it out, and the bar still
+// said "1 selected". With none of the ticked ones in the list, the bar's buttons fell back to the
+// open thread: Delete selected deleted the thread being read, and the ticked one stayed.
+test('a selection holds only threads in the list: a search that leaves one out lets go of it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Files for you', from: 'Bao Le <bao@example.com>' }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Trip to Da Lat', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(4) })
+  gmail.add(rawMail({ subject: 'Da Lat photos', from: 'Linh Pham <linh@example.com>' }), { arrived: earlier(3) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  await page.getByLabel('Select Files for you').check({ force: true })
+  await page.getByLabel('Select Da Lat photos').check({ force: true })
+  await expect(bar.getByText('2 selected')).toBeVisible()
+  await page.getByLabel('Search').fill('Da Lat')
+  await expect(list.locator('.thread .subject')).toHaveText(['Da Lat photos', 'Trip to Da Lat'])
+  await expect(bar.getByText('1 selected')).toBeVisible() // the one still found
+  await list.getByText('Trip to Da Lat').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Trip to Da Lat')
+  await bar.getByRole('button', { name: 'Delete selected' }).click()
+  await expect(page.getByText('Moved to Trash')).toBeVisible()
+  await expect(list.locator('.thread .subject')).toHaveText(['Trip to Da Lat'])
+  await page.getByLabel('Select Trip to Da Lat').check({ force: true })
+  await page.getByLabel('Search').fill('Files')
+  await expect(list.locator('.thread .subject')).toHaveText(['Files for you'])
+  await expect(bar).toHaveCount(0)
+  await page.getByLabel('Search').fill('')
+  await expect(list.locator('.thread .subject')).toHaveText(['Trip to Da Lat', 'Files for you'])
+  await expect(bar).toHaveCount(0)
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run

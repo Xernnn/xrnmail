@@ -370,9 +370,19 @@ export function App(): ReactNode {
     [list, open, afterRemove]
   )
 
+  // A selection is of the list on screen: a thread that has left it, for a search that doesn't find
+  // it say, leaves the selection too.
+  useEffect(() => {
+    if (rows === null) return
+    const listed = new Set(rows.map(keyOf))
+    setPicked((now) => ([...now].every((key) => listed.has(key)) ? now : new Set([...now].filter((key) => listed.has(key)))))
+  }, [rows])
+
+  /** What's ticked, or with nothing ticked the open thread. Never the open thread while something
+   *  is ticked: that would act on a thread nobody chose. */
   const targets = useCallback((): ThreadRef[] => {
     const chosen = list.filter((r) => picked.has(keyOf(r))).map((r) => ({ account: r.account, thread: r.thread }))
-    return chosen.length > 0 ? chosen : open ? [open] : []
+    return picked.size > 0 ? chosen : open ? [open] : []
   }, [list, picked, open])
 
   const run = useCallback(
