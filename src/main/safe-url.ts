@@ -52,21 +52,7 @@ export function isPrivateAddress(ip: string): boolean {
   return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('ff')
 }
 
-const OPENABLE = new Set([
-  'pdf', 'txt', 'md', 'csv', 'tsv', 'log', 'rtf',
-  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic',
-  'mp3', 'wav', 'ogg', 'flac', 'm4a', 'mp4', 'mov', 'mkv', 'webm',
-  'zip', 'tar', 'gz', '7z', 'rar', 'ics', 'vcf'
-])
-
-/** Whether an attachment may be opened straight away, which hands a stranger's file to whatever
- *  handles its type. A list of what's fine, because a list of what isn't would miss something, and
- *  everything else can still be saved. */
-export function canOpenDirectly(name: string): boolean {
-  const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
-  return extension !== undefined && OPENABLE.has(extension)
-}
+export { canOpenDirectly } from '@shared/openable'
 
 /** Linux takes 255 bytes in a file name, and opening an attachment puts 9 more in front. */
 const NAME_BYTES = 200

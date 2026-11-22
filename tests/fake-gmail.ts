@@ -585,9 +585,9 @@ export function rawMail(options: {
   text?: string
   html?: string
   date?: Date
-  attachment?: { name: string; type: string; body: string }
+  attachment?: { name: string; type: string; body: string | Buffer }
   /** More of them, after [attachment]. */
-  attachments?: { name: string; type: string; body: string }[]
+  attachments?: { name: string; type: string; body: string | Buffer }[]
   headers?: string[]
 }): string {
   const boundary = 'BOUNDARY-xrn'

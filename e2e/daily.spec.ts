@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
+import { jar, pdf } from '../tests/files'
 import { launch, ME, signIn, type Running } from './app'
 
 const LONG = { timeout: 15_000 }
@@ -1286,18 +1287,28 @@ test('flags and labels reach Gmail', async () => {
 test('attachments: saved exactly, opened only when safe', async () => {
   run = await launch()
   const { page, gmail } = run
-  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: 'the real bytes' } }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: pdf() } }), { arrived: earlier(5) })
   gmail.add(rawMail({ subject: 'Trap', attachment: { name: 'totally-a-photo.desktop', type: 'application/x-desktop', body: '[Desktop Entry]\nExec=rm -rf ~' } }), { arrived: earlier(4) })
+  // A Java program named as a PDF: xdg-open goes by the bytes, and would run it with java -jar.
+  gmail.add(rawMail({ subject: 'Bill', attachment: { name: 'invoice.pdf', type: 'application/pdf', body: jar() } }), { arrived: earlier(3) })
   await signIn(run)
   await page.locator('.threads').getByText('Files').click()
   await page.getByRole('button', { name: 'Save report.pdf' }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
-  expect(readFileSync(run.savedTo, 'utf8')).toBe('the real bytes')
+  expect(readFileSync(run.savedTo).equals(pdf())).toBe(true)
   await page.getByRole('button', { name: /^report\.pdf/ }).click()
   await expect.poll(run.openedFiles).toHaveLength(1)
+  await page.locator('.threads').getByText('Bill', { exact: true }).click()
+  await page.getByRole('button', { name: /^invoice\.pdf/ }).click()
+  await expect(page.getByText('Save it to open')).toBeVisible()
+  expect(await run.openedFiles()).toHaveLength(1)
+  // What can't be opened by its name isn't offered as Open: the file is saved instead.
   await page.locator('.threads').getByText('Trap').click()
-  await page.getByRole('button', { name: /^totally-a-photo/ }).click()
-  await expect(page.getByText('Save this kind of file first')).toBeVisible()
+  const trap = page.getByRole('button', { name: /^totally-a-photo/ })
+  await expect(trap).toHaveAttribute('title', 'Save')
+  await trap.click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  await expect.poll(() => readFileSync(run.savedTo, 'utf8')).toBe('[Desktop Entry]\nExec=rm -rf ~')
   expect(await run.openedFiles()).toHaveLength(1)
 })
 

@@ -367,9 +367,18 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **Files enter a draft only through the system's picker, or as bytes that were dropped or pasted.** The
   page never names a path, so a compromised page can't attach `~/.ssh/id_ed25519` and send it. Being able
   to send mail is the new thing a compromised page could do, which is why this line is held so firmly.
-- **Attachments are saved, or opened only if they can't run.** `canOpenDirectly` refuses scripts,
-  programs, `.desktop` files and anything that renders as a page. File names are cleaned before they're
-  suggested, so `../../.ssh/authorized_keys` can't climb out.
+- **Attachments are saved, or opened only if they can't run.** Linux picks the program for a file by
+  its bytes, not its name: xdg-open asks `xdg-mime query filetype`, which looks inside, so a Java
+  archive called `invoice.pdf` is typed as a Java archive and handed to `java -jar`. So a name is
+  only the first test (`canOpenDirectly`, a list of documents, pictures, sound and film, plain text
+  and archives). `opening.ts` then reads the bytes themselves, and refuses programs, scripts,
+  launchers, Java archives under any name (a ZIP with a manifest, classes or the jar tool's mark),
+  Office files with macros, and anything that renders as a page. Last, it asks `xdg-mime` what the
+  written file is, run without a shell, and opens it only if that's a type of the same kind. With no
+  `xdg-mime` the bytes decide alone, except for old Office files, whose container is also an
+  installer's. Anything refused says "Save it to open", and a name that can't be opened saves
+  straight away. File names are cleaned before they're suggested, so `../../.ssh/authorized_keys`
+  can't climb out.
 - **Unsubscribing makes one fixed request.** The address comes from a stranger's header, so the app sends
   only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name, and
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft

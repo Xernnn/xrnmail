@@ -20,7 +20,8 @@ import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
 import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
-import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
+import { openAttachment, xdgFiletype } from './opening'
+import { isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
@@ -467,12 +468,7 @@ function register(service: MailService, avatars: Avatars): void {
   })
   handle('openAttachment', async (message: unknown, index: unknown) => {
     const found = await service.attachment(number(message), number(index))
-    const name = safeFileName(found.name)
-    if (!canOpenDirectly(name)) throw new Error('Save this kind of file first, then open it yourself.')
-    const path = join(openedFolder(), `${randomUUID().slice(0, 8)}-${name}`)
-    writeFileSync(path, found.content, { mode: 0o600 })
-    const failure = await shell.openPath(path)
-    if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+    await openAttachment(safeFileName(found.name), found.content, { folder: openedFolder, filetype: xdgFiletype, openPath: (path) => shell.openPath(path) })
   })
   // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
   // than a few megabytes of it, and saving writes it as it came.

@@ -107,7 +107,9 @@ kept on the laptop.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
 - **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
-- **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
+- **Attachments:** fetched when you ask, saved or opened. A file opens only when its name and its own
+  bytes agree it's a document, picture, sound, film or archive, so a program dressed up as
+  `invoice.pdf` is saved, never opened.
   A row in the list shows its thread's files as small cards, unless Appearance says not to.
 - **Windows of their own:** the last button over a thread opens it in its own window, and the
   composer's does the same for what you're writing. A thread's window follows it into Trash and back,

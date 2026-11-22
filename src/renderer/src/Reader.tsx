@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { imagesLoad } from '@shared/images'
 import { plainName } from '@shared/names'
+import { canOpenDirectly } from '@shared/openable'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
@@ -84,9 +85,11 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
       {m.attachments.map((file, i) => {
         const kind = fileKind(file.name)
         const Icon = KIND_ICONS[kind]
+        // What can't be opened here is saved, to be opened from where it lands.
+        const openable = canOpenDirectly(plainName(file.name))
         return (
           <li key={i}>
-            <button type="button" className="file" title="Open" onClick={() => open(i)}>
+            <button type="button" className="file" title={openable ? 'Open' : 'Save'} onClick={() => (openable ? open(i) : save(i))}>
               <span className={`file-tile file-${kind}`} aria-hidden="true"><Icon size={18} /></span>
               <span className="file-words">
                 <span className="file-name">{plainName(file.name)}</span>
