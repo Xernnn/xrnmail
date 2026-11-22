@@ -839,6 +839,31 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)
 })
 
+// Mail in Spam offered Unsubscribe, over the message and in its details: one click told a spammer
+// the address is read, by their one-click address or their page.
+test('nothing in Spam or Trash offers Unsubscribe', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const list = 'List-Unsubscribe: <https://shop.example/leave>'
+  gmail.add(rawMail({ subject: 'Offers', from: 'Shop <hi@shop.example>', headers: [list, 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'] }), { arrived: earlier(3) })
+  gmail.add(rawMail({ subject: 'You won', from: 'Prize <win@prize.example>', headers: [list, 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'] }), { box: '[Gmail]/Spam', arrived: earlier(3) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ focused: false }))
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const message = page.locator('.message.open')
+  await page.locator('.threads').getByText('Offers').click()
+  await expect(message.getByRole('button', { name: 'Unsubscribe' })).toBeVisible() // as ever, outside the bins
+  await page.getByRole('button', { name: /^Spam/ }).click()
+  await page.locator('.threads').getByText('You won').click()
+  await expect(page.locator('.thread-subject')).toHaveText('You won')
+  await expect(message.getByRole('button', { name: 'Unsubscribe' })).toHaveCount(0)
+  await message.locator('.who-to').click()
+  const details = page.getByRole('dialog', { name: 'Message details' })
+  await expect(details).toContainText('Mailing list')
+  await expect(details.getByRole('button', { name: 'Unsubscribe' })).toHaveCount(0)
+  expect(await run.opened()).toEqual([])
+})
+
 // Block sender sent what was ticked in the list to Trash, whoever it was from, and left the open
 // thread from the sender just blocked where it was.
 test('blocking the sender of the open thread sends that thread to Trash, not the ones ticked', async () => {

@@ -135,7 +135,8 @@ export function Details(props: {
   own: string[]
   cautions: string[]
   close(): void
-  unsubscribe(): void
+  /** Not given in Trash or Spam. */
+  unsubscribe?: () => void
   actions: AddressActions
 }): ReactNode {
   const { message: m, own, actions } = props
@@ -243,12 +244,12 @@ export function Details(props: {
             <dt>Mailing list</dt>
             <dd>
               <span className="selectable">{known.list.name ? `${known.list.name} ` : ''}<span className="muted">{known.list.id}</span></span>
-              {m.unsubscribe && <button type="button" className="link details-link" onClick={() => { props.close(); props.unsubscribe() }}>Unsubscribe</button>}
+              {m.unsubscribe && props.unsubscribe && <button type="button" className="link details-link" onClick={() => { props.close(); props.unsubscribe?.() }}>Unsubscribe</button>}
             </dd>
           </>
         )}
         {!known?.list && m.unsubscribe && (
-          <><dt>Mailing list</dt><dd>Sent in bulk <button type="button" className="link details-link" onClick={() => { props.close(); props.unsubscribe() }}>Unsubscribe</button></dd></>
+          <><dt>Mailing list</dt><dd>Sent in bulk {props.unsubscribe && <button type="button" className="link details-link" onClick={() => { props.close(); props.unsubscribe?.() }}>Unsubscribe</button>}</dd></>
         )}
         {known && !own.includes(m.from.address.toLowerCase()) && (
           <><dt>Written to</dt><dd>{known.wroteTo ? "You've written to them before" : "You haven't written to this sender"}</dd></>

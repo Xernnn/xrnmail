@@ -215,7 +215,7 @@ function Message(props: {
         {source && <Original message={m.id} subject={m.subject} close={() => setSource(false)} />}
         {details && (
           <Details message={m} account={props.account} own={own} actions={props.actions} close={closeDetails}
-            cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={() => props.unsubscribe(m.id)} />
+            cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={bins ? undefined : () => props.unsubscribe(m.id)} />
         )}
       </div>
       <div className="message-body">
@@ -348,7 +348,8 @@ export function Reader(props: {
   const newestFirst = settings?.threadOrder === 'newest'
   const ordered = newestFirst ? [...shown].reverse() : shown
   const foldAt = newestFirst ? ordered.length - 1 : 1
-  const leaving = [...messages].reverse().find((m) => m.unsubscribe)
+  // Not from Trash or Spam: a spammer's link confirms the address is read, and that's all it does.
+  const leaving = bins ? undefined : [...messages].reverse().find((m) => m.unsubscribe)
   const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()) && !SYSTEM_SENDER.test(m.from.address))
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
