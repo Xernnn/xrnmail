@@ -337,8 +337,10 @@ test('triage by keyboard: archive, move on, undo, delete', async () => {
   await page.keyboard.press('e')
   await expect(list.getByText('Newest')).toHaveCount(0)
   await expect(page.locator('.thread-subject')).toHaveText('Middle') // the next one, not an empty pane
+  await expect(page.getByRole('status')).toHaveText(/^Archived/)
   await page.keyboard.press('z')
   await expect(list.getByText('Newest')).toBeVisible()
+  await expect(page.getByRole('status')).toHaveCount(0, { timeout: 1000 }) // undone, the toast and its Undo go at once
   await page.keyboard.press('#')
   await expect(list.getByText('Middle')).toHaveCount(0)
   await expect.poll(() => gmail.moved.length, LONG).toBe(1)

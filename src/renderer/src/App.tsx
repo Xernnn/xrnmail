@@ -888,7 +888,8 @@ export function App(): ReactNode {
           if (row) togglePick(row, index, false)
         },
         selectAll: () => setPicked(new Set(list.map(keyOf))),
-        undo: () => toast?.undo?.(),
+        // As the toast's own Undo: the toast goes with it, and a window of its own waits for it.
+        undo: () => { if (toast?.undo) undoNow(toast.undo) },
         help: () => setHelp(true)
       }
       const set = profile?.keys ?? 'edison'
