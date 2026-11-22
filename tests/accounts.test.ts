@@ -469,6 +469,24 @@ describe('Gmail: Trash and Spam', () => {
     expect(subjects(service.list({ kind: 'trash' }))).toEqual(['Thrown out'])
   })
 
+  // INBOX isn't read on Gmail, so a thread moved there from Trash lost its row, and was in neither
+  // Trash nor the inbox until the next sync found it in All Mail under its new UID.
+  it('a thread brought back from Trash or Spam is in the inbox at once, and stays there through the next sync', async () => {
+    for (const kind of ['trash', 'spam'] as const) {
+      const [row] = service.list({ kind })
+      service.act([{ account: G, thread: row?.thread ?? '' }], { kind: 'inbox' })
+      await flushed()
+      expect(service.list({ kind })).toEqual([])
+    }
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Junk', 'Letter', 'Thrown out'])
+    expect(gmail.box('[Gmail]/Trash').mails).toEqual([])
+    expect(gmail.box('[Gmail]/Spam').mails).toEqual([])
+    expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox'))).toHaveLength(3)
+    await service.syncAll()
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Junk', 'Letter', 'Thrown out'])
+    expect(store.uids(G, '@all').size).toBe(3)
+  })
+
   it('says "not spam" by moving it back', async () => {
     const [row] = service.list({ kind: 'spam' })
     service.act([{ account: G, thread: row?.thread ?? '' }], { kind: 'inbox' })

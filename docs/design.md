@@ -79,6 +79,9 @@ away.
   then the message is put back as it was and the sidebar says so.
 - Moves use `UID MOVE` where the server has it, and copy then delete where it doesn't. A service with no
   Archive or Trash folder gets one the first time it's needed.
+- On Gmail, mail brought back from Trash or Spam is moved to All Mail and labelled Inbox there, rather
+  than moved to `INBOX`: All Mail is read and the server names the new UIDs there, so the row follows
+  it and the thread is in the inbox at once, not only after the next sync.
 - Delete and spam change the row's `bin` at once, which is what makes Undo possible. `hidden` is only for
   mail being deleted for good, and Gmail's own unsent drafts. Every read leaves out hidden rows, as it
   does held ones.
