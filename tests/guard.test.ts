@@ -31,9 +31,9 @@ const page = (id: number): Electron.WebContents => new Page(id) as unknown as El
 lockDownNetwork()
 
 /** Whether a picture asked for by the page [from] gets through. */
-function let_through(from: number, resourceType = 'image'): boolean {
+function let_through(from: number, resourceType = 'image', url = 'https://pictures.example/a.png'): boolean {
   let cancel: boolean | undefined
-  requests.listener?.({ url: 'https://pictures.example/a.png', resourceType, webContentsId: from }, (answer) => void (cancel = answer.cancel))
+  requests.listener?.({ url, resourceType, webContentsId: from }, (answer) => void (cancel = answer.cancel))
   return cancel === false
 }
 
@@ -62,5 +62,17 @@ describe('pictures in mail', () => {
     own.emit('destroyed')
     expect(let_through(4)).toBe(false)
     expect(own.listenerCount('destroyed')).toBe(0)
+  })
+
+  // After Show images, a known service's open pixel loaded from CSS, a table cell's background or
+  // anywhere else the page didn't find it.
+  it('never let a known open-tracking service through, even when asked for', () => {
+    const own = page(5)
+    allowImages(own, true)
+    expect(let_through(5)).toBe(true)
+    for (const url of ['https://mandrillapp.com/track/open.php?u=1', 'https://x.list-manage.com/track/open.php?u=2', 'https://u1.sendgrid.net/wf/open?upn=3']) {
+      expect(let_through(5, 'image', url), url).toBe(false)
+    }
+    allowImages(own, false)
   })
 })

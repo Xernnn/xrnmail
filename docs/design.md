@@ -372,7 +372,14 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
    address on a From line; the rest asks, as a stranger's does.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
-   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
+   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning
+   (`shared/trackers.ts`). Invisible is two pixels or less however it's written (`1`, `1px`,
+   `max-width:1px`), or hidden. CSS is cleaned the same way, in style attributes and `<style>`: the
+   known services' pictures, any picture a rule loads only under the pointer or on a click, and
+   `@import`, and a cell's `background` from them goes too; `loading=lazy` is dropped, so a picture
+   far down can't say how far you read. CSS can name a picture in more ways than that can find, so
+   the main process refuses the known services' addresses even with Show images on. A picture sized
+   to nothing by a class in a style sheet still loads once allowed.
 6. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
 7. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
    A page can't open a window. Only the main process does, for a thread or a draft, and that window

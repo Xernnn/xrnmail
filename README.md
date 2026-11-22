@@ -108,7 +108,10 @@ kept on the laptop.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
-- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
+- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images:
+  in pictures, CSS backgrounds and table cells, pictures a rule loads only under the pointer, and
+  pictures that wait to be scrolled to. A picture sized to nothing by a style sheet's class still
+  gets through, unless it's from a known tracking service, which is never fetched at all.
 - **Attachments:** fetched when you ask, saved or opened. A file opens only when its name and its own
   bytes agree it's a document, picture, sound, film or archive, so a program dressed up as
   `invoice.pdf` is saved, never opened.

@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify'
 import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { splitQuoted } from '@shared/quoted'
+import { cleanCss, tinyImage, TRACKER } from '@shared/trackers'
 import { darkenDocument, UNLOADED_DARK } from './darken'
 import { fitDocument } from './fit'
 
@@ -18,18 +19,7 @@ const SANITIZE = {
   ALLOW_DATA_ATTR: false
 }
 
-/** Mail services that report back when a message is opened. HubSpot hosts its senders' pictures on
- *  the same hubspotemail.net, so only its open-tracking paths count. */
-const TRACKER = /\b(list-manage\.com\/track|sendgrid\.net\/wf\/open|mandrillapp\.com\/track|mailtrack\.io|(?:hubspotemail\.net|hubspotlinks\.com|sidekickopen\d{0,3}\.com)\/(?:e[12]t\/t?o\/|Cto\/)|track\.hubspot\.com\/__ptq|sparkpostmail\.com\/q|track\.customer\.io|mailgun\.org\/o|mixmax\.com\/api\/track|bananatag\.com|superhuman\.com\/[^"']{0,200}pixel|yesware\.com\/trk|cirrusinsight\.com\/[^"']{0,200}track)/i
-
-const tiny = (image: Element): boolean => {
-  const small = (name: string): boolean => {
-    const value = image.getAttribute(name)?.trim()
-    return Boolean(value) && Number(value) <= 2
-  }
-  const style = image.getAttribute('style') ?? ''
-  return small('width') || small('height') || /(?:^|;|\s)(?:width|height)\s*:\s*[012]px/i.test(style) || /display\s*:\s*none/i.test(style)
-}
+const tiny = (image: Element): boolean => tinyImage(image.getAttribute('width'), image.getAttribute('height'), image.getAttribute('style'))
 
 let trackers = 0
 
@@ -38,12 +28,35 @@ let trackers = 0
 // carry it on to someone else. It runs inside DOMPurify, on the tree it has cleaned, because taking
 // clean HTML apart and putting it back together is how sanitised markup gets turned hostile again.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  const element = node as Element
+  // CSS can load a picture too: a known service's, from a style or a table cell's background.
+  const style = element.getAttribute('style')
+  if (style) {
+    const cleaned = cleanCss(style)
+    if (cleaned.removed > 0) element.setAttribute('style', cleaned.css)
+    trackers += cleaned.removed
+  }
+  if (TRACKER.test(element.getAttribute('background') ?? '')) {
+    element.removeAttribute('background')
+    trackers++
+  }
   if (node.nodeName !== 'IMG') return
-  const image = node as Element
+  const image = element
+  // A picture far down that loads only once it's scrolled to says how far the message was read.
+  image.removeAttribute('loading')
   const src = image.getAttribute('src') ?? ''
   if (!/^(?:https?:)?\/\//i.test(src) || !(tiny(image) || TRACKER.test(src))) return
   image.removeAttribute('src')
   trackers++
+})
+
+// The same for a <style> block's CSS, which is the text inside it.
+DOMPurify.addHook('afterSanitizeElements', (node) => {
+  if (node.nodeType !== 3 || node.parentNode?.nodeName !== 'STYLE') return
+  const cleaned = cleanCss(node.textContent ?? '')
+  if (cleaned.removed === 0) return
+  node.textContent = cleaned.css
+  trackers += cleaned.removed
 })
 
 export const sanitize = (html: string): string => DOMPurify.sanitize(html, SANITIZE)

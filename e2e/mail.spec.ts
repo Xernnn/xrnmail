@@ -371,6 +371,37 @@ test('a mailing service\'s own pictures stay, and only its open pixel goes', asy
   await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
 })
 
+// Only an <img> with width="1" or a known address lost its picture: after Show images, width="1px",
+// max-width:1px, CSS backgrounds from the known services, a cell's background and a picture loaded
+// only when the pointer went over a link all reported the open.
+test('open pixels written in CSS, or sized in other ways, go too, and real pictures stay', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<style>a:hover{background:url(https://beacon.example/hovered)} p.hero{background:url(https://cdn.example/hero.jpg)}</style>' +
+    '<p class="hero">Spring is here.</p><a href="https://shop.example/">Shop</a>' +
+    '<img id="px1" src="https://pixel.example/a.gif" width="1px" height="1px">' +
+    '<img id="px2" src="https://pixel.example/b.gif" style="max-width:1px;max-height:1px">' +
+    '<div id="bg" style="color:#333;background-image:url(https://mandrillapp.com/track/open.php?u=1)">Hello</div>' +
+    '<table><tr><td id="cell" background="https://u1.sendgrid.net/wf/open?upn=1">Cell</td></tr></table>' +
+    '<img id="far" loading="lazy" src="https://cdn.example/far.jpg" width="300" height="200">'
+  gmail.add(rawMail({ subject: 'Spring', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Spring', { exact: true }).click()
+  const frame = page.frameLocator('iframe.body-frame')
+  await frame.getByText('Spring is here.').waitFor()
+  await expect(page.getByText('5 trackers removed')).toBeVisible()
+  await expect(frame.locator('#px1')).not.toHaveAttribute('src', /.+/)
+  await expect(frame.locator('#px2')).not.toHaveAttribute('src', /.+/)
+  await expect(frame.locator('#bg')).not.toHaveAttribute('style', /mandrillapp/)
+  await expect(frame.locator('#bg')).toHaveAttribute('style', /color/)
+  await expect(frame.locator('#cell')).not.toHaveAttribute('background', /.*/)
+  await expect(frame.locator('#far')).toHaveAttribute('src', 'https://cdn.example/far.jpg')
+  await expect(frame.locator('#far')).not.toHaveAttribute('loading', /.*/)
+  const css = await frame.locator('body style').textContent()
+  expect(css).not.toContain('beacon.example')
+  expect(css).toContain('https://cdn.example/hero.jpg')
+})
+
 test('images stay blocked on the next message', async () => {
   run = await launch()
   const { page, gmail } = run
