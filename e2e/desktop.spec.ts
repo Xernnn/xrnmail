@@ -226,3 +226,21 @@ test('a second launch with a file opens it beside the app, and Reply answers fro
   await expect(failed.getByText("That isn't a mail file.")).toBeVisible()
   rmSync(folder, { recursive: true, force: true })
 })
+
+test('Use for mail links: xdg-mime is asked to make this the mail app, and then it says Default', async () => {
+  run = await launch()
+  const { page, app } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const use = settings.getByRole('button', { name: 'Use for mail links' })
+  await use.click()
+  await expect(settings.locator('.mail-links')).toContainText('Default')
+  await expect(use).toHaveCount(0)
+  // The tests' xdg-mime is a stand-in: the real one is never run.
+  expect(await app.evaluate(() => (globalThis as unknown as { mimeAsked: string[][] }).mimeAsked)).toEqual([
+    ['xdg-mime', 'query', 'default', 'x-scheme-handler/mailto'],
+    ['xdg-mime', 'default', 'xrnmail.desktop', 'x-scheme-handler/mailto'],
+    ['xdg-mime', 'query', 'default', 'x-scheme-handler/mailto']
+  ])
+})

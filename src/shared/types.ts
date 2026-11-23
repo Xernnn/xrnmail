@@ -584,6 +584,10 @@ export interface MailApi {
   openInGmail(email: string, thread: string): Promise<void>
   /** A link from a message or the app. Only web and mail addresses open. */
   openLink(url: string): Promise<void>
+  /** Whether mail links open here ('default'), elsewhere ('other'), or can't be set here ('none'). */
+  mailLinks(): Promise<'default' | 'other' | 'none'>
+  /** Makes mail links open here, and says the same as mailLinks after. */
+  useForMailLinks(): Promise<'default' | 'other' | 'none'>
   onChanged(listener: () => void): () => void
   /** A mail address was opened, from a message or the system, and here's the draft for it. */
   onCompose(listener: (draft: Draft) => void): () => void

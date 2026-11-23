@@ -257,8 +257,9 @@ Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set
 all of them, finding in a message is Ctrl+G, which Apple Mail and Outlook use for the next match, where
 the set's Ctrl+Shift+F is taken, and Ctrl+Shift+F in Gmail's and Inbox's, where it's free.
 
-To have mail links open here, set it as your mail app after installing:
-`xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
+To have mail links open here, press Use for mail links in Settings, General after installing, which
+runs `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`; once they do, it says Default. A
+browser may keep its own choice for mail links (in Firefox and Zen: Settings, Applications, mailto).
 
 ## Live mail
 

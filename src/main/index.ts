@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { basename, join } from 'node:path'
 import type {
@@ -20,6 +21,7 @@ import { watchNetwork } from './network'
 import { Notices, systemRunner } from './notifier'
 import { passwordStoreSwitch } from './password-store'
 import { filesIn, letterDetail, letterDetails, Letters, letterView } from './letters'
+import { installed, launcherFolders, mailLinks, useForMailLinks, type Run } from './mail-links'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
 import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
@@ -209,6 +211,20 @@ function openFiles(paths: string[]): void {
     opened.read(path).then((letter) => letter.token, (e: unknown) => opened.failure(e instanceof Error && !('code' in e) ? e.message : "That file couldn't be read."))
       .then((file) => showSolo({ kind: 'file', file }))
       .catch(() => undefined) // too many windows open already
+  }
+}
+
+/** What runs xdg-mime for Settings' mail links. The UI tests' never runs it: it answers as the system
+ *  would, starting from XRNMAIL_MAILTO, and notes what was asked where a test can read it. */
+function mimeRunner(): Run {
+  if (!test['XRNMAIL_DATA']) return (file, args) => systemRunner.run(file, args, 5_000)
+  let handler = test['XRNMAIL_MAILTO'] ?? ''
+  const asked: string[][] = []
+  Object.assign(globalThis, { mimeAsked: asked })
+  return async (file, args) => {
+    asked.push([file, ...args])
+    if (args[0] === 'default') handler = args[1] ?? ''
+    return args[0] === 'query' ? `${handler}\n` : ''
   }
 }
 
@@ -685,6 +701,10 @@ function register(service: MailService, avatars: Avatars): void {
   })
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
+  const mime = mimeRunner()
+  const launcher = (): boolean => Boolean(test['XRNMAIL_DATA']) || installed(launcherFolders(process.env, homedir()))
+  handle('mailLinks', () => mailLinks(mime, launcher()))
+  handle('useForMailLinks', () => useForMailLinks(mime, launcher()))
   handle('openLink', async (url: unknown) => {
     const target = text(url, MAX_LINK)
     if (MAILTO.test(target)) await composeTo(target)

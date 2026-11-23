@@ -42,7 +42,7 @@ const TABS: [Tab, string, TabIcon][] = [
 
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
-  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images faces photos logos gravatar tray background start login',
+  general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images faces photos logos gravatar tray background start login mail links mailto default',
   notifications: 'new mail tell account focused other only mute muted senders unmute quiet sound chime',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
@@ -325,6 +325,29 @@ function When(props: { label: string; day?: [number, number[]]; hour: [number, [
   )
 }
 
+/** Whether mail links open here, and a button to make them, where the system has a way to. */
+function MailLinks(): ReactNode {
+  const [state, setState] = useState<'default' | 'other' | 'none' | null>(null)
+  const [failure, setFailure] = useState('')
+  useEffect(() => {
+    window.mail.mailLinks().then(setState, () => setState('none'))
+  }, [])
+  if (state === null || state === 'none') return null
+  const use = (): void => {
+    setFailure('')
+    window.mail.useForMailLinks().then(setState, (e: unknown) => setFailure(problem(e)))
+  }
+  return (
+    <>
+      <div className="line mail-links">
+        <span className="grow">Mail links</span>
+        {state === 'default' ? <span className="muted">Default</span> : <button type="button" className="quiet" onClick={use}>Use for mail links</button>}
+      </div>
+      {failure && <p className="error">{failure}</p>}
+    </>
+  )
+}
+
 function General(props: { settings: Settings; save: Save }): ReactNode {
   const { settings, save } = props
   const later = settings.later
@@ -373,6 +396,7 @@ function General(props: { settings: Settings; save: Save }): ReactNode {
         <h3>This laptop</h3>
         <Check label="Keep running in the tray when the window closes" on={settings.background} set={(background) => save({ background })} />
         <Check label="Start at login" on={settings.startAtLogin} set={(startAtLogin) => save({ startAtLogin })} />
+        <MailLinks />
       </section>
     </>
   )

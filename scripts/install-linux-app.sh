@@ -90,4 +90,4 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "Installed: $TARGET"
-echo "To have mail links open here: xdg-mime default ${APP_ID}.desktop x-scheme-handler/mailto"
+echo "To have mail links open here: Settings, General, Use for mail links (or xdg-mime default ${APP_ID}.desktop x-scheme-handler/mailto)"

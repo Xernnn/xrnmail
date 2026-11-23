@@ -74,6 +74,8 @@ const api: MailApi = {
   saveProfile: (patch) => call('saveProfile', patch),
   openInGmail: (email, thread) => call('openInGmail', email, thread),
   openLink: (url) => call('openLink', url),
+  mailLinks: () => call('mailLinks'),
+  useForMailLinks: () => call('useForMailLinks'),
   version: () => call('version'),
   onCommand: (listener) => {
     const relay = (_event: IpcRendererEvent, command: AppCommand): void => listener(command)
