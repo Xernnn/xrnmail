@@ -117,7 +117,8 @@ kept on the laptop.
   `filename:`, `in:` or `label:` (`label:"Family trips"`, `in:inbox`, `in:sent`, `in:archive`),
   `is:unread`, `is:read`, `is:flagged`, `is:important`, `is:snoozed`, `is:pinned`, `has:attachment`,
   `after:` and `before:` (`2026/11/01` or `2026-11-01`), `newer_than:` and `older_than:` (`7d`, `2w`,
-  `3m`, `1y`), and `larger:` and `smaller:` (`5M`, `200K`), twelve terms at most. What's kept here shows at once; a moment later each account's server is asked about older mail
+  `3m`, `1y`), and `larger:` and `smaller:` (`5M`, `200K`), twelve terms at most. The last word typed
+  is offered the operators it could be the start of. What's kept here shows at once; a moment later each account's server is asked about older mail
   too, and what it finds is listed below, under Older. Gmail is asked in its own search language over
   All Mail, any other service with IMAP SEARCH in each folder but Trash and Junk, the newest 200 from
   each. Opening one fetches its whole thread, which then reads, replies and moves like any other, and

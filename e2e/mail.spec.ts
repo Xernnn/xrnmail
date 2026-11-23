@@ -182,6 +182,32 @@ test('mail from before what is kept is found on the server, below what is, and o
   await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen') // opening it read it, on the server too
 })
 
+test('the search box offers its operators as what is typed could finish, and nothing more', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Waiting to be read' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'Read already' }), { arrived: earlier(3), flags: ['\\Seen'] })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const box = page.getByRole('combobox', { name: 'Search' })
+  const offered = page.getByRole('listbox', { name: 'Search operators' })
+  await box.fill('is:un')
+  await expect(offered.getByRole('option')).toHaveText(['is:unread'])
+  await box.press('ArrowDown')
+  await box.press('Enter')
+  await expect(box).toHaveValue('is:unread ')
+  await expect(offered).toHaveCount(0)
+  await expect(list.getByText('Waiting to be read')).toBeVisible()
+  await expect(list.getByText('Read already')).toHaveCount(0)
+  await box.pressSequentially('-sub')
+  await expect(offered.getByRole('option')).toHaveText(['subject:'])
+  await offered.getByRole('option').click()
+  await expect(box).toHaveValue('is:unread -subject:')
+  await expect(box).toBeFocused()
+  await box.fill('meeting notes')
+  await expect(offered).toHaveCount(0) // a plain word that's no operator's start offers nothing
+})
+
 test('recent searches: offered under the empty search box, picked with the keys, removed one at a time or all, and kept', async () => {
   run = await launch()
   const { page, gmail } = run
