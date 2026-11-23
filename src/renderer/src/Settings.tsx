@@ -710,6 +710,7 @@ function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
 function Templates(props: { templates: Template[]; save(edit: (templates: Template[]) => Template[]): void }): ReactNode {
   const { templates, save } = props
   const [name, setName] = useState('')
+  const [subject, setSubject] = useState('')
   const [text, setText] = useState('')
   return (
     <section>
@@ -720,12 +721,14 @@ function Templates(props: { templates: Template[]; save(edit: (templates: Templa
         </div>
       ))}
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+      <label>Subject<input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>
       <label>Text<textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} /></label>
       <button className="quiet" disabled={!name.trim() || !text.trim()}
         onClick={() => {
-          const made = { name: name.trim(), text }
+          const made = { name: name.trim(), text, ...(subject.trim() ? { subject: subject.trim() } : {}) }
           save((now) => [...now.filter((t) => t.name !== made.name), made])
           setName('')
+          setSubject('')
           setText('')
         }}>
         Add template

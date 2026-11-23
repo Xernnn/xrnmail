@@ -397,7 +397,9 @@ function profile(value: unknown): ProfilePatch {
       .map(([address, id]) => [text(address, 320).toLowerCase(), text(id, 64)]))
   }
   if (Array.isArray(p['templates'])) {
-    patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))
+    patch.templates = (p['templates'] as Template[]).map((t) => ({
+      name: text(t?.name, 200), text: text(t?.text, 20_000), ...(t?.subject ? { subject: text(t.subject, 2000) } : {})
+    }))
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))

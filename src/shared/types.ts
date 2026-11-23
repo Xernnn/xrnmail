@@ -92,6 +92,8 @@ export interface Identity {
 export interface Template {
   name: string
   text: string
+  /** The subject it gives a message that has none yet. */
+  subject?: string
 }
 
 /** A signature, written with the composer's own toolbar. A picture in it is a data: image in its

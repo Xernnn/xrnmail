@@ -6,7 +6,7 @@ import {
 import { plainName } from '@shared/names'
 import { hintFor, keyName, keysFor } from '@shared/keys'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings, type ThreadRef } from '@shared/types'
+import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings, type Template, type ThreadRef } from '@shared/types'
 import { Avatar } from './Common'
 import { fileSize, longTime, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
@@ -443,10 +443,12 @@ export function Composer(props: {
     }
   }
 
-  const useTemplate = (text: string): void => {
+  /** Its words go where the caret is, and its subject, if it has one, to a message with none yet. */
+  const useTemplate = (template: Template): void => {
     setTemplates(false)
+    if (template.subject && !subject.trim()) setSubject(template.subject)
     editor.current?.focus()
-    document.execCommand('insertText', false, text)
+    document.execCommand('insertText', false, template.text)
     soon()
   }
 
@@ -650,7 +652,7 @@ export function Composer(props: {
             {templates && (
               <Popover up close={() => setTemplates(false)}>
                 {templateList.map((t) => (
-                  <button type="button" key={t.name} className="menu-item" onClick={() => useTemplate(t.text)}>{t.name}</button>
+                  <button type="button" key={t.name} className="menu-item" onClick={() => useTemplate(t)}>{t.name}</button>
                 ))}
               </Popover>
             )}

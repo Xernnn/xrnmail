@@ -105,6 +105,29 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   expect(smtp.sent[0]?.raw).toContain('Reply-To: team@example.org')
 })
 
+test('a template brings its words, and its subject to a message that has none yet', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Templates' }).click()
+  await page.getByLabel('Name').fill('Thanks')
+  await page.getByLabel('Subject').fill('Thank you')
+  await page.getByLabel('Text').fill('Thanks so much!')
+  await page.getByRole('button', { name: 'Add template' }).click()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByRole('button', { name: 'Templates' }).click()
+  await page.getByRole('button', { name: 'Thanks', exact: true }).click()
+  await expect(box.getByLabel('Subject')).toHaveValue('Thank you')
+  await expect(box.getByLabel('Message')).toHaveText('Thanks so much!')
+  await box.getByLabel('Subject').fill('Already one')
+  await box.getByRole('button', { name: 'Templates' }).click()
+  await page.getByRole('button', { name: 'Thanks', exact: true }).click()
+  await expect(box.getByLabel('Subject')).toHaveValue('Already one')
+})
+
 test('Send & Archive: the thread leaves the inbox as the reply goes, and Undo brings both back', async () => {
   run = await launch()
   const { page, gmail, smtp } = run
