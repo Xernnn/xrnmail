@@ -350,6 +350,21 @@ quits instead. Quitting properly runs `finishUp`: mail only waiting out Undo goe
 changes, within eight seconds. Mail scheduled for later stays scheduled; its time hasn't come, and
 sending early would be worse than sending late.
 
+### Notices
+
+Electron's Notification has no actions on Linux, so a notice for one message (`notifier.ts`) goes to
+the desktop's notification server through `notify-send` with Open, Archive and Mark read, after
+`gdbus` has asked the server whether it shows actions at all (asked again every ten minutes, since the
+server can be restarted or swapped). notify-send waits on the bus and prints the action chosen, and
+because it's the connection that sent the notice, it hears servers that tell only that connection
+(dunst, Plasma) as well as those that tell everyone (mako, Quickshell); a `gdbus monitor` beside a
+one-off `gdbus call` would miss the first kind. Archive and Mark read go through `act`, as the
+thread's buttons do, so they work with the window closed. A notice for several messages, a Summary's,
+and any desktop without notify-send, gdbus or actions keep Electron's plain notice, whose click opens
+the window. Both programs run without a shell, the words after `--`, and the body has `&`, `<` and `>`
+escaped, since a server may read it as markup. At most six notices wait on a button; the oldest stops
+waiting, and quitting stops them all.
+
 ## The Assistant
 
 `assistant.ts` decides Focused or Other, and finds parcels, travel, bills and events. It runs as mail is

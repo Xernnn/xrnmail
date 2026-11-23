@@ -14,9 +14,10 @@ import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, resourceFile, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { watchNetwork } from './network'
+import { Notices, systemRunner } from './notifier'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
@@ -802,6 +803,30 @@ void app.whenReady().then(() => {
   })
   const parser = new Parser(() => readMail({}))
   const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
+  // A notice for one message opens it, and its Archive and Mark read act as the thread's own buttons
+  // do, with no window needed; one for several brings the window up.
+  const notices = new Notices({
+    runner: systemRunner,
+    platform: process.platform,
+    icon: resourceFile('icon.png'),
+    plain: notify,
+    plainSummary: notifySummary,
+    act: (ref, action) => {
+      try {
+        mail?.act([ref], { kind: action })
+      } catch {
+        // The thread, or its account, went in the meantime.
+      }
+    },
+    open: (ref) => {
+      showWindow()
+      if (ref) window?.webContents.send('open-thread', ref)
+    },
+    openSummary: () => {
+      showWindow()
+      tellCommand('summary')
+    }
+  })
   const service = new MailService({
     store,
     secrets,
@@ -816,15 +841,8 @@ void app.whenReady().then(() => {
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),
     changed: tellPage,
-    // A notice for one message opens it; one for several brings the window up.
-    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
-      showWindow()
-      if (preview) window?.webContents.send('open-thread', { account: preview.account, thread: preview.thread })
-    }),
-    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
-      showWindow()
-      tellCommand('summary')
-    }),
+    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notices.landed(count, preview),
+    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notices.summarized(count, senders),
     earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined,
     failed: (failure) => syncLog.write(failure)
   })
@@ -868,6 +886,7 @@ void app.whenReady().then(() => {
       if (changeTimer) clearTimeout(changeTimer)
       tray?.destroy()
       tray = null
+      notices.stop()
       void parser.close()
       store.close()
       if (openedFiles) rmSync(openedFiles, { recursive: true, force: true })
