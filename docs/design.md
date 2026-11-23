@@ -548,6 +548,14 @@ Writing and acting on mail gave strangers new things to aim at, so:
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft
   to read, never a message sent behind your back.
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.
+- **A mail file is a stranger's message with no server behind it.** `xrnmail some.eml` (or a file:
+  URL, as a launcher's `%U` gives) reads only a plain file, never a pipe or a device, of 64 MB at
+  most, parses it on the parser's thread and follows nothing in it (`letters.ts`). Its
+  Authentication-Results lines are words anyone could have written, so it's unverified, never
+  "from you", and no sender's pictures load by themselves. It's shown in a window of its own by a
+  token (`solo.ts` `file`), as `Letter.tsx`: the reader with nothing to archive, flag or move, behind
+  the same walls as mail. The page's calls for it (details, attachments, View original) use a number
+  below zero, so they can't be taken for a stored message's, and it's let go when the window closes.
 - **Blocking** matches the `From` address, which a sender writes, so it's a filter for nuisances and not
   a security wall. Mail it catches goes to Trash, where it can still be found.
 

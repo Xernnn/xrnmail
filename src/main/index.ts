@@ -19,12 +19,14 @@ import { DraftFiles } from './draft-files'
 import { watchNetwork } from './network'
 import { Notices, systemRunner } from './notifier'
 import { passwordStoreSwitch } from './password-store'
+import { filesIn, letterDetail, letterDetails, Letters, letterView } from './letters'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
 import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { openAttachment, xdgFiletype } from './opening'
 import { isSafeExternalUrl, safeFileName } from './safe-url'
+import { attachmentsOf } from './parse'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
@@ -63,6 +65,8 @@ if (!app.requestSingleInstanceLock()) app.quit()
 
 let window: BrowserWindow | null = null
 let mail: MailService | null = null
+/** Messages opened from files, while their windows are open. */
+let letters: Letters | null = null
 let tray: AppTray | null = null
 let changeTimer: NodeJS.Timeout | null = null
 /** Set once the app is really going, as opposed to the window closing to the tray. */
@@ -196,6 +200,32 @@ async function composeTo(url: string): Promise<void> {
 
 const MAILTO = /^mailto:/i
 const mailtoIn = (argv: string[]): string | undefined => argv.find((arg) => MAILTO.test(arg))
+
+/** Each .eml file named, read-only in a window of its own; one that can't be read says why there. */
+function openFiles(paths: string[]): void {
+  for (const path of paths) {
+    if (!letters) return
+    const opened = letters
+    opened.read(path).then((letter) => letter.token, (e: unknown) => opened.failure(e instanceof Error && !('code' in e) ? e.message : "That file couldn't be read."))
+      .then((file) => showSolo({ kind: 'file', file }))
+      .catch(() => undefined) // too many windows open already
+  }
+}
+
+/** A message's attachment, whole: from a file opened here, or fetched for one kept here. */
+async function attachmentFor(service: MailService, id: number, index: number): Promise<{ name: string; content: Buffer }> {
+  const letter = letters?.byId(id)
+  if (!letter) return service.attachment(id, index)
+  const found = (await attachmentsOf(letter.source))[index]
+  if (!found) throw new Error("That attachment isn't in the message.")
+  return found
+}
+
+/** A message as it came, every byte: a file opened here is its own. */
+async function originalFor(service: MailService, id: number): Promise<{ name: string; bytes: Buffer }> {
+  const letter = letters?.byId(id)
+  return letter ? { name: `${letter.mail.subject.trim() || 'Message'}.eml`, bytes: letter.source } : service.original(id)
+}
 
 const MAX_BODY = 8 * 1024 * 1024
 const MAX_DROP = 26 * 1024 * 1024
@@ -516,7 +546,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))
   handle('contacts', (query: unknown) => service.contacts(text(query, 200)))
   handle('saveAttachment', async (message: unknown, index: unknown) => {
-    const found = await service.attachment(number(message), number(index))
+    const found = await attachmentFor(service, number(message), number(index))
     const parent = dialogParent()
     const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
@@ -525,18 +555,18 @@ function register(service: MailService, avatars: Avatars): void {
     return true
   })
   handle('openAttachment', async (message: unknown, index: unknown) => {
-    const found = await service.attachment(number(message), number(index))
+    const found = await attachmentFor(service, number(message), number(index))
     await openAttachment(safeFileName(found.name), found.content, { folder: openedFolder, filetype: xdgFiletype, openPath: (path) => shell.openPath(path) })
   })
   // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
   // than a few megabytes of it, and saving writes it as it came.
   handle('original', async (message: unknown) => {
-    const { bytes } = await service.original(number(message))
+    const { bytes } = await originalFor(service, number(message))
     const cut = bytes.length > ORIGINAL_SHOWN
     return { text: new TextDecoder().decode(cut ? bytes.subarray(0, ORIGINAL_SHOWN) : bytes), size: bytes.length, cut }
   })
   handle('saveOriginal', async (message: unknown) => {
-    const found = await service.original(number(message))
+    const found = await originalFor(service, number(message))
     const parent = dialogParent()
     const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }], properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
@@ -544,7 +574,26 @@ function register(service: MailService, avatars: Avatars): void {
     writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })
     return true
   })
-  handle('details', (message: unknown) => service.details(number(message)))
+  handle('details', (message: unknown) => {
+    const letter = letters?.byId(number(message))
+    return letter ? letterDetails(letter) : service.details(number(message))
+  })
+  // A file's message, read-only, for its window; and a reply to it, or a forward, in a composer of its own.
+  handle('letter', (token: unknown) => {
+    const file = text(token, 64)
+    const letter = letters?.get(file)
+    if (!letter) throw new Error(letters?.problem(file) ?? "That file isn't open any more.")
+    const owner = [...letter.mail.to, ...letter.mail.cc].map((a) => service.ownerOf(a.address)).find(Boolean)
+    return letterView(letter, owner ?? service.accounts()[0]?.email ?? '')
+  })
+  handle('replyToLetter', async (token: unknown, kind: unknown) => {
+    const letter = letters?.get(text(token, 64))
+    if (!letter) throw new Error("That file isn't open any more.")
+    if (kind !== 'reply' && kind !== 'replyAll' && kind !== 'forward') throw new Error('Bad request')
+    const files = kind === 'forward' ? await attachmentsOf(letter.source) : []
+    const draft = service.startDraftFromFile(letterDetail(letter, ''), files, kind)
+    showSolo({ kind: 'draft', id: draft.id })
+  })
   // An address and nothing else: a page gone wrong mustn't be able to put a command on the clipboard
   // for someone to paste into a terminal.
   handle('copyAddress', (address: unknown) => {
@@ -690,7 +739,7 @@ const solos = new Map<string, BrowserWindow>()
 const MOST_SOLOS = 12
 /** How long a window of its own gets to keep what's typed before it's closed regardless. */
 const LEAVING_MS = 2000
-const SOLO_SIZE = { thread: { width: 900, height: 780 }, draft: { width: 720, height: 680 } }
+const SOLO_SIZE = { thread: { width: 900, height: 780 }, draft: { width: 720, height: 680 }, file: { width: 900, height: 780 } }
 
 /** A thread, or a draft in the composer, in a window of its own: the page the main window has,
  *  told in its address what to show. Asking again for the same one brings its window forward. */
@@ -725,7 +774,10 @@ function showSolo(solo: Solo): void {
     shown.webContents.send('leaving')
     setTimeout(() => { if (!shown.isDestroyed()) shown.destroy() }, LEAVING_MS)
   })
-  shown.on('closed', () => { if (solos.get(key) === shown) solos.delete(key) })
+  shown.on('closed', () => {
+    if (solos.get(key) === shown) solos.delete(key)
+    if (solo.kind === 'file') letters?.forget(solo.file)
+  })
   loadPage(shown, soloQuery(solo))
 }
 
@@ -777,7 +829,10 @@ function createWindow(store: Store, hidden: boolean): void {
   loadPage(shown)
 }
 
-app.on('second-instance', (_event, argv) => {
+app.on('second-instance', (_event, argv, from) => {
+  // A file opens in a window of its own, over whatever else is open.
+  const files = filesIn(argv.slice(1), from)
+  if (files.length > 0) return openFiles(files)
   showWindow()
   const url = mailtoIn(argv)
   if (url) background(composeTo(url))
@@ -802,6 +857,7 @@ void app.whenReady().then(() => {
     vouched: (addresses) => store.passedDmarc(addresses)
   })
   const parser = new Parser(() => readMail({}))
+  letters = new Letters(parser.parse)
   const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
   // A notice for one message opens it, and its Archive and Mark read act as the thread's own buttons
   // do, with no window needed; one for several brings the window up.
@@ -868,6 +924,9 @@ void app.whenReady().then(() => {
   createWindow(store, tray !== null && startedHidden(process.argv))
   const opening = mailtoIn(process.argv)
   if (opening) window?.webContents.once('did-finish-load', () => background(composeTo(opening)))
+  // Started from a file manager's Open With, or `xrnmail some.eml`: from where it was started, which
+  // an AppImage notes before moving.
+  openFiles(filesIn(process.argv.slice(1), process.env['OWD'] || process.cwd()))
   background(service.syncAll())
   background(service.refreshSnippets(app.getVersion()))
   service.watchAll()

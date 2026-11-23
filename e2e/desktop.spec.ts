@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { rawMail } from '../tests/fake-gmail'
+import { pdf } from '../tests/files'
 import { launch, signIn, type Running } from './app'
 
 const earlier = (hours: number): Date => new Date(Date.now() - hours * 3_600_000)
@@ -147,4 +152,77 @@ test('Sound for new mail: a switch with the notices, off to start with', async (
   await expect.poll(() => page.evaluate(async () => (await window.mail.settings()).sound)).toBe(true)
   await settings.getByLabel('Search settings').fill('sound')
   await expect(settings.getByRole('button', { name: 'Notifications' })).toBeVisible()
+})
+
+/** A message as a file, as a mail app saves one: a stranger's HTML, a picture to block, a file, and an
+ *  Authentication-Results line that would vouch for it if anyone had checked. */
+function messageFile(folder: string): string {
+  const path = join(folder, 'Floor plan.eml')
+  writeFileSync(path, rawMail({
+    from: 'Mai Tran <mai@example.com>', to: 'me@example.com', subject: 'Floor plan',
+    headers: ['Reply-To: plans@elsewhere.example', 'Authentication-Results: mx.google.com; dmarc=pass header.from=example.com'],
+    html: '<p>The new <b>floor plan</b> is attached.</p><img src="https://images.example/plan.png" width="300" height="200">',
+    attachment: { name: 'plan.pdf', type: 'application/pdf', body: pdf() }
+  }))
+  return path
+}
+
+const fileWindow = async (app: Running['app']): Promise<Page> => {
+  await expect.poll(() => app.windows().filter((w) => w.url().includes('solo=file')).length).toBeGreaterThan(0)
+  return app.windows().filter((w) => w.url().includes('solo=file')).at(-1) as Page
+}
+
+test('an .eml file opens read-only in a window of its own: unverified, pictures blocked, its file saved', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'xrnmail-eml-'))
+  run = await launch({ args: [messageFile(folder)] })
+  const { app } = run
+  const letter = await fileWindow(app)
+  await expect(letter.getByRole('heading', { name: 'Floor plan' })).toBeVisible()
+  await expect(letter).toHaveTitle('Floor plan')
+  await expect(letter.frameLocator('iframe.body-frame').getByText('is attached.')).toBeVisible()
+  await expect(letter.getByRole('alert')).toContainText("Your mail service couldn't confirm who sent this.")
+  await expect(letter.getByRole('alert')).toContainText('Replies to this go to a different address: plans@elsewhere.example.')
+  await expect(letter.getByRole('button', { name: 'Show images' })).toBeVisible()
+  await expect(letter.getByRole('button', { name: 'Always from this sender' })).toHaveCount(0)
+  const tools = letter.getByRole('toolbar', { name: 'Thread' })
+  for (const name of ['Archive', 'Delete', 'Flag', 'Snooze', 'Open in a window']) await expect(tools.getByRole('button', { name, exact: true })).toHaveCount(0)
+  await expect(letter.locator('.reply-bar')).toHaveCount(0) // no account to answer from yet
+  await letter.getByRole('button', { name: 'Save plan.pdf' }).click()
+  await expect(letter.getByText('Saved', { exact: true })).toBeVisible()
+  expect(readFileSync(run.savedTo)).toEqual(pdf())
+  await letter.keyboard.press('Control+g')
+  await letter.getByRole('textbox', { name: 'Find in message' }).fill('floor plan')
+  await expect(letter.locator('.find-count')).toHaveText('1/2') // the subject, and in the message
+  expect(await run.opened()).toEqual([])
+  rmSync(folder, { recursive: true, force: true })
+})
+
+test('a second launch with a file opens it beside the app, and Reply answers from the account it came to', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'xrnmail-eml-'))
+  messageFile(folder)
+  mkdirSync(join(folder, 'Folder.eml'))
+  run = await launch()
+  const { app, page } = run
+  await signIn(run)
+  const launchWith = (argv: string[]): Promise<void> => app.evaluate(({ app }, [argv, from]) => void app.emit('second-instance', {}, argv, from), [argv, folder] as const)
+  await launchWith(['xrnmail', '--appimage-extract-and-run', 'Floor plan.eml']) // from where it was started
+  const letter = await fileWindow(app)
+  await expect(letter.getByRole('heading', { name: 'Floor plan' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Floor plan' })).toHaveCount(0) // it isn't mail of the account's
+  const [draft] = await Promise.all([app.waitForEvent('window'), letter.locator('.reply-bar').getByRole('button', { name: 'Reply' }).click()])
+  const box = draft.getByRole('region', { name: 'Compose' })
+  await expect(box.getByLabel('Subject')).toHaveValue('Re: Floor plan')
+  await expect(box).toContainText('plans@elsewhere.example')
+  expect(draft.url()).toContain('solo=draft')
+  const [forward] = await Promise.all([app.waitForEvent('window'), letter.locator('.reply-bar').getByRole('button', { name: 'Forward' }).click()])
+  const forwarding = forward.getByRole('region', { name: 'Compose' })
+  await expect(forwarding.getByLabel('Subject')).toHaveValue('Fwd: Floor plan')
+  await expect(forwarding.getByText('plan.pdf')).toBeVisible() // its file goes with it
+
+  await launchWith(['xrnmail', pathToFileURL(join(folder, 'Folder.eml')).href])
+  await expect.poll(() => app.windows().filter((w) => w.url().includes('solo=file')).length).toBe(2)
+  const failed = await fileWindow(app)
+  await expect(failed.getByText("Couldn't open this file")).toBeVisible()
+  await expect(failed.getByText("That isn't a mail file.")).toBeVisible()
+  rmSync(folder, { recursive: true, force: true })
 })

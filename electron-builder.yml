@@ -31,4 +31,5 @@ linux:
   description: A mail client that brings mail a few times a day
   mimeTypes:
     - x-scheme-handler/mailto
+    - message/rfc822
   icon: resources/icon.png

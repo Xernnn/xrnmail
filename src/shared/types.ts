@@ -551,6 +551,11 @@ export interface MailApi {
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
   openDraftWindow(id: number): Promise<void>
+  /** The message of a file opened in a window of its own, named by its token, read-only. Its id is
+   *  below zero. Throws why when the file couldn't be read. */
+  letter(token: string): Promise<MessageView>
+  /** A reply to that message, or a forward, in a composer of its own. */
+  replyToLetter(token: string, kind: 'reply' | 'replyAll' | 'forward'): Promise<void>
   /** Makes a folder, or on Gmail a label, on the server there and then. A slash puts it inside another.
    *  Returns its path as the server has it. */
   createFolder(account: string, name: string): Promise<string>

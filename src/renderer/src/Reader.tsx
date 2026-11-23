@@ -140,6 +140,10 @@ function Message(props: {
   actions: AddressActions
   /** The sender skips the wait for a delivery. */
   straight: boolean
+  /** From a file, with no account to answer it from: nothing to reply with. */
+  noReply?: boolean
+  /** From a file: its sender is no one to trust with pictures. */
+  file?: boolean
   toggle(): void
   onPeek(url: string | null): void
   say(text: string): void
@@ -195,7 +199,7 @@ function Message(props: {
           <Recipients message={m} own={own} open={details} toggle={() => setDetails(!details)} button={toggleButton} />
         </div>
         <span className="muted when">{longTime(m.date)}</span>
-        {!bins && (replyAll
+        {!bins && !props.noReply && (replyAll
           ? <IconButton icon={ReplyAll} label="Reply all to this" click={() => props.reply('replyAll', m.id)} />
           : <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />)}
         {leaving && <button className="pill soft" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>}
@@ -204,12 +208,16 @@ function Message(props: {
             <IconButton icon={MoreVertical} label="Message actions" click={() => setMenu(!menu)} />
             {menu && (
               <Popover right close={() => setMenu(false)}>
-                <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('replyAll', m.id) }}>
-                  <ReplyAll size={15} aria-hidden="true" /> Reply all
-                </button>
-                <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('forward', m.id) }}>
-                  <Forward size={15} aria-hidden="true" /> Forward
-                </button>
+                {!props.noReply && (
+                  <>
+                    <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('replyAll', m.id) }}>
+                      <ReplyAll size={15} aria-hidden="true" /> Reply all
+                    </button>
+                    <button type="button" className="menu-item" onClick={() => { setMenu(false); props.reply('forward', m.id) }}>
+                      <Forward size={15} aria-hidden="true" /> Forward
+                    </button>
+                  </>
+                )}
                 <button type="button" className="menu-item" onClick={() => { setMenu(false); setSource(true) }}>
                   <FileCode size={15} aria-hidden="true" /> View original
                 </button>
@@ -226,7 +234,7 @@ function Message(props: {
       <div className="message-body">
         <Cautions message={m} />
         {m.facts && <FactCard message={m} facts={m.facts} rsvp={rsvp} />}
-        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.trust} darken={settings?.darkMail !== false}
+        <MailBody text={m.text} html={m.html} onPeek={onPeek} images={images} sender={m.from.address.toLowerCase()} trust={props.file ? undefined : props.trust} darken={settings?.darkMail !== false}
           keepQuoted={FORWARDED.test(m.subject)} />
         {m.attachments.length > 0 && <Attachments message={m} say={say} />}
         {m.truncated && <p className="muted note message-note">Truncated</p>}
@@ -305,6 +313,8 @@ export function Reader(props: {
   find?: (text: string) => void
   /** Counts each time the key for finding in the message is pressed. */
   findAsked?: number
+  /** A message opened from a file: read-only, answered only when there's an account to answer from. */
+  file?: { replies: boolean }
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -426,7 +436,7 @@ export function Reader(props: {
           </span>
         )}
         <span className="grow" />
-        {bins ? (
+        {props.file ? null : bins ? (
           <>
             <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />
             <IconButton icon={Trash2} label="Delete forever" hint={hint('trash')} click={props.forever} />
@@ -459,8 +469,8 @@ export function Reader(props: {
           <IconButton icon={MoreVertical} label="More" click={() => setPanel(panel === 'more' ? null : 'more')} />
           {panel === 'more' && (
             <Popover right close={() => setPanel(null)}>
-              {!bins && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
-              {!bins && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
+              {!bins && !props.file && moreItem(pinned ? PinOff : Pin, pinned ? 'Unpin thread' : 'Pin thread', () => props.pin(!pinned))}
+              {!bins && !props.file && moreItem(OctagonAlert, 'Report spam', () => act({ kind: 'spam' }, 'Reported as spam'))}
               {gmail && !bins && (
                 // As with a flag, the mark itself says it's done: no toast, since an Undo there couldn't
                 // call back a change that has already gone to Gmail.
@@ -470,15 +480,15 @@ export function Reader(props: {
               )}
               {/* With the inbox in one piece there's no Other to keep anyone in, so no word of it. */}
               {sender && inInbox && props.settings?.focused && moreItem(Filter, person?.focused ? 'Keep this sender in Other' : 'Keep this sender in Focused', () => props.setFocus(sender, !person?.focused))}
-              {sender && !bins && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
-              {sender && !bins && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
-              {sender && !bins && !own.includes(sender.toLowerCase()) && (muted
+              {sender && !bins && !props.file && vip !== null && !isStraight(sender) && moreItem(Zap, 'Let this sender straight through', () => props.straight(sender, true))}
+              {sender && !bins && !props.file && listedExactly && moreItem(Hourglass, 'Hold this sender for deliveries', () => props.straight(sender, false))}
+              {sender && !bins && !props.file && !own.includes(sender.toLowerCase()) && (muted
                 ? moreItem(Bell, 'Unmute notifications', () => props.mute(sender, false))
                 : moreItem(BellOff, 'Mute notifications', () => props.mute(sender, true)))}
-              {bulkSender && !bins && (summarized
+              {bulkSender && !bins && !props.file && (summarized
                 ? moreItem(Newspaper, 'Remove sender from Summary', () => props.summarize(bulkSender, false))
                 : moreItem(Newspaper, 'Add sender to Summary', () => props.summarize(bulkSender, true)))}
-              {sender && !bins && !SYSTEM_SENDER.test(sender) && moreItem(Ban, 'Block sender', () => props.block(sender))}
+              {sender && !bins && !props.file && !SYSTEM_SENDER.test(sender) && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(TextSearch, 'Find in message', startFinding)}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
@@ -508,14 +518,14 @@ export function Reader(props: {
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>
             )}
-            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own}
+            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own} noReply={props.file && !props.file.replies} file={Boolean(props.file)}
               settings={settings} account={account} actions={actions} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
               unsubscribe={props.unsubscribe} trust={props.trust} />
           </div>
         ))}
       </div>
-      {!bins && (
+      {!bins && !(props.file && !props.file.replies) && (
         <div className="reply-bar">
           <button type="button" title={titled('Reply', hint('reply'))} onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
           {several && (

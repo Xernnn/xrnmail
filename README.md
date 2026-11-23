@@ -137,6 +137,11 @@ kept on the laptop.
   stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
+- **.eml files:** `xrnmail some.eml`, or Open With from a file manager, shows the message read-only in
+  a window of its own, cleaned and with its pictures blocked as mail is. Nobody received it here, so
+  it's always unverified, whatever lines it carries saying it was checked. Its files can be saved,
+  or opened as an attachment is, and Reply and Forward start from the account it was sent to, or the
+  first, once there's one.
 - **Find in message:** words in the open thread, in every message and in the HTML ones' own pages,
   without case or marks as search has it, with "2/7" for which match of how many. A message folded
   shut opens if it has them. It's Ctrl+G (Ctrl+Shift+F in the Gmail and Inbox sets), or Find in message
@@ -481,7 +486,7 @@ npm run app:install            # build an AppImage and add it to the launcher
 
 `npm run app:install` (`scripts/install-linux-app.sh`) builds an AppImage into `dist/`, puts it at
 `~/Applications/xrnmail.AppImage`, and adds a launcher (`~/.local/share/applications/xrnmail.desktop`)
-that also takes `mailto:` links. Run it again to update: the new file is renamed over the old one, so
+that also takes `mailto:` links and `.eml` files. Run it again to update: the new file is renamed over the old one, so
 a running copy carries on. The launcher and Start at login run the AppImage with
 `--appimage-extract-and-run`, from an unpacked copy in `~/.cache/xrnmail`, not from a FUSE mount
 that takes the app down with it if the mount goes, and not from `/tmp`, which is memory on many

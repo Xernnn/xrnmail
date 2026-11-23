@@ -53,7 +53,7 @@ Exec=env NO_CLEANUP=1 "TMPDIR=${UNPACK_DIR}" "${TARGET}" --appimage-extract-and-
 Icon=${ICON_DIR}/${APP_ID}.png
 Terminal=false
 Categories=Network;Email;
-MimeType=x-scheme-handler/mailto;
+MimeType=x-scheme-handler/mailto;message/rfc822;
 StartupWMClass=xrnmail
 DESKTOP
 chmod 644 "$DESKTOP_DIR/${APP_ID}.desktop"

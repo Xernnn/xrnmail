@@ -33,6 +33,8 @@ export async function launch(options: {
   colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number]; pictures?: Record<string, Buffer | string>
   /** A profile an earlier run left, instead of a new one. */
   data?: string
+  /** More of the command line, after the app's own: a file to open, say. */
+  args?: string[]
 } = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
   const port = await gmail.listen()
@@ -41,7 +43,7 @@ export async function launch(options: {
   const data = options.data ?? mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
   const faces: Record<string, string> = options.pictures ? { XRNMAIL_PICTURES: writePictures(mkdtempSync(join(data, 'faces-')), options.pictures) } : {}
   const app = await _electron.launch({
-    args: ['.', '--no-sandbox', ...HEADLESS],
+    args: ['.', '--no-sandbox', ...HEADLESS, ...(options.args ?? [])],
     colorScheme: options.colorScheme ?? 'light',
     env: {
       ...process.env,

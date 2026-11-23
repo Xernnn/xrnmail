@@ -1,7 +1,9 @@
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { soloFrom } from '@shared/solo'
 import { App } from './App'
 import { Boundary } from './Common'
+import { Letter } from './Letter'
 import './style.css'
 
 /** Whatever goes wrong drawing the window, it never just goes white: it says so, and draws itself again. */
@@ -14,10 +16,13 @@ function Stopped(): ReactNode {
   )
 }
 
+/** A message opened from a file has a window of its own that's nothing else. */
+const SOLO = soloFrom(window.location.search)
+
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>
     <Boundary fallback={() => <Stopped />}>
-      <App />
+      {SOLO?.kind === 'file' ? <Letter token={SOLO.file} /> : <App />}
     </Boundary>
   </StrictMode>
 )
