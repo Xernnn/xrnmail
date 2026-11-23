@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
-import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
+import { cleanBatch, describeFailure, MailService, SEND_FAILED, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
@@ -14,6 +14,7 @@ import { ImapWriter } from '@main/writer'
 import { gmailThreadUrl, isSafeExternalUrl, isSafeHubUrl } from '@main/safe-url'
 import { FakeGmail, rawMail } from './fake-gmail'
 import { FakeSmtp } from './fake-smtp'
+import { png } from './files'
 
 /** A busy laptop can take a while; only a wrong answer should fail a test. */
 const eventually = (check: () => void): Promise<void> => vi.waitFor(check, { timeout: 15_000, interval: 15 })
@@ -41,9 +42,11 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     ...over,
     store, secrets, changed, landed, summarized,
     post: post as unknown as typeof fetch,
+    // No test asks real DNS: every name is a public address unless a test says otherwise.
+    addresses: over.addresses ?? (async () => ['203.0.113.7']),
     now: () => clock,
     files: new DraftFiles(folder),
-    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
+    openSource: over.openSource ?? ((account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts })),
     openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
@@ -738,6 +741,29 @@ describe('changing mail', () => {
     expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
   })
 
+  // "Labelled Receipts", "Marked as read" and "Moved to Inbox" offered Undo for changes that went to
+  // Gmail at once, and only a change still waiting can be called back: Undo put the mail back here,
+  // the server kept it as changed, and the next sync changed it here again.
+  it('a change offered with Undo waits for it, whatever it is, and Undo calls it back before Gmail hears', async () => {
+    const labelled = service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    const read = service.act([ref('Two')], { kind: 'read' }, true)
+    await later(1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    service.undo(labelled)
+    service.undo(read)
+    await later(UNDO_MS)
+    await service.syncAll()
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    expect(fakeMail('Two').flags).not.toContain('\\Seen')
+    expect(service.list({ kind: 'inbox' }).find((r) => r.subject === 'Two')?.unread).toBe(1)
+    expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
+    service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    await later(UNDO_MS - 1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    await later(1000)
+    await eventually(() => expect(fakeMail('One').labels).toContain('Receipts'))
+  })
+
   // Undo pressed while the change was already on its way put the mail back here, and the server
   // made the change anyway: the inbox showed it until a later sync took it out again.
   it('undo once the change is on its way to Gmail leaves the mail where Gmail will have it', async () => {
@@ -986,6 +1012,92 @@ describe('snoozing', () => {
   })
 })
 
+describe('reminders', () => {
+  beforeEach(signedIn)
+
+  /** A message you sent, alone in its thread, as Gmail keeps it: in Sent and not the inbox. */
+  const sentOne = async (subject: string): Promise<{ id: number; thread: bigint }> => {
+    gmail.add(rawMail({ subject, from: `Me <${ME}>`, to: 'ada@example.com' }), { arrived: past(30), labels: ['\\Sent'], flags: ['\\Seen'] })
+    await service.syncAll()
+    const row = service.list({ kind: 'sent' }).find((r) => r.subject === subject)
+    const [message] = store.thread(ME, row?.thread ?? '', clock)
+    return { id: message?.id ?? 0, thread: gmail.mails.at(-1)?.thread ?? 0n }
+  }
+
+  it('brings a sent message\'s thread back to the top of the inbox, unread and marked, if nobody has written by then', async () => {
+    gmail.add(rawMail({ subject: 'Newer' }), { arrived: past(1) })
+    const { id } = await sentOne('Any news?')
+    expect(() => service.remind(id, clock - 1)).toThrow('Pick a time in the future.')
+    service.remind(id, clock + 3_600_000)
+    expect(ids()).toEqual(['Newer'])
+    expect(service.list({ kind: 'reminders' }).map((r) => [r.subject, r.remind])).toEqual([['Any news?', { at: clock + 3_600_000, fired: false }]])
+    service = make() // and it survives a restart
+    await later(3_600_000 + 1000)
+    expect(landed).toHaveBeenCalledWith(1)
+    expect(ids()).toEqual(['Any news?', 'Newer'])
+    const [back] = service.list({ kind: 'inbox' })
+    expect(back).toMatchObject({ unread: 1, remind: { fired: true } })
+    expect(service.list({ kind: 'unread' }).map((r) => r.subject)).toContain('Any news?')
+    expect(service.accounts()[0]?.unread).toBe(2)
+    expect(service.list({ kind: 'reminders' })).toEqual([])
+    // Opened, it's read, and stays in the inbox, marked, until it's archived.
+    const ref = { account: ME, thread: back?.thread ?? '' }
+    expect(service.thread(ME, ref.thread)[0]?.remind).toEqual({ at: clock - 1000, fired: true })
+    expect(service.list({ kind: 'inbox' })[0]).toMatchObject({ subject: 'Any news?', unread: 0 })
+    expect(service.accounts()[0]?.unread).toBe(1)
+    service.act([ref], { kind: 'archive' })
+    expect(ids()).toEqual(['Newer'])
+    await later(UNDO_MS + 1000)
+    expect(gmail.writes().filter((c) => /STORE|MOVE/.test(c))).toEqual([]) // it was only here that it came back
+    expect(store.reminder(ref)).toBeNull()
+  })
+
+  it('goes when someone else writes in the thread, and not when you do', async () => {
+    const { id, thread } = await sentOne('Plans')
+    service.remind(id, clock + 3_600_000)
+    gmail.add(rawMail({ subject: 'Re: Plans', from: `Me <${ME}>` }), { arrived: new Date(clock + 60_000), labels: ['\\Sent'], thread })
+    clock += 120_000
+    await service.syncAll()
+    await later(1000)
+    expect(service.list({ kind: 'reminders' }).map((r) => r.subject)).toHaveLength(1)
+    gmail.add(rawMail({ subject: 'Re: Plans', from: 'Ada <ada@example.com>' }), { arrived: new Date(clock + 60_000), thread })
+    clock += 120_000
+    await service.syncAll()
+    await later(1000)
+    expect(service.list({ kind: 'reminders' })).toEqual([])
+    await later(3_600_000)
+    expect(ids()).toEqual([]) // nothing came back: Ada's reply waits for the next delivery, as any mail does
+  })
+
+  it('is only for what you sent, and is cancelled from the reader', async () => {
+    gmail.add(rawMail({ subject: 'From Ada' }), { arrived: past(2) })
+    await service.syncAll()
+    const [theirs] = store.thread(ME, ref('From Ada').thread, clock)
+    expect(() => service.remind(theirs?.id ?? 0, clock + 60_000)).toThrow('Only for mail you sent.')
+    const { id } = await sentOne('Ping')
+    service.remind(id, clock + 60_000)
+    const sent = service.list({ kind: 'sent' }).find((r) => r.subject === 'Ping')
+    service.unremind([{ account: ME, thread: sent?.thread ?? '' }])
+    await later(120_000)
+    expect(ids()).toEqual(['From Ada'])
+  })
+
+  it('can be set as a message is sent, and finds its thread once the copy in Sent is here', async () => {
+    const draft = await service.startDraft({ kind: 'new' })
+    const edit = { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Quote please', html: 'Hi', text: 'Hi', quote: null }
+    service.saveDraft(draft.id, { ...edit, remind: clock + 5_000 })
+    expect(() => service.send(draft.id)).toThrow('Pick a reminder after it goes.')
+    service.saveDraft(draft.id, { ...edit, remind: clock + 86_400_000 })
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent).toHaveLength(1)
+    await later(1000)
+    expect(service.list({ kind: 'reminders' }).map((r) => r.subject)).toEqual(['Quote please'])
+    await later(86_400_000)
+    expect(ids()).toEqual(['Quote please'])
+  })
+})
+
 describe('blocking', () => {
   beforeEach(signedIn)
 
@@ -997,6 +1109,25 @@ describe('blocking', () => {
     expect(service.overview().held).toBe(0)
     await eventually(() => expect(gmail.moved.map((m) => m.to)).toEqual(['[Gmail]/Trash']))
     expect(landed).not.toHaveBeenCalled()
+  })
+})
+
+// Block sender and Let straight through over a thread left out only the account's own address, so
+// mail from one of its aliases offered to block it, and blocking it sent your own mail to Trash.
+describe('your own addresses', () => {
+  beforeEach(signedIn)
+
+  it('can be neither blocked nor let straight through, alias or not', () => {
+    service.saveProfile({ identities: { [ME]: { name: 'Me', signature: '', aliases: ['me+shop@example.com'], color: '', notify: true } } })
+    for (const address of [ME, 'Me+Shop@example.com']) {
+      expect(() => service.block(address)).toThrow('your own')
+      expect(() => service.editSenders('vip', [address], true)).toThrow('your own')
+    }
+    expect(service.settings().blocked).toEqual([])
+    expect(service.settings().batch.vip).toEqual([])
+    service.editSenders('vip', [ME], false) // taking one off is fine
+    service.block('ada@example.com')
+    expect(service.settings().blocked).toEqual(['ada@example.com'])
   })
 })
 
@@ -1051,6 +1182,48 @@ describe('attachments', () => {
     const forward = await service.startDraft({ kind: 'forward', message: cut?.id ?? 0 })
     expect(forward.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf', 'c.pdf'])
     expect(forward.error).toBeNull()
+  })
+
+  // A message was fetched whole with nothing to stop it, so a server could have the laptop hold as
+  // much as it cared to send.
+  it('opens a message as big as Gmail delivers, 50 MB', async () => {
+    gmail.add(rawMail({ subject: 'Scans', attachment: { name: 'scans.pdf', type: 'application/pdf', body: '%PDF-1.4 scans' } }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Scans')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    const asked: number[] = []
+    service = make({
+      openSource: (account, login) => {
+        const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })
+        const whole = source.whole.bind(source)
+        source.whole = (uid, most) => (asked.push(most), whole(uid, most))
+        return source
+      }
+    })
+    await service.original(message?.id ?? 0)
+    expect(asked.length).toBeGreaterThan(0)
+    for (const most of asked) expect(most).toBeGreaterThanOrEqual(50 * 1024 * 1024)
+  })
+
+  it('fetches no more of a message than a mail service takes, and says when it is bigger', async () => {
+    gmail.add(rawMail({ subject: 'Huge', attachment: { name: 'big.bin', type: 'application/octet-stream', body: Buffer.alloc(6000, 7) } }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Huge')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    // The limit is above what a mail service delivers, 64 MB; here it's made small, so the test needn't be that big.
+    service = make({
+      openSource: (account, login) => {
+        const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })
+        const whole = source.whole.bind(source)
+        source.whole = (uid) => whole(uid, 4000)
+        return source
+      }
+    })
+    await expect(service.attachment(message?.id ?? 0, 0)).rejects.toThrow('Too big to open here.')
+    await expect(service.original(message?.id ?? 0)).rejects.toThrow('Too big to open here.')
+    const asked = gmail.commands.filter((c) => /BODY\.PEEK\[\]/i.test(c))
+    expect(asked.length).toBeGreaterThan(0)
+    for (const command of asked) expect(command).toMatch(/BODY\.PEEK\[\]<0\.\d+>/i) // only ever a part, never all of it
   })
 })
 
@@ -1136,6 +1309,31 @@ describe('sending', () => {
     await later(120_000)
     expect(smtp.received).toBe(1)
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'This may not have been sent. Check Sent before trying again.' })
+  })
+
+  // A send that failed marked its draft and said nothing else: no word beside the account, so with
+  // the composer gone the only sign was a count by Drafts.
+  it('a send that fails says so beside the account until its draft is sent or thrown away', async () => {
+    const draft = await write()
+    smtp.dropAfterData = true
+    service.send(draft.id)
+    await later(10_000)
+    expect(service.drafts()[0]).toMatchObject({ id: draft.id, state: 'failed' })
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    smtp.dropAfterData = false
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent).toHaveLength(1)
+    expect(service.accounts()[0]?.error).toBeNull()
+
+    const other = await write({ subject: 'Plan' })
+    service.addFileBytes(other.id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    rmSync(join(folder, String(other.id)), { recursive: true, force: true })
+    service.send(other.id)
+    await later(11_000)
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    service.discardDraft(other.id)
+    expect(service.accounts()[0]?.error).toBeNull()
   })
 
   it('sends nothing called back, changed or thrown away while another message was going', async () => {
@@ -1243,12 +1441,58 @@ describe('sending', () => {
   })
 
   it('signs with the account identity', async () => {
-    service.saveProfile({ identities: { [ME]: { name: 'Sơn', signature: 'Regards', aliases: [], color: '', notify: true } } })
+    service.saveProfile({
+      identities: { [ME]: { name: 'Sơn', signature: '', aliases: [], color: '', notify: true } },
+      signatures: [{ id: 'plain', name: 'Plain', html: 'Regards', text: 'Regards' }], signatureFor: { [ME]: 'plain' }
+    })
     const draft = await write()
     service.send(draft.id)
     await later(10_000)
     expect(smtp.sent[0]?.raw).toContain('Regards')
     expect(smtp.sent[0]?.raw).toMatch(/From: =\?UTF-8\?.*<me@example\.com>/)
+  })
+
+  it('signs with the one chosen for the message, or else its From address\'s, an alias taking its account\'s', async () => {
+    const logo = `data:image/png;base64,${png().toString('base64')}`
+    service.saveProfile({
+      identities: { [ME]: { name: 'Me', signature: '', aliases: ['shop@example.com', 'club@example.com'], color: '', notify: true } },
+      signatures: [
+        { id: 'work', name: 'Work', html: `<b>Mai</b> at Work<br><img src="${logo}" alt="logo">`, text: 'Mai at Work' },
+        { id: 'shop', name: 'Shop', html: 'The Shop', text: 'The Shop' }
+      ],
+      signatureFor: { [ME]: 'work', 'shop@example.com': 'shop' }
+    })
+    const sent = async (over: Partial<Draft>): Promise<string> => {
+      const draft = await write(over)
+      service.send(draft.id)
+      await later(10_000)
+      return (smtp.sent.at(-1)?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=')
+    }
+    const work = await sent({})
+    expect(work).toContain('<b>Mai</b> at Work')
+    expect(work).toContain('-- \r\nMai at Work') // the text part has the words
+    expect(work).toContain('multipart/related') // and the logo goes with the message, named by cid
+    expect(work).not.toContain('data:image')
+    expect(await sent({ from: 'shop@example.com' })).toContain('The Shop')
+    expect(await sent({ from: 'club@example.com' })).toContain('Mai at Work') // nothing chosen for it: the account's
+    const none = await sent({ signature: '' })
+    expect(none).not.toContain('Mai at Work')
+    expect(none).not.toContain('-- ')
+    expect(await sent({ signature: 'shop' })).toContain('The Shop')
+  })
+
+  it('makes each plain signature of before into one of the new kind, with the same words, once', async () => {
+    store.setMeta('settings', JSON.stringify({ identities: { [ME]: { name: 'Me', signature: 'Regards,\nMe', aliases: [], color: '', notify: true } } }))
+    service = make()
+    const { signatures, signatureFor: chosen, identities } = service.settings()
+    expect(signatures).toEqual([{ id: expect.any(String), name: 'Signature', html: 'Regards,<br>Me', text: 'Regards,\nMe' }])
+    expect(chosen).toEqual({ [ME]: signatures[0]?.id })
+    expect(identities[ME]?.signature).toBe('')
+    expect(JSON.parse(store.meta('settings') ?? '{}').signatures).toEqual(signatures) // kept, so it happens the once
+    const draft = await write()
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent[0]?.raw).toContain('Regards,')
   })
 
   it('refuses attachments over what Gmail would take', async () => {
@@ -1268,6 +1512,94 @@ describe('sending', () => {
     expect(copy).not.toHaveBeenCalled()
     copy.mockRestore()
     expect(service.drafts()[0]?.files).toEqual([])
+  })
+
+  it('puts a picture in the words only when its own bytes say it is one, and sends it named by Content-ID', async () => {
+    const draft = await write()
+    const shot = service.addFileBytes(draft.id, 'shot.png', 'image/png', png(), true).files[0]
+    expect(shot).toMatchObject({ name: 'shot.png', type: 'image/png', cid: `${shot?.id}@xrnmail` })
+    expect(service.draftPicture(draft.id, shot?.id ?? '')).toBe(`data:image/png;base64,${png().toString('base64')}`)
+    const fake = service.addFileBytes(draft.id, 'run.png', 'image/png', Buffer.from('#!/bin/sh\necho hi'), true).files[1]
+    expect(fake).toMatchObject({ name: 'run.png', type: 'image/png' }) // attached, as any other file
+    expect(fake?.cid).toBeUndefined()
+    expect(() => service.draftPicture(draft.id, fake?.id ?? '')).toThrow("That picture isn't here any more.")
+    const gone = service.addFileBytes(draft.id, 'gone.png', 'image/png', png(), true).files[2]
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Hi', quote: null,
+      html: `<p>Look</p><img src="cid:${shot?.cid}" alt="shot.png">`, text: 'Look\n[image: shot.png]' })
+    service.send(draft.id)
+    // The one taken out of the words has gone already, and Undo of the send wouldn't bring it back.
+    expect(service.drafts()[0]?.files.map((f) => f.name)).toEqual(['shot.png', 'run.png'])
+    expect(existsSync(join(folder, String(draft.id), gone?.id ?? ''))).toBe(false)
+    await later(10_000)
+    const raw = smtp.sent[0]?.raw ?? ''
+    expect(raw).toContain('multipart/related')
+    expect(raw).toContain(`Content-ID: <${shot?.cid}>`)
+    expect(raw).toContain(`cid:${shot?.cid}`)
+    expect(raw).toContain('[image: shot.png]')
+    expect(raw).toContain('filename=run.png')
+    expect(raw).not.toContain('gone.png')
+  })
+
+  it('a forward keeps the pictures of the message it passes on in its words', async () => {
+    const lines = png().toString('base64')
+    gmail.add([
+      'From: Ada <ada@example.com>', `To: ${ME}`, 'Subject: Screenshot', 'Message-ID: <shot-mail@example.com>', 'MIME-Version: 1.0',
+      'Content-Type: multipart/related; boundary="REL"', '', '--REL', 'Content-Type: text/html; charset=utf-8', '',
+      '<p>Look at this:</p><img src="cid:shot@example.com">', '--REL', 'Content-Type: image/png', 'Content-Transfer-Encoding: base64',
+      'Content-ID: <shot@example.com>', 'Content-Disposition: inline; filename="shot.png"', '', lines, '--REL--', ''
+    ].join('\r\n'), { arrived: past(30) })
+    await service.syncAll()
+    const [message] = store.thread(ME, ref('Screenshot').thread, clock)
+    const forward = await service.startDraft({ kind: 'forward', message: message?.id ?? 0 })
+    expect(forward.files).toEqual([]) // in the words, not attached
+    service.saveDraft(forward.id, { ...forward, to: 'bao@example.com' })
+    service.send(forward.id)
+    await later(10_000)
+    const raw = smtp.sent[0]?.raw ?? ''
+    expect(raw).toContain('multipart/related')
+    expect(raw).not.toContain('data:image')
+    const cid = /Content-ID: <([^>]+)>/.exec(raw)?.[1]
+    expect(raw).toContain(`cid:${cid}`)
+    expect(raw.replace(/\r?\n/g, '')).toContain(lines)
+  })
+
+  it('Send & Archive sends as Send does and archives the thread, which Undo of the send brings back', async () => {
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Ada <ada@example.com>' }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Lunch')
+    const [message] = store.thread(ME, thread.thread, clock)
+    const inbox = (): boolean => gmail.mails.find((m) => m.raw.toString().includes('Subject: Lunch'))?.labels.includes('\\Inbox') ?? false
+    const reply = async (): Promise<Draft> => {
+      const draft = await service.startDraft({ kind: 'reply', message: message?.id ?? 0 })
+      service.saveDraft(draft.id, { ...draft, html: 'Yes', text: 'Yes' })
+      return draft
+    }
+    const first = await reply()
+    expect(first.archivable).toBe(true)
+    expect(service.drafts().find((d) => d.id === first.id)?.archivable).toBe(true)
+    // Undone, nothing went and the thread is back, here and on the server, which never heard of it.
+    const undone = service.sendAndArchive(first.id)
+    expect(ids()).toEqual([])
+    service.unsend(first.id)
+    service.undo(undone.undo)
+    expect(ids()).toEqual(['Lunch'])
+    await later(30_000)
+    expect(smtp.sent).toEqual([])
+    expect(inbox()).toBe(true)
+    // Left alone, it goes when Undo of the send runs out, and the archiving only once that has.
+    service.discardDraft(first.id)
+    const second = await reply()
+    expect(service.sendAndArchive(second.id).when).toBe(clock + 10_000)
+    expect(ids()).toEqual([])
+    await later(6_000)
+    expect(inbox()).toBe(true) // archiving alone would have gone by now
+    await later(5_000)
+    expect(smtp.sent).toHaveLength(1)
+    await later(1_000)
+    expect(inbox()).toBe(false)
+    // Its own reply left in Sent, it's offered only for a thread in the inbox.
+    expect((await service.startDraft({ kind: 'forward', message: message?.id ?? 0 })).archivable).toBe(false)
+    expect((await service.startDraft({ kind: 'new' })).archivable).toBeUndefined()
   })
 
   it('removing an account takes its drafts and identity', async () => {
@@ -1355,6 +1687,57 @@ describe('drafts on the server', () => {
     service = make() // and a restart meanwhile
     await later(61_000)
     expect(onServer()).toEqual([])
+  })
+
+  // Discard draft took a draft and its copy on the server away at once, with no Undo and no word.
+  it('a draft thrown away with Undo leaves Drafts at once, its copy only once Undo has had its time, and Undo gives it back', async () => {
+    const id = await write()
+    await later(5000)
+    expect(onServer()).toEqual(['Plans'])
+    service.discardDraft(id, true)
+    expect(service.drafts()).toEqual([])
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    service.undiscardDraft(id)
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+    await later(UNDO_MS + 5000)
+    expect(onServer()).toEqual(['Plans'])
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+
+    service.discardDraft(id, true)
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    await later(1000)
+    await eventually(() => expect(onServer()).toEqual([]))
+    expect(service.drafts()).toEqual([])
+    expect(() => service.undiscardDraft(id)).toThrow('Too late')
+  })
+
+  it('a message waiting to go that is thrown away never goes, and Undo has it wait again', async () => {
+    const id = await write()
+    const when = service.send(id)
+    service.discardDraft(id, true)
+    await later(UNDO_MS + 5000)
+    expect(smtp.sent).toEqual([])
+    expect(service.drafts()).toEqual([])
+
+    const other = await write({ subject: 'Later' })
+    const at = service.send(other, clock + 3_600_000)
+    service.discardDraft(other, true)
+    await later(1000)
+    service.undiscardDraft(other)
+    expect(service.drafts()[0]).toMatchObject({ id: other, state: 'queued', sendAt: at })
+    expect(when).toBeLessThan(at)
+  })
+
+  it('a draft thrown away while Undo lasts goes for good when the app closes', async () => {
+    const id = await write()
+    await later(5000)
+    service.discardDraft(id, true)
+    await service.finishUp()
+    expect(onServer()).toEqual([])
+    service = make()
+    expect(service.drafts()).toEqual([])
   })
 
   it('works offline, and catches up once the server can be reached', async () => {
@@ -1523,6 +1906,22 @@ describe('unsubscribing', () => {
     const id = await arrived(['List-Unsubscribe: <https://127.0.0.1/admin>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
     expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://127.0.0.1/admin' })
     expect(post).not.toHaveBeenCalled()
+  })
+
+  // The check was on the name alone: a public-looking name that resolves to this laptop, the home
+  // network or the tailnet got the POST, with no click on anything but Unsubscribe.
+  it('will not post to a name that leads to this machine, its network or the tailnet', async () => {
+    const id = await arrived(['List-Unsubscribe: <https://list.example/u/1>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
+    for (const found of [['127.0.0.1'], ['192.168.1.1'], ['10.0.0.8'], ['100.101.102.103'], ['169.254.169.254'], ['203.0.113.7', '::1'],
+      ['fd7a:115c:a1e0::1'], ['fe80::1'], ['ff02::1'], ['::ffff:192.168.0.1'], ['224.0.0.1'], []]) {
+      service = make({ addresses: async () => found })
+      expect(await service.unsubscribe(id), found.join()).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    }
+    service = make({ addresses: async () => { throw new Error('ENOTFOUND') } })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    expect(post).not.toHaveBeenCalled()
+    service = make({ addresses: async (host) => (host === 'list.example' ? ['2001:db8::5', '198.51.100.4'] : []) })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'done' })
   })
 
   it('without one-click it opens the sender page', async () => {
@@ -1821,7 +2220,7 @@ describe('the sidebar', () => {
     const saved = service.settings().sidebar
     expect(saved.order.slice(0, 4)).toEqual(['sent', 'recent', 'today', 'unread'])
     expect(saved.hidden).toEqual(['spam'])
-    expect(new Set(saved.order).size).toBe(18)
+    expect(new Set(saved.order).size).toBe(19)
     service.saveProfile({ theme: 'dark' }) // another setting leaves it be
     expect(service.settings().sidebar).toEqual(saved)
     // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.
@@ -2177,6 +2576,27 @@ describe('faces', () => {
     gmail.add(rawMail({ subject: 'Fine', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(9)) })
     await signedIn()
     expect(Object.fromEntries(service.list({ kind: 'inbox' }).map((r) => [r.subject, r.warned]))).toEqual({ Locked: true, Fine: false })
+  })
+
+  // The top Authentication-Results line was believed whoever wrote it. On a server that adds none,
+  // a sender's own "dmarc=pass" there loaded a trusted sender's pictures and showed as a pass.
+  it('believes only the lines the account\'s own server wrote', async () => {
+    const pass = 'dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=shop.example'
+    gmail.add(rawMail({ subject: 'Planted', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.evil.example; ${pass}`] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Real', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.google.com; ${pass}`] }), { arrived: new Date(at(9, 5)) })
+    gmail.add(rawMail({ subject: 'Me?', from: `Me <${ME}>`, headers: ['Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'] }), { arrived: new Date(at(9)) })
+    await signedIn()
+    const open = (subject: string) => {
+      const row = service.list({ kind: 'all' }).find((r) => r.subject === subject)
+      return store.thread(ME, row?.thread ?? '', clock).find((m) => m.subject === subject)
+    }
+    expect(open('Planted')?.authenticated).toBe(false)
+    expect((await service.details(open('Planted')?.id ?? 0)).checks).toBeNull()
+    expect(open('Real')?.authenticated).toBe(true)
+    expect((await service.details(open('Real')?.id ?? 0)).checks?.dmarc).toBe('pass')
+    expect(open('Me?')?.warnings).toEqual(['self'])
+    // A company's logo is for the sender whose newest mail passed, by the account's own server.
+    expect([...store.passedDmarc(['NEWS@shop.example', 'me@example.com', 'nobody@example.com'])]).toEqual(['news@shop.example'])
   })
 
   it('knows which of your accounts an address is, aliases too', async () => {

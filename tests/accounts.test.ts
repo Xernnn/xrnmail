@@ -469,6 +469,24 @@ describe('Gmail: Trash and Spam', () => {
     expect(subjects(service.list({ kind: 'trash' }))).toEqual(['Thrown out'])
   })
 
+  // INBOX isn't read on Gmail, so a thread moved there from Trash lost its row, and was in neither
+  // Trash nor the inbox until the next sync found it in All Mail under its new UID.
+  it('a thread brought back from Trash or Spam is in the inbox at once, and stays there through the next sync', async () => {
+    for (const kind of ['trash', 'spam'] as const) {
+      const [row] = service.list({ kind })
+      service.act([{ account: G, thread: row?.thread ?? '' }], { kind: 'inbox' })
+      await flushed()
+      expect(service.list({ kind })).toEqual([])
+    }
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Junk', 'Letter', 'Thrown out'])
+    expect(gmail.box('[Gmail]/Trash').mails).toEqual([])
+    expect(gmail.box('[Gmail]/Spam').mails).toEqual([])
+    expect(gmail.mails.filter((m) => m.labels.includes('\\Inbox'))).toHaveLength(3)
+    await service.syncAll()
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Junk', 'Letter', 'Thrown out'])
+    expect(store.uids(G, '@all').size).toBe(3)
+  })
+
   it('says "not spam" by moving it back', async () => {
     const [row] = service.list({ kind: 'spam' })
     service.act([{ account: G, thread: row?.thread ?? '' }], { kind: 'inbox' })
@@ -622,6 +640,20 @@ describe('Outlook sign-in', () => {
     await settled(O)
     outlook.options.token = 'token-2'
     clock += 3_600_000
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+    expect(secrets.get(`account:${O}`)).toBe('renew-2')
+  })
+
+  // Exchange ends a session when its token runs out, so a watch opened on one with a minute left
+  // was cut off within the minute.
+  it('renews a token with five minutes left, not one', async () => {
+    microsoft({ refresh: json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 }) })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    outlook.options.token = 'token-2'
+    clock += 3_600_000 - 4 * 60_000
     await service.syncAll()
     expect(service.accounts()[0]?.error).toBeNull()
     expect(secrets.get(`account:${O}`)).toBe('renew-2')

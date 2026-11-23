@@ -15,7 +15,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-const { notify } = await import('@main/desktop')
+const { notify, ownCommand } = await import('@main/desktop')
 
 const platform = process.platform
 const on = (name: string): void => void Object.defineProperty(process, 'platform', { value: name })
@@ -23,6 +23,15 @@ const on = (name: string): void => void Object.defineProperty(process, 'platform
 afterEach(() => {
   on(platform)
   shown.length = 0
+})
+
+// Every command from the menu went to the main window: Ctrl+P in a thread's own window printed the
+// main window, and F1 showed the keys there.
+describe('the menu in a window of its own', () => {
+  it('prints and shows the keys there, and leaves writing, Settings and search to the main window', () => {
+    expect(['print', 'help'].every((c) => ownCommand(c as never))).toBe(true)
+    expect(['compose', 'settings', 'about', 'search', 'summary'].some((c) => ownCommand(c as never))).toBe(false)
+  })
 })
 
 describe('a notification', () => {

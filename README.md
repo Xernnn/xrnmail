@@ -40,19 +40,34 @@ kept on the laptop.
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
-  that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
-  the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
-  it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
-  not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
-  leaves no draft behind.
+  that survive a restart, and addresses suggested from your mail. Signatures are as many as you like,
+  written in Settings, Signatures with the composer's own toolbar, pictures and all (kept on this
+  laptop and sent with the message, never hosted anywhere). Each address, an account's own or an alias,
+  has its default; choosing another From in the composer brings its signature, and the Signature button
+  there picks another or none. Cc Bcc shows a Reply-To field with them, for where replies are to go. A
+  template can have a subject, which it gives a message that has none yet. A picture (PNG, JPEG, GIF or
+  WebP) pasted or dropped goes into the words where the caret is, and is sent as a part of the message
+  the words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
+  pictures of what it quotes in its words the same way. Replying starts from the buttons at the foot of
+  a thread, in the composer, or the one beside each message, which replies to everyone on it if
+  Settings, General say so. A reply quotes the message it answers, unless Settings, General say not to;
+  a forward always carries it. A reply or forward closed as it opened, with nothing written, leaves no
+  draft behind. Starting another closes the one open the same way, so what was written in it is in
+  Drafts.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
-  up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
+  up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away
+  has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
+- **Send & Archive:** beside Send in a reply or forward to a thread in the inbox, it sends as Send
+  does and archives the thread as it goes; Undo of the send brings the thread back too. No set of
+  keys has one, as none of their apps does, but Settings, Shortcuts can give it a key held with Ctrl
+  or Alt.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
-  General say: what takes mail away waits that long here before the server hears of it). It keeps
+  General say: what takes mail away, and anything else offered with Undo, waits that long here before
+  the server hears of it). It keeps
   working offline and catches up. On Gmail, threads it thinks matter carry its importance marker, and
   can be marked important or not from the ⋮ over a thread or under a selection. Once the open thread
   is archived or deleted, the next one opens, or the one before, or the list comes back, as Settings,
@@ -87,8 +102,10 @@ kept on the laptop.
   Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
   of the inbox has one entry for it until it's read. Its mail is under Summary in the sidebar, each
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
-- **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
-  going somewhere else. It warns; it never vouches.
+- **Sender warnings:** forged mail, mail your service couldn't tie to its sender, mail that says it's
+  from you and isn't, lookalike addresses, a name showing a different address, a name with hidden
+  characters that turn it around, replies going somewhere else. Only your own service's checks count,
+  not ones a sender wrote in. It warns; it never vouches.
 - **Message details:** "To: me ⌄" over a message opens everything about it, with what Gmail's
   details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full date and the one the
   sender wrote if it's far off, the account and where it is, the address it was
@@ -102,30 +119,72 @@ kept on the laptop.
 - **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
   Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
   the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
-  today is offered only while it's still today, and This evening only before it comes.
+  today is offered only while it's still today, and This evening only before it comes. Snoozed shows
+  when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
+  it back now.
+- **Remind if no reply:** beside Send, or on a message you sent from its ⋮, with snooze's times. If
+  nobody else has written in the thread by then, it comes back to the top of the inbox, unread, with
+  a bell on its row, and the notice says so; a reply from anyone else calls it off, and one of your
+  own doesn't. Reminders lists what's waiting and when, and the thread shows it over its subject,
+  with Cancel reminder. It's kept on this laptop, as snoozes are: your mail service isn't told, and
+  archiving a thread that's in the inbox only because of a reminder changes nothing there.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
-- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
-- **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
+- **Mail rules:** Settings, Rules. A rule looks at From, To or Cc, the subject, the body, the List-Id
+  or the attachments (contains, doesn't contain, is, starts with, ends with, or matches a pattern),
+  all of them or any, on one account or all, and then labels the message or moves it to a folder,
+  archives it, marks it read, flags it, deletes it, marks it important (Gmail), adds it to the
+  Summary, lets it straight through, mutes its notice, or stops the rules after it. Rules run in
+  their order on each new message in the inbox as it's stored, mail that came while the app was
+  closed too, before its batch, the Summary or a notice decide anything, and each message only once.
+  What they change reaches the server as anything done by hand does. Apply now runs one over the
+  inbox kept here, with Undo. They don't forward: a rule forwarding to a mistyped address would send
+  mail to a stranger without anyone seeing it go. See [docs/design.md](docs/design.md#mail-rules).
+- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images:
+  in pictures, CSS backgrounds and table cells, pictures a rule loads only under the pointer, and
+  pictures that wait to be scrolled to. A picture sized to nothing by a style sheet's class still
+  gets through, unless it's from a known tracking service, which is never fetched at all.
+- **Attachments:** fetched when you ask, saved or opened. A file opens only when its name and its own
+  bytes agree it's a document, picture, sound, film or archive, so a program dressed up as
+  `invoice.pdf` is saved, never opened.
   A row in the list shows its thread's files as small cards, unless Appearance says not to.
 - **Windows of their own:** the last button over a thread opens it in its own window, and the
   composer's does the same for what you're writing. A thread's window follows it into Trash and back,
   and what's typed in a composer is kept when its window is closed.
-- **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
-  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
-  The empty box offers the last eight searches (finished with Enter, or a result opened from them),
+- **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi", and reads a search
+  as Gmail does: `"quoted phrases"`, `OR`, `-word` or `NOT word`, `from:`, `to:`, `subject:`,
+  `filename:`, `in:` or `label:` (`label:"Family trips"`, `in:inbox`, `in:sent`, `in:archive`),
+  `is:unread`, `is:read`, `is:flagged`, `is:important`, `is:snoozed`, `is:pinned`, `has:attachment`,
+  `after:` and `before:` (`2026/11/01` or `2026-11-01`), `newer_than:` and `older_than:` (`7d`, `2w`,
+  `3m`, `1y`), and `larger:` and `smaller:` (`5M`, `200K`), twelve terms at most. The last word typed
+  is offered the operators it could be the start of. What's kept here shows at once; a moment later each account's server is asked about older mail
+  too, and what it finds is listed below, under Older. Gmail is asked in its own search language over
+  All Mail, any other service with IMAP SEARCH in each folder but Trash and Junk, the newest 200 from
+  each. Opening one fetches its whole thread, which then reads, replies and moves like any other, and
+  stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
-- **Faces:** a sender's photo, or their company's logo, where one exists, and coloured initials
-  otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or one you
-  choose there. Who is asked about whom, and when, is under
-  [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
+- **.eml files:** `xrnmail some.eml`, or Open With from a file manager, shows the message read-only in
+  a window of its own, cleaned and with its pictures blocked as mail is. Nobody received it here, so
+  it's always unverified, whatever lines it carries saying it was checked. Its files can be saved,
+  or opened as an attachment is, and Reply and Forward start from the account it was sent to, or the
+  first, once there's one.
+- **Find in message:** words in the open thread, in every message and in the HTML ones' own pages,
+  without case or marks as search has it, with "2/7" for which match of how many. A message folded
+  shut opens if it has them. It's Ctrl+G (Ctrl+Shift+F in the Gmail and Inbox sets), or Find in message
+  in the thread's ⋮ More; Enter or F3 goes to the next, Shift with either to the one before, and Esc
+  closes it.
+- **Faces:** a sender's photo, or their company's logo where their mail passed DMARC, and coloured
+  initials otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or
+  one you choose there. Settings, General, Show faces turns the lookups off. Who is asked about whom,
+  and when, is under [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
 - **Safe with hostile mail:** no scripts, and no remote pictures until you ask: Show images for one
   message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
   way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
   signature from their domain) say is theirs; anything else with their address on it asks again.
-  A picture that can't be fetched is a plain block, with a count and Try again. See
+  A picture that can't be fetched is a plain block, with a count and Try again. A link that shows one
+  address and goes to another asks before it opens. See
   [docs/design.md](docs/design.md#hostile-mail).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
@@ -142,7 +201,10 @@ kept on the laptop.
   list or under it (each split dragged to the size you like, and kept) or one thing at a time, one to
   four lines of preview, and Settings you can search.
 - **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
-  in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
+  in the inbox. A notice for one message has Archive and Mark read on it too, where the desktop's
+  notification server shows buttons, and they work with the window closed. Settings, Notifications,
+  Sound adds a soft two-note chime to each notice (off to start with). With Focused and Other,
+  mail in Other can arrive unannounced (Settings, Notifications).
   The tray shows what's unread, closing the window keeps it running there, and it can start at login
   (both in Settings, General). Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says. In the dark, mail made for a white page is darkened
@@ -219,10 +281,15 @@ archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets that 
 (xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
 maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
 new key. A key another action has is offered to take over, and a change can go back to the set's own.
-Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set. Ctrl+F being Search in
+all of them, finding in a message is Ctrl+G, which Apple Mail and Outlook use for the next match, where
+the set's Ctrl+Shift+F is taken, and Ctrl+Shift+F in Gmail's and Inbox's, where it's free.
+Send & Archive has no key in any set; one given to it has to be held with Ctrl or Alt, since it's
+pressed while writing.
 
-To have mail links open here, set it as your mail app after installing:
-`xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
+To have mail links open here, press Use for mail links in Settings, General after installing, which
+runs `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`; once they do, it says Default. A
+browser may keep its own choice for mail links (in Firefox and Zen: Settings, Applications, mailto).
 
 ## Live mail
 
@@ -235,12 +302,15 @@ to wait for.
   elsewhere. Within a second xrnmail runs its ordinary sync for that account, so what you see is
   what the server has. A burst of changes, like a phone marking thirty messages read, is one sync.
 - **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
-  sleep, and when the window comes back after a minute away. A watch that drops is opened again
-  after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
+  sleep, when the network changes (a VPN reconnecting, another Wi-Fi), and when the window comes
+  back after a minute away. A watch that drops is opened again
+  after 2 seconds, then 10, 30 and every minute, and syncs once it's back; the three-minute passes
+  go on regardless, so nothing is missed meanwhile.
 - **A server gone quiet** is given up on rather than waited for: 30 seconds to connect, 20 to be
   greeted, and a minute with a command out and nothing heard. The status line says it couldn't reach
-  the service, and the next sync goes as usual. A change that was on its way then waits and goes
-  again; it isn't counted as refused.
+  the service, and it tries again after 5 seconds, then 15, 30 and 60, and from then on with the
+  three-minute passes; waking from sleep starts that over. A change that was on its way then waits
+  and goes again; it isn't counted as refused.
 - **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
   go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
   project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,
@@ -258,20 +328,23 @@ Finding a picture for someone means asking somebody else, so this is all that's 
 - **Gravatar** (gravatar.com, run by Automattic), for each sender and for your own accounts: the
   SHA-256 hash of the address, never the address itself, asking for a 96-pixel photo. Gravatar sees
   your IP address and when you asked, and can tell whose hash it is for an address it already knows.
-- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain: the TXT
+- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain, whose
+  newest mail here passed DMARC by your service's checks: the TXT
   record `default._bimi.<domain>`, then the same for the company domain above it
   (`e.shop.example`, then `shop.example`). That's where a company publishes its
   [BIMI](https://bimigroup.org/) logo.
-- **Whoever hosts that logo**, named in the record, often the company itself or a certificate
-  authority such as DigiCert or Entrust: one fetch of the SVG.
+- **Whoever hosts that logo**, named in the record, so the sender's domain chooses who: often the
+  company itself or a certificate authority such as DigiCert or Entrust. One fetch of the SVG.
 - **DuckDuckGo's icon service** (`icons.duckduckgo.com`, no account or key; Clearbit's free logo
   service closed in December 2025), for a company with no BIMI logo: the domain name, for its site's
   icon. Free mail domains (gmail.com, outlook.com, yahoo.com and the like) never get a logo, so a
   friend on Gmail doesn't get Gmail's, and nor do your own addresses.
 
-When: as new mail from someone arrives here, or when they're first named in a list (a row of the
-inbox, search, Subscriptions and the rest). Never when a message is opened, so nobody learns when
-you read anything. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
+When: when someone is first named in a list (a row of the inbox, search, Subscriptions and the
+rest). Never as their mail arrives, which would tell them it had, and so mail waiting for its batch
+asks nothing until it's there; and never when a message is opened, so nobody learns when you read
+anything. With Show faces off (Settings, General) nothing is asked at all, and everyone has their
+initials, apart from a photo you chose for your own account. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
 and a lookup that failed is tried again after 6 hours, so each person and company is asked about
 rarely. Every request is https to a public name (never one that resolves to this laptop or its local
 network, so a logo record can't point at your router), with no cookies or redirects, 8 seconds and 200 KB
@@ -281,7 +354,9 @@ an SVG is only ever shown as an `<img>`, where it can neither run nor fetch anyt
 messages are as before: blocked until you ask.
 
 A face proves nothing: anyone can publish one for their own address or domain. Mail with a sender
-warning shows initials, whatever pictures there are.
+warning shows initials, whatever pictures there are, and a company's logo or icon shows only for a
+sender whose mail passed DMARC, so a stranger writing a company's address, or a domain with no
+checks of its own, doesn't get the company's face.
 
 Your own accounts: Google has no way to get a Google account's profile photo without signing in
 with OAuth. The People API needs it, and the old Picasa address that answered by email was shut down
@@ -297,7 +372,7 @@ has withdrawn its desktop app, so the reference is the pictures in its Mac help 
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
 which is how Edison always works, is one switch away), the delivery line
-over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
+over the list, Snoozed, Reminders and Attachments in the sidebar, search without Vietnamese marks, sender
 warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
@@ -391,11 +466,12 @@ Done differently:
 
 - It's used every day with Gmail. Outlook, Yahoo, iCloud and the rest have been tried only against
   the tests' fake servers, so expect surprises from real ones, Outlook's sign-in most of all.
-- No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
+- No translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
   will miss things: a wrong entry is worse than a missing one.
-- Search covers the mail kept on this laptop (90 days by default, up to three years in Settings).
+- Older mail (past the 90 days, or up to three years, that Settings keep) is found only by searching:
+  it isn't listed, and doesn't count, anywhere else but Pinned and Recently Seen once it's been opened.
 - A scheduled message goes out when the app is running at or after its time. Closing the window keeps
   it running; Quit doesn't, though anything only waiting out Undo goes before it closes.
 - Draft sync has been checked on a real Gmail account between two copies of xrnmail, not yet with
@@ -421,9 +497,12 @@ so it works offline and survives a restart. [docs/design.md](docs/design.md) exp
 why it's built that way.
 
 The profile is `~/.config/xrnmail`: `mail.sqlite` (the mail kept here, the queue of changes, drafts,
-snoozes, pins and settings), `drafts` (files attached to drafts) and `faces`. It's readable only by
-you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're in the
-keyring.
+snoozes, pins and settings), `drafts` (files attached to drafts), `faces`, and `sync.log`, a line for
+each connection that failed: when, which service (with a short hash, never the address), what it was
+doing, how far it got, the error's code, how long it took and the server addresses tried, never what
+a server said or anything of the mail. It keeps 256 KB and the 256 KB before. The profile is readable
+only by you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're
+in the keyring.
 
 ## Building and installing
 
@@ -438,7 +517,8 @@ npm run app:install            # build an AppImage and add it to the launcher
 
 `npm run app:install` (`scripts/install-linux-app.sh`) builds an AppImage into `dist/`, puts it at
 `~/Applications/xrnmail.AppImage`, and adds a launcher (`~/.local/share/applications/xrnmail.desktop`)
-that also takes `mailto:` links. Run it again to update: the new file is renamed over the old one, so
+that also takes `mailto:` links and `.eml` files, is found by searching for mail, and has New Message
+on its right-click menu. Run it again to update: the new file is renamed over the old one, so
 a running copy carries on. The launcher and Start at login run the AppImage with
 `--appimage-extract-and-run`, from an unpacked copy in `~/.cache/xrnmail`, not from a FUSE mount
 that takes the app down with it if the mount goes, and not from `/tmp`, which is memory on many

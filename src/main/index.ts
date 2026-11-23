@@ -2,30 +2,40 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
+import { basename, join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
+  Rsvp, SenderList, Server, Signature, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
+import { cleanRule } from '@shared/rules'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, resourceFile, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
+import { watchNetwork } from './network'
+import { Notices, systemRunner } from './notifier'
 import { passwordStoreSwitch } from './password-store'
+import { filesIn, letterDetail, letterDetails, Letters, letterView } from './letters'
+import { installed, launcherFolders, mailLinks, useForMailLinks, type Run } from './mail-links'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
-import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
+import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
-import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
+import { openAttachment, xdgFiletype } from './opening'
+import { isSafeExternalUrl, safeFileName } from './safe-url'
+import { attachmentsOf } from './parse'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
-import { ImapSource, ImapWatcher, type ImapConfig } from './source'
+import { ADDRESS_ATTEMPT_MS, ImapSource, ImapWatcher, type ImapConfig } from './source'
 import { Store } from './store'
+import { SyncLog } from './sync-log'
 import { ImapWriter } from './writer'
 
 const SYNC_MS = 3 * 60_000 // what's missed while the inbox is being watched, and the rest of the account
@@ -50,10 +60,16 @@ if (app.isPackaged && DEBUG_SWITCHES.some((name) => app.commandLine.hasSwitch(na
 const passwordStore = passwordStoreSwitch(process.platform, process.env.XDG_CURRENT_DESKTOP, (s) => app.commandLine.hasSwitch(s))
 if (passwordStore) app.commandLine.appendSwitch('password-store', passwordStore)
 
+// The same patience for everything else this side opens, signing in to Microsoft and fetching
+// pictures among them: they go through fetch, which tries addresses the way IMAP's sockets do.
+setDefaultAutoSelectFamilyAttemptTimeout(ADDRESS_ATTEMPT_MS)
+
 if (!app.requestSingleInstanceLock()) app.quit()
 
 let window: BrowserWindow | null = null
 let mail: MailService | null = null
+/** Messages opened from files, while their windows are open. */
+let letters: Letters | null = null
 let tray: AppTray | null = null
 let changeTimer: NodeJS.Timeout | null = null
 /** Set once the app is really going, as opposed to the window closing to the tray. */
@@ -73,7 +89,14 @@ function tellPage(): void {
   }, 150)
 }
 
-const tellCommand = (command: AppCommand): void => window?.webContents.send('command', command)
+/** A command from the menu goes to the window it was given in when that window does it for itself;
+ *  the rest is the main window's, which comes forward for it if it was asked from another. */
+const tellCommand = (command: AppCommand, from?: Electron.BaseWindow): void => {
+  const solo = [...solos.values()].find((shown) => shown === from && !shown.isDestroyed())
+  if (solo && ownCommand(command)) return solo.webContents.send('command', command)
+  if (solo) showWindow()
+  window?.webContents.send('command', command)
+}
 
 /** Where a connection goes. The tests point every account at their fakes, in the clear. */
 function connection(server: Server, fake: string | undefined, account: AccountConfig, login: Login): ImapConfig {
@@ -131,8 +154,11 @@ function testSources(spec: string): PictureSources {
 
 /** PNG and JPEG are drawn again here, by Chromium's own decoder: smaller, and with nothing in them
  *  but pixels. One it can't read is no picture. The other kinds are left for the page's <img>. */
-function redraw(picture: Picture, side = 128, square = false): Picture | null {
+function redraw(picture: Picture, side = 128, square = false, most = MOST_LOOKED_UP): Picture | null {
   if (picture.type !== 'image/png' && picture.type !== 'image/jpeg') return picture
+  // Measured first: a stranger's picture is drawn only if its header says a size worth drawing.
+  const measured = pictureSize(picture.bytes)
+  if (!measured || measured.width === 0 || measured.height === 0 || measured.width * measured.height > most) return null
   let image = nativeImage.createFromBuffer(picture.bytes)
   if (image.isEmpty()) return null
   const { width, height } = image.getSize()
@@ -147,9 +173,14 @@ function redraw(picture: Picture, side = 128, square = false): Picture | null {
 
 /** A chosen photo can be large, but not this large. */
 const MOST_CHOSEN = 10 * 1024 * 1024
+/** The most pixels a picture may have to be drawn: one looked up is a face, 96 pixels asked for;
+ *  one chosen can be a phone camera's. */
+const MOST_LOOKED_UP = 2048 * 2048
+const MOST_CHOSEN_PIXELS = 12_000 * 9_000
 
-const tellFaces = (): void => {
-  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces')
+/** Something new was found; with [again], Faces was turned off or on, and every face is asked anew. */
+const tellFaces = (again = false): void => {
+  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces', again)
 }
 
 function bringForward(shown: BrowserWindow | null): void {
@@ -173,6 +204,46 @@ async function composeTo(url: string): Promise<void> {
 const MAILTO = /^mailto:/i
 const mailtoIn = (argv: string[]): string | undefined => argv.find((arg) => MAILTO.test(arg))
 
+/** Each .eml file named, read-only in a window of its own; one that can't be read says why there. */
+function openFiles(paths: string[]): void {
+  for (const path of paths) {
+    if (!letters) return
+    const opened = letters
+    opened.read(path).then((letter) => letter.token, (e: unknown) => opened.failure(e instanceof Error && !('code' in e) ? e.message : "That file couldn't be read."))
+      .then((file) => showSolo({ kind: 'file', file }))
+      .catch(() => undefined) // too many windows open already
+  }
+}
+
+/** What runs xdg-mime for Settings' mail links. The UI tests' never runs it: it answers as the system
+ *  would, starting from XRNMAIL_MAILTO, and notes what was asked where a test can read it. */
+function mimeRunner(): Run {
+  if (!test['XRNMAIL_DATA']) return (file, args) => systemRunner.run(file, args, 5_000)
+  let handler = test['XRNMAIL_MAILTO'] ?? ''
+  const asked: string[][] = []
+  Object.assign(globalThis, { mimeAsked: asked })
+  return async (file, args) => {
+    asked.push([file, ...args])
+    if (args[0] === 'default') handler = args[1] ?? ''
+    return args[0] === 'query' ? `${handler}\n` : ''
+  }
+}
+
+/** A message's attachment, whole: from a file opened here, or fetched for one kept here. */
+async function attachmentFor(service: MailService, id: number, index: number): Promise<{ name: string; content: Buffer }> {
+  const letter = letters?.byId(id)
+  if (!letter) return service.attachment(id, index)
+  const found = (await attachmentsOf(letter.source))[index]
+  if (!found) throw new Error("That attachment isn't in the message.")
+  return found
+}
+
+/** A message as it came, every byte: a file opened here is its own. */
+async function originalFor(service: MailService, id: number): Promise<{ name: string; bytes: Buffer }> {
+  const letter = letters?.byId(id)
+  return letter ? { name: `${letter.mail.subject.trim() || 'Message'}.eml`, bytes: letter.source } : service.original(id)
+}
+
 const MAX_BODY = 8 * 1024 * 1024
 const MAX_DROP = 26 * 1024 * 1024
 /** Tracking and sign-in links can run past 8 KB; this is well inside what one argument to the
@@ -192,7 +263,7 @@ const number = (value: unknown): number => {
 /** How much of a message's source View original shows; Save as .eml keeps all of it. */
 const ORIGINAL_SHOWN = 2 * 1024 * 1024
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'reminders', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -263,8 +334,12 @@ function mailAction(value: unknown): MailAction {
   throw new Error('Bad request')
 }
 
+/** As many threads as the page acts on at once: Mark all as read, Empty Trash and Select All take a
+ *  whole list, which it reads up to 20,000 threads of. */
+const MOST_THREADS = 20_000
+
 function targets(value: unknown): ThreadRef[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error('Bad request')
+  if (!Array.isArray(value) || value.length > MOST_THREADS) throw new Error('Bad request')
   return value.map((item) => {
     const t = (item ?? {}) as Record<string, unknown>
     return { account: text(t['account'], 320), thread: text(t['thread'], 64) }
@@ -292,10 +367,14 @@ function draftEdit(value: unknown): DraftEdit {
     to: text(d['to'], 8000),
     cc: text(d['cc'], 8000),
     bcc: text(d['bcc'], 8000),
+    replyTo: text(d['replyTo'] ?? '', 8000),
     subject: text(d['subject'], 2000),
     html: text(d['html'], MAX_BODY),
     text: text(d['text'], MAX_BODY),
-    quote: quote(d['quote'])
+    quote: quote(d['quote']),
+    // Not given, it's its From address's.
+    signature: d['signature'] === undefined || d['signature'] === null ? undefined : text(d['signature'], 64),
+    remind: d['remind'] === undefined || d['remind'] === null ? undefined : number(d['remind'])
   }
 }
 
@@ -339,6 +418,17 @@ function identity(who: Partial<Identity> | undefined): Identity {
   }
 }
 
+/** A signature's words, with any picture in them, which is kept with it. */
+const MAX_SIGNATURE = 2 * 1024 * 1024
+const SIGNATURE_ID = /^[\w-]{1,64}$/
+
+function signature(value: unknown): Signature {
+  const s = (value ?? {}) as Record<string, unknown>
+  const id = text(s['id'], 64)
+  if (!SIGNATURE_ID.test(id)) throw new Error('Bad request')
+  return { id, name: text(s['name'], 200), html: text(s['html'], MAX_SIGNATURE), text: text(s['text'], 20_000) }
+}
+
 function profile(value: unknown): ProfilePatch {
   const p = (value ?? {}) as Record<string, unknown>
   const patch: ProfilePatch = {}
@@ -349,8 +439,15 @@ function profile(value: unknown): ProfilePatch {
       ])
     )
   }
+  if (Array.isArray(p['signatures'])) patch.signatures = p['signatures'].slice(0, 50).map(signature)
+  if (p['signatureFor'] && typeof p['signatureFor'] === 'object') {
+    patch.signatureFor = Object.fromEntries(Object.entries(p['signatureFor'] as Record<string, unknown>).slice(0, 500)
+      .map(([address, id]) => [text(address, 320).toLowerCase(), text(id, 64)]))
+  }
   if (Array.isArray(p['templates'])) {
-    patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))
+    patch.templates = (p['templates'] as Template[]).map((t) => ({
+      name: text(t?.name, 200), text: text(t?.text, 20_000), ...(t?.subject ? { subject: text(t.subject, 2000) } : {})
+    }))
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
@@ -363,7 +460,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces', 'sound'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -393,13 +490,33 @@ function rsvp(value: unknown): Rsvp {
   return answer
 }
 
-let openedFiles: string | null = null
+/** The name a save suggests is a stranger's, in Downloads, and GTK's dialog writes over a file of that
+ *  name there without asking unless it's told to. */
+const SAVING: ('showOverwriteConfirmation' | 'createDirectory')[] = ['showOverwriteConfirmation', 'createDirectory']
 
-/** A private folder for attachments being looked at, gone when the app quits. */
+let openedFiles: string | null = null
+/** Where the profile notes the folder, so one a crash left behind is found at the next start. */
+const OPENED_KEY = 'openedFolder'
+let noteOpened: ((path: string) => void) | null = null
+
+/** A private folder for attachments being looked at, gone when the app quits. Its name can't be
+ *  guessed, so nothing else can make it first, and the profile keeps it. */
 function openedFolder(): string {
-  openedFiles ??= join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+  if (!openedFiles) {
+    openedFiles = join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+    noteOpened?.(openedFiles)
+  }
   mkdirSync(openedFiles, { recursive: true, mode: 0o700 })
   return openedFiles
+}
+
+/** Takes away the folder of opened attachments the last run left, if it didn't quit: only one this
+ *  profile noted, and named as this app names them. */
+function clearOpened(store: Store): void {
+  const left = store.meta(OPENED_KEY)
+  if (left && /^xrnmail-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(basename(left))) rmSync(left, { recursive: true, force: true })
+  store.deleteMeta(OPENED_KEY)
+  noteOpened = (path) => store.setMeta(OPENED_KEY, path)
 }
 
 function register(service: MailService, avatars: Avatars): void {
@@ -420,8 +537,11 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
-    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
+  handle('thread', async (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) => {
+    const ref = { account: text(account, 320), thread: text(thread, 64) }
+    await service.reach([ref])
+    return service.thread(ref.account, ref.thread, bins === true, remember !== false, read !== false)
+  })
   handle('clearRecent', () => service.clearRecent())
   handle('searches', () => service.searches())
   handle('rememberSearch', (search: unknown) => service.rememberSearch(text(search, 500)))
@@ -432,17 +552,32 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveSummary', (summary: unknown) => service.saveSummary(summarySettings(summary)))
   handle('summarySenders', () => service.summarySenders())
   handle('editSenders', (name: unknown, addresses: unknown, on: unknown) => service.editSenders(senderList(name), texts(addresses, 500, 320), on === true))
+  handle('mailRules', () => service.mailRules())
+  handle('saveRule', (rule: unknown) => service.saveRule(cleanRule(rule)))
+  handle('deleteRule', (id: unknown) => service.deleteRule(number(id)))
+  handle('moveRule', (id: unknown, to: unknown) => service.moveRule(number(id), number(to)))
+  handle('applyRule', (id: unknown) => service.applyRule(number(id)))
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
   handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
-  handle('act', (refs: unknown, action: unknown) => service.act(targets(refs), mailAction(action)))
+  handle('act', async (refs: unknown, action: unknown, undoable: unknown) => {
+    const [chosen, what] = [targets(refs), mailAction(action)]
+    await service.reach(chosen)
+    return service.act(chosen, what, undoable === true)
+  })
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
-  handle('pin', (refs: unknown, on: unknown) => service.pin(targets(refs), on === true))
+  handle('remind', (message: unknown, until: unknown) => service.remind(number(message), number(until)))
+  handle('unremind', (refs: unknown) => service.unremind(targets(refs)))
+  handle('pin', async (refs: unknown, on: unknown) => {
+    const chosen = targets(refs)
+    await service.reach(chosen)
+    service.pin(chosen, on === true)
+  })
   handle('block', (address: unknown) => service.block(text(address, 320)))
   handle('unsubscribe', async (message: unknown) => {
     const { url, ...result } = await service.unsubscribe(number(message))
@@ -457,40 +592,54 @@ function register(service: MailService, avatars: Avatars): void {
   handle('rsvp', (message: unknown, answer: unknown) => service.rsvp(number(message), rsvp(answer)))
   handle('contacts', (query: unknown) => service.contacts(text(query, 200)))
   handle('saveAttachment', async (message: unknown, index: unknown) => {
-    const found = await service.attachment(number(message), number(index))
+    const found = await attachmentFor(service, number(message), number(index))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)) }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.content, { mode: 0o600 })
     return true
   })
   handle('openAttachment', async (message: unknown, index: unknown) => {
-    const found = await service.attachment(number(message), number(index))
-    const name = safeFileName(found.name)
-    if (!canOpenDirectly(name)) throw new Error('Save this kind of file first, then open it yourself.')
-    const path = join(openedFolder(), `${randomUUID().slice(0, 8)}-${name}`)
-    writeFileSync(path, found.content, { mode: 0o600 })
-    const failure = await shell.openPath(path)
-    if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+    const found = await attachmentFor(service, number(message), number(index))
+    await openAttachment(safeFileName(found.name), found.content, { folder: openedFolder, filetype: xdgFiletype, openPath: (path) => shell.openPath(path) })
   })
   // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
   // than a few megabytes of it, and saving writes it as it came.
   handle('original', async (message: unknown) => {
-    const { bytes } = await service.original(number(message))
+    const { bytes } = await originalFor(service, number(message))
     const cut = bytes.length > ORIGINAL_SHOWN
     return { text: new TextDecoder().decode(cut ? bytes.subarray(0, ORIGINAL_SHOWN) : bytes), size: bytes.length, cut }
   })
   handle('saveOriginal', async (message: unknown) => {
-    const found = await service.original(number(message))
+    const found = await originalFor(service, number(message))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }] }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }], properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })
     return true
   })
-  handle('details', (message: unknown) => service.details(number(message)))
+  handle('details', (message: unknown) => {
+    const letter = letters?.byId(number(message))
+    return letter ? letterDetails(letter) : service.details(number(message))
+  })
+  // A file's message, read-only, for its window; and a reply to it, or a forward, in a composer of its own.
+  handle('letter', (token: unknown) => {
+    const file = text(token, 64)
+    const letter = letters?.get(file)
+    if (!letter) throw new Error(letters?.problem(file) ?? "That file isn't open any more.")
+    const owner = [...letter.mail.to, ...letter.mail.cc].map((a) => service.ownerOf(a.address)).find(Boolean)
+    return letterView(letter, owner ?? service.accounts()[0]?.email ?? '')
+  })
+  handle('replyToLetter', async (token: unknown, kind: unknown) => {
+    const letter = letters?.get(text(token, 64))
+    if (!letter) throw new Error("That file isn't open any more.")
+    if (kind !== 'reply' && kind !== 'replyAll' && kind !== 'forward') throw new Error('Bad request')
+    const files = kind === 'forward' ? await attachmentsOf(letter.source) : []
+    const draft = service.startDraftFromFile(letterDetail(letter, ''), files, kind)
+    showSolo({ kind: 'draft', id: draft.id })
+  })
   // An address and nothing else: a page gone wrong mustn't be able to put a command on the clipboard
   // for someone to paste into a terminal.
   handle('copyAddress', (address: unknown) => {
@@ -516,7 +665,7 @@ function register(service: MailService, avatars: Avatars): void {
     if (statSync(path).size > MOST_CHOSEN) throw new Error('Pick a picture under 10 MB.')
     const bytes = readFileSync(path)
     const type = sniff(bytes)
-    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true) : null
+    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true, MOST_CHOSEN_PIXELS) : null
     if (!drawn) throw new Error("That picture couldn't be read. Pick a PNG or JPEG.")
     avatars.choose(email, drawn)
     tellFaces()
@@ -557,29 +706,37 @@ function register(service: MailService, avatars: Avatars): void {
     else return
     service.holdDraft(draft, on === true)
   })
-  handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
+  handle('discardDraft', (id: unknown, undoable: unknown) => service.discardDraft(number(id), undoable === true))
+  handle('undiscardDraft', (id: unknown) => service.undiscardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }
     const parent = dialogParent()
     const choice = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
     return service.addFilesFromDisk(number(id), choice.canceled ? [] : choice.filePaths)
   })
-  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown) => {
+  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown, inline: unknown) => {
     const data = bytes instanceof ArrayBuffer ? Buffer.from(bytes) : ArrayBuffer.isView(bytes) ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null
     if (!data) throw new Error('Bad request')
     if (data.length > MAX_DROP) throw new Error('Mail services take about 18 MB of attachments at most.')
-    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data)
+    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data, inline === true)
   })
+  handle('draftPicture', (id: unknown, file: unknown) => service.draftPicture(number(id), text(file, 64)))
   handle('removeFile', (id: unknown, file: unknown) => service.removeFile(number(id), text(file, 64)))
   handle('send', (id: unknown, at: unknown) => service.send(number(id), at === undefined ? undefined : number(at)))
+  handle('sendAndArchive', (id: unknown) => service.sendAndArchive(number(id)))
   handle('unsend', (id: unknown) => service.unsend(number(id)))
   handle('saveProfile', (patch: unknown) => {
     const clean = profile(patch)
     service.saveProfile(clean)
     if (clean.startAtLogin !== undefined) setStartAtLogin(clean.startAtLogin)
+    if (clean.faces !== undefined) tellFaces(true)
   })
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
+  const mime = mimeRunner()
+  const launcher = (): boolean => Boolean(test['XRNMAIL_DATA']) || installed(launcherFolders(process.env, homedir()))
+  handle('mailLinks', () => mailLinks(mime, launcher()))
+  handle('useForMailLinks', () => useForMailLinks(mime, launcher()))
   handle('openLink', async (url: unknown) => {
     const target = text(url, MAX_LINK)
     if (MAILTO.test(target)) await composeTo(target)
@@ -634,7 +791,7 @@ const solos = new Map<string, BrowserWindow>()
 const MOST_SOLOS = 12
 /** How long a window of its own gets to keep what's typed before it's closed regardless. */
 const LEAVING_MS = 2000
-const SOLO_SIZE = { thread: { width: 900, height: 780 }, draft: { width: 720, height: 680 } }
+const SOLO_SIZE = { thread: { width: 900, height: 780 }, draft: { width: 720, height: 680 }, file: { width: 900, height: 780 } }
 
 /** A thread, or a draft in the composer, in a window of its own: the page the main window has,
  *  told in its address what to show. Asking again for the same one brings its window forward. */
@@ -669,7 +826,10 @@ function showSolo(solo: Solo): void {
     shown.webContents.send('leaving')
     setTimeout(() => { if (!shown.isDestroyed()) shown.destroy() }, LEAVING_MS)
   })
-  shown.on('closed', () => { if (solos.get(key) === shown) solos.delete(key) })
+  shown.on('closed', () => {
+    if (solos.get(key) === shown) solos.delete(key)
+    if (solo.kind === 'file') letters?.forget(solo.file)
+  })
   loadPage(shown, soloQuery(solo))
 }
 
@@ -721,7 +881,10 @@ function createWindow(store: Store, hidden: boolean): void {
   loadPage(shown)
 }
 
-app.on('second-instance', (_event, argv) => {
+app.on('second-instance', (_event, argv, from) => {
+  // A file opens in a window of its own, over whatever else is open.
+  const files = filesIn(argv.slice(1), from)
+  if (files.length > 0) return openFiles(files)
   showWindow()
   const url = mailtoIn(argv)
   if (url) background(composeTo(url))
@@ -731,6 +894,7 @@ app.on('window-all-closed', () => { if (quitting || !tray) app.quit() })
 void app.whenReady().then(() => {
   lockDownNetwork()
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
+  clearOpened(store)
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
   // The UI tests look nothing up unless they hand over pictures of their own.
   const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt, addressesOf)
@@ -738,11 +902,41 @@ void app.whenReady().then(() => {
     dir: join(app.getPath('userData'), 'faces'),
     sources,
     now: () => Date.now(),
-    found: tellFaces,
+    found: () => tellFaces(),
     redraw: (picture) => redraw(picture),
-    ownerOf: (address) => mail?.ownerOf(address) ?? null
+    ownerOf: (address) => mail?.ownerOf(address) ?? null,
+    on: () => mail?.settings().faces ?? true,
+    vouched: (addresses) => store.passedDmarc(addresses)
   })
   const parser = new Parser(() => readMail({}))
+  letters = new Letters(parser.parse)
+  const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
+  // A notice for one message opens it, and its Archive and Mark read act as the thread's own buttons
+  // do, with no window needed; one for several brings the window up.
+  const notices = new Notices({
+    runner: systemRunner,
+    platform: process.platform,
+    icon: resourceFile('icon.png'),
+    chime: resourceFile('new-mail.wav'),
+    sound: () => mail?.settings().sound === true,
+    plain: notify,
+    plainSummary: notifySummary,
+    act: (ref, action) => {
+      try {
+        mail?.act([ref], { kind: action })
+      } catch {
+        // The thread, or its account, went in the meantime.
+      }
+    },
+    open: (ref) => {
+      showWindow()
+      if (ref) window?.webContents.send('open-thread', ref)
+    },
+    openSummary: () => {
+      showWindow()
+      tellCommand('summary')
+    }
+  })
   const service = new MailService({
     store,
     secrets,
@@ -752,21 +946,15 @@ void app.whenReady().then(() => {
     openSender: (account, login) => new SmtpSender(smtpConfig(account, login)),
     openWatcher: (account, login) => new ImapWatcher(imapConfig(account, login)),
     records: test['XRNMAIL_IMAP'] ? undefined : domainRecords,
+    addresses: addressesOf,
     files: new DraftFiles(join(app.getPath('userData'), 'drafts')),
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),
     changed: tellPage,
-    noticed: (addresses) => avatars.want(addresses),
-    // A notice for one message opens it; one for several brings the window up.
-    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
-      showWindow()
-      if (preview) window?.webContents.send('open-thread', { account: preview.account, thread: preview.thread })
-    }),
-    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notifySummary(count, senders, () => {
-      showWindow()
-      tellCommand('summary')
-    }),
-    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
+    landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notices.landed(count, preview),
+    summarized: test['XRNMAIL_DATA'] ? undefined : (count, senders) => notices.summarized(count, senders),
+    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined,
+    failed: (failure) => syncLog.write(failure)
   })
   mail = service
   register(service, avatars)
@@ -788,16 +976,18 @@ void app.whenReady().then(() => {
   createWindow(store, tray !== null && startedHidden(process.argv))
   const opening = mailtoIn(process.argv)
   if (opening) window?.webContents.once('did-finish-load', () => background(composeTo(opening)))
+  // Started from a file manager's Open With, or `xrnmail some.eml`: from where it was started, which
+  // an AppImage notes before moving.
+  openFiles(filesIn(process.argv.slice(1), process.env['OWD'] || process.cwd()))
   background(service.syncAll())
   background(service.refreshSnippets(app.getVersion()))
   service.watchAll()
   const syncing = setInterval(() => background(service.syncAll()), SYNC_MS)
   const ticking = setInterval(() => background(service.tick()), TICK_MS)
-  powerMonitor.on('resume', () => {
-    service.stopWatching()
-    service.watchAll()
-    background(service.syncAll())
-  })
+  powerMonitor.on('resume', () => background(service.reconnect()))
+  // A VPN reconnecting, its kill switch, another Wi-Fi: the same as waking for every connection,
+  // and nothing else notices until the next pass.
+  const stopNetwork = watchNetwork(() => background(service.reconnect()))
   let finished = false
   app.on('before-quit', (event) => {
     quitting = true
@@ -809,6 +999,7 @@ void app.whenReady().then(() => {
       if (changeTimer) clearTimeout(changeTimer)
       tray?.destroy()
       tray = null
+      notices.stop()
       void parser.close()
       store.close()
       if (openedFiles) rmSync(openedFiles, { recursive: true, force: true })
@@ -816,6 +1007,7 @@ void app.whenReady().then(() => {
     }
     // Mail waiting out Undo would otherwise sit here until the next launch.
     event.preventDefault()
+    stopNetwork()
     service.stopWatching()
     const giveUp = new Promise((resolve) => setTimeout(resolve, FINISH_WAIT_MS))
     void Promise.race([service.finishUp().catch(() => undefined), giveUp]).finally(() => {

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
+  BellRing, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
 import { arranged, arrangedLabels, cleanSidebar, moved, movedLabel, shownLabel, siblingsOf, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
@@ -31,6 +31,7 @@ const ENTRIES: Record<SidebarEntry, { label: string; icon: LucideIcon; target: V
   pinned: { label: 'Pinned', icon: Pin, target: { kind: 'pinned' } },
   summary: { label: 'Summary', icon: Newspaper, target: { kind: 'summary' } },
   snoozed: { label: 'Snoozed', icon: Clock, target: { kind: 'snoozed' } },
+  reminders: { label: 'Reminders', icon: BellRing, target: { kind: 'reminders' } },
   attachments: { label: 'Attachments', icon: Paperclip, target: { kind: 'attachments' } },
   drafts: { label: 'Drafts', icon: FileText, target: { kind: 'drafts' }, gathered: true },
   spam: { label: 'Spam', icon: OctagonAlert, target: { kind: 'spam' } },
@@ -110,6 +111,8 @@ export function Sidebar(props: {
   edited(choice: SidebarChoice | null): void
   /** Edit Menu's New Label… or New Folder…, for an account. */
   newFolder(account: string): void
+  /** The key for a new message in the set in use, beside the menu's own. */
+  composeKey?: string
 }): ReactNode {
   const { accounts, overview, view, go, drafts } = props
   const many = accounts.length > 1
@@ -352,9 +355,9 @@ export function Sidebar(props: {
         props.menu(null, e.clientX, e.clientY)
       }}>
       <div className="sidebar-top">
-        <button className="compose" title="New message (c)" onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
+        <button className="compose" title={`New message (${props.composeKey ?? 'Ctrl+N'})`} onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
         <span className="grow" />
-        <button className="icon" disabled={syncing} aria-label={syncing ? 'Syncing' : 'Sync'} title="Check for mail (F5)" onClick={() => void window.mail.syncNow()}>
+        <button className="icon" aria-label={syncing ? 'Syncing' : 'Sync'} title="Check for mail (F5)" onClick={() => void window.mail.syncNow()}>
           <RotateCw className={syncing ? 'spin' : ''} size={17} aria-hidden="true" />
         </button>
       </div>

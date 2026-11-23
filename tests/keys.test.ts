@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanAllChanges, cleanChanges, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
+import { cleanAllChanges, cleanChanges, hintFor, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
 
 describe('keys', () => {
   it('names a press the way the tables do', () => {
@@ -78,6 +78,22 @@ describe('keys', () => {
   })
 })
 
+// The tooltips over a thread always named the Edison and Gmail letters: "Archive (e)" with the Apple
+// Mail set, where e does nothing, and after a key had been changed.
+describe('the keys tooltips name', () => {
+  it('are the set\'s own, as changed, spelt for reading, and none where the set has none', () => {
+    expect(['archive', 'trash', 'flag', 'unread', 'labels', 'snooze', 'reply'].map((c) => hintFor('edison', {}, c as never)))
+      .toEqual(['e', '#', 's', 'Shift+U', 'l', 'b', 'r'])
+    expect(hintFor('apple', {}, 'archive')).toBe('Ctrl+Alt+A')
+    expect(hintFor('apple', {}, 'trash')).toBe('Backspace')
+    expect(hintFor('apple', {}, 'snooze')).toBeUndefined()
+    expect(hintFor('apple', {}, 'unread', 'toggleRead')).toBe('Ctrl+Shift+U')
+    expect(hintFor('outlook', {}, 'flag')).toBe('Ctrl+1')
+    expect(hintFor('edison', { archive: 'y' }, 'archive')).toBe('y')
+    expect(hintFor('edison', { archive: '' }, 'archive')).toBeUndefined()
+  })
+})
+
 describe('keys of your own choosing', () => {
   it('puts a chosen key in place of the set\'s own for that action', () => {
     const changes = rebound({}, 'archive', 'Ctrl+Shift+E')
@@ -118,5 +134,21 @@ describe('keys of your own choosing', () => {
     expect(unbindable('Ctrl+N', 'n')).toBe('Ctrl+N is for New Message in the menu.')
     expect(unbindable('Tab', 'Tab')).toBe('Tab is for moving the focus.')
     expect(unbindable('Ctrl+Shift+E', 'E')).toBeNull()
+  })
+})
+
+describe('Send & Archive', () => {
+  it('has no key in any set, as none of their apps has one, and can be given one held with Ctrl or Alt', () => {
+    for (const [set] of KEY_SETS) expect(keysOf(set, {}, 'sendArchive')).toEqual([])
+    expect(keyList('edison').some(([, what]) => what === 'Send & Archive')).toBe(false)
+    expect(unbindable('e', 'e', 'sendArchive')).toBe('Hold it with Ctrl or Alt.')
+    expect(unbindable('Shift+Enter', 'Enter', 'sendArchive')).toBe('Hold it with Ctrl or Alt.')
+    expect(unbindable('Ctrl+Shift+Enter', 'Enter', 'sendArchive')).toBeNull()
+    expect(unbindable('e', 'e', 'archive')).toBeNull()
+    const changes = rebound({}, 'sendArchive', 'Ctrl+Shift+Enter')
+    expect(keysFor('gmail', changes)['Ctrl+Shift+Enter']).toBe('sendArchive')
+    expect(keyList('gmail', changes)).toContainEqual(['Ctrl+Shift+Enter', 'Send & Archive'])
+    // A key that types, saved for it somehow, is let go of: in the composer it would send.
+    expect(cleanChanges({ sendArchive: 'e' })).toEqual({})
   })
 })

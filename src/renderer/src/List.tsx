@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type M
 import { plainName } from '@shared/names'
 import { openRate, sortSenders, type SenderOrder } from '@shared/senders'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
+import { Archive, BellRing, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { wantFaces } from './pictures'
-import { clock, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
+import { clock, comesBack, factLine, fileKind, longTime, peopleLine, problem, shortTime } from './format'
 import { IconButton } from './Menus'
 
 const SWIPE_FAR = 240
@@ -57,6 +57,10 @@ export function Row(props: {
   bins: boolean
   /** Showing what the Assistant found, not who wrote. */
   assistant: boolean
+  /** In Snoozed, where the time is when it comes back. */
+  snoozed?: boolean
+  /** In Reminders, where the time is when it comes back if nobody has written. */
+  reminders?: boolean
   on: boolean
   picked: boolean
   swipe: Swipes
@@ -129,7 +133,7 @@ export function Row(props: {
   const shown = bins ? [] : [...new Set(props.quick)].filter((kind) => kind !== 'none')
 
   return (
-    <div ref={box} className={`thread ${stateClass}`} draggable onDragStart={drag} onWheel={wheel}
+    <div ref={box} className={`thread ${stateClass}`} data-account={row.account} data-thread={row.thread} draggable onDragStart={drag} onWheel={wheel}
       onContextMenu={(e) => { e.preventDefault(); props.menu(e.clientX, e.clientY) }}>
       {look && LookIcon && (
         <div className={`swipe-under ${look.tone} ${shift > 0 ? 'from-left' : 'from-right'} ${Math.abs(shift) >= SWIPE_COMMIT ? 'ready' : ''}`}>
@@ -148,15 +152,25 @@ export function Row(props: {
           <span className="thread-top">
             {unread && <span className="unread-dot" aria-hidden="true" />}
             {unread && <span className="sr-only">Unread, </span>}
-            <span className="sender">{head ? head.title : names}</span>
+            <span className="sender">{head ? head.title : <bdi>{plainName(names)}</bdi>}</span>
             {!head && row.count > 1 && <span className="count">({row.count})</span>}
-            <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>
+            {props.snoozed && row.snoozedUntil !== null
+              ? <time className="back" dateTime={new Date(row.snoozedUntil).toISOString()}><Clock size={11} aria-hidden="true" />{comesBack(row.snoozedUntil)}</time>
+              : props.reminders && row.remind
+              ? <time className="back" dateTime={new Date(row.remind.at).toISOString()}><BellRing size={11} aria-hidden="true" />{comesBack(row.remind.at)}</time>
+              : <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>}
           </span>
           <span className="thread-mid">
             <span className="subject">{row.subject || 'No subject'}</span>
             {props.importance && row.important && <ImportantMark className="mark important" label="Important" />}
             {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
             {row.pinned && <Pin className="mark pin" size={13} aria-label="Pinned" />}
+            {row.remind?.fired && <BellRing className="mark reminded" size={13} aria-label="No reply" />}
+            {row.remind && !row.remind.fired && !props.reminders && (
+              <time className="mark remind" dateTime={new Date(row.remind.at).toISOString()} title={longTime(row.remind.at)}>
+                <BellRing size={12} aria-hidden="true" />{comesBack(row.remind.at)}
+              </time>
+            )}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>

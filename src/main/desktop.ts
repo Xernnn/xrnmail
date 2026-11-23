@@ -12,6 +12,9 @@ const TRAY_SIZE = 22
 const DOT = 7
 
 const iconPath = (): string => join(__dirname, '../../resources/icon.png')
+/** One of the app's own files, where a program outside it can read it: packaged, resources are
+ *  unpacked beside the archive (electron-builder.yml's asarUnpack). */
+export const resourceFile = (name: string): string => join(__dirname, '../../resources', name).replace(/app\.asar([/\\])/, 'app.asar.unpacked$1')
 /** resources/icon-16.svg, the tile drawn for small sizes, rendered at TRAY_SIZE (rsvg-convert -w 22 -h 22). */
 const trayPath = (): string => join(__dirname, '../../resources/tray.png')
 
@@ -68,8 +71,13 @@ export class AppTray {
   }
 }
 
-export function appMenu(actions: { command(command: AppCommand): void; sync(): void }): Menu {
-  const say = (command: AppCommand) => () => actions.command(command)
+/** What a window of its own does for itself when the menu asks there: print what it shows, and show
+ *  the keys. Everything else the menu asks for (writing, Settings, search) is the main window's. */
+export const ownCommand = (command: AppCommand): boolean => command === 'print' || command === 'help'
+
+/** Each command says which window it was given in, so a window of its own can answer for itself. */
+export function appMenu(actions: { command(command: AppCommand, from?: Electron.BaseWindow): void; sync(): void }): Menu {
+  const say = (command: AppCommand) => (_item: unknown, from: Electron.BaseWindow | undefined) => actions.command(command, from)
   const template: MenuItemConstructorOptions[] = [
     {
       label: 'File',

@@ -1,30 +1,36 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
-import { QUICK_SLOTS } from '@shared/types'
+import { IMPORTANT, INLINE_PICTURES, QUICK_SLOTS, signatureFor } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
 import { cleanLater, DEFAULT_LATER } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
+import { MAX_RULES, type MailRule, type RuleApplied, type RuleEdit } from '@shared/rules'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
+import { sniff } from './avatars'
 import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
-import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
+import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, placePictures, quoteOf, replySubject, replyTargets, type SignedWith } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
+import { changesOf, decide, ruleHolds, rulingOf, type RuleMail } from './rules'
+import { createHash } from 'node:crypto'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, parseMail, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
-import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
+import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
-import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import { OldMail, SEARCH_SETTLE_MS } from './server-search'
+import { cleanSecret, TooBig, type MailSource, type MailWatcher, type RemoteMail } from './source'
+import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
-import { syncAccount } from './sync'
+import { syncAccount, type Ruled } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
 
 /** Everything the app does, with the clock and the outside world passed in. */
@@ -45,11 +51,19 @@ const KEYRING_SHUT = 'Unlock your system keyring, then restart xrnmail.'
 const SIGN_IN_AGAIN = 'Sign in to this account again.'
 /** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
 const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
-const TOKEN_MARGIN_MS = 60_000
+/** A token is renewed with this much left: Exchange ends a session when its token runs out, so one
+ *  handed to a watch with a minute left had it cut off within the minute. */
+const TOKEN_MARGIN_MS = 5 * 60_000
 const DAY_MS = 86_400_000
+/** The most of one message fetched whole, for its attachments or View original: past what any
+ *  big service delivers (Gmail takes 50 MB in, once encoded), so none of their mail is too big to
+ *  open, and no server can have the laptop hold more than this of one message. */
+export const MAX_WHOLE = 64 * 1024 * 1024
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
 const NOTE_MS = 10 * 60_000
+/** Beside the account when a message didn't go. What went wrong is on the draft, in Drafts. */
+export const SEND_FAILED = 'Sending failed. See Drafts.'
 
 const DEFAULT_SETTINGS: Settings = {
   batch: { live: false, times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
@@ -57,10 +71,13 @@ const DEFAULT_SETTINGS: Settings = {
   backfillDays: 90,
   hub: { url: '', user: '', connected: false },
   identities: {},
+  signatures: [],
+  signatureFor: {},
   templates: [],
   blocked: [],
   muted: [],
   notifyFocusedOnly: false,
+  sound: false,
   undoSeconds: 10,
   undoActionSeconds: 5,
   defaultReply: 'reply',
@@ -97,7 +114,8 @@ const DEFAULT_SETTINGS: Settings = {
   imagesFrom: [],
   readAfter: 0,
   threadOrder: 'oldest',
-  later: DEFAULT_LATER
+  later: DEFAULT_LATER,
+  faces: true
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -151,10 +169,57 @@ export interface ServiceDeps {
   /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
   noticed?(addresses: string[]): void
   post?: typeof fetch
+  /** Every address a name resolves to, for a request a stranger's header aims (unsubscribing). */
+  addresses?: (host: string) => Promise<string[]>
   records?: DomainRecords
   /** How synced mail is read, when not on this thread. */
   parse?: (source: Buffer) => Promise<ParsedMail>
+  /** A connection failed: for the log of failures, which keeps its codes and never its words. */
+  failed?(failure: Failure): void
   earlyWaitSeconds?: number
+  /** How long a search waits for typing to stop before asking the servers about older mail. */
+  searchSettleMs?: number
+}
+
+/** What names a message on its account's server whatever folder it's in: Gmail's own id, or its
+ *  Message-ID, or failing both who sent it what, when. */
+function ruleKey(remote: RemoteMail, mail: ParsedMail): string {
+  if (remote.gmailId) return `g:${remote.gmailId}`
+  if (mail.messageId) return `m:${mail.messageId}`
+  return `h:${createHash('sha256').update(`${mail.from.address}\n${mail.subject}\n${remote.arrived}`).digest('hex')}`
+}
+
+const ruleMail = (mail: ParsedMail): RuleMail => ({
+  from: mail.from, to: mail.to, cc: mail.cc, subject: mail.subject, text: mail.text, list: mail.details.list,
+  attachments: mail.attachments.map((a) => a.name)
+})
+
+const changesSomething = (state: MailState, action: MailAction): boolean => {
+  const next = applied(state, action)
+  return next.seen !== state.seen || next.flagged !== state.flagged || next.labels.join('\n') !== state.labels.join('\n')
+}
+
+/** What a change to mail is called in Apply now's note. */
+const doneBy = (action: MailAction): RuleApplied['did'] => {
+  switch (action.kind) {
+    case 'label':
+      return action.label === IMPORTANT ? 'important' : 'label'
+    case 'star':
+      return 'flag'
+    case 'trash':
+    case 'move':
+    case 'archive':
+    case 'read':
+      return action.kind
+    default:
+      return null
+  }
+}
+
+/** The kind of picture that can go in a message's words, by its own bytes, or null. */
+const pictureType = (bytes: Buffer): string | null => {
+  const type = sniff(bytes)
+  return type && INLINE_PICTURES.includes(type) ? type : null
 }
 
 /** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
@@ -171,6 +236,24 @@ const cleanSenders = (senders: string[]): string[] =>
 
 /** Text set as a new draft's body, in the form the editor keeps. */
 const escapeForEditor = (text: string): string => escapeHtml(text).replace(/\r?\n/g, '<br>')
+
+/** Settings saved before there were several signatures: each account's plain one becomes a signature
+ *  of its own with the same words, the one its mail is signed with, and the identity keeps none. */
+function migratedSignatures(identities: Record<string, Partial<Identity>>): Pick<Settings, 'signatures' | 'signatureFor'> & { identities: Record<string, Partial<Identity>> } {
+  const signatures: Signature[] = []
+  const signatureFor: Record<string, string> = {}
+  const accounts = Object.entries(identities)
+  const cleared = accounts.map(([email, who], i): [string, Partial<Identity>] => {
+    const text = (who.signature ?? '').trim()
+    if (text) {
+      const id = `signature-${i + 1}`
+      signatures.push({ id, name: accounts.length > 1 ? email : 'Signature', html: escapeForEditor(text), text })
+      signatureFor[email.toLowerCase()] = id
+    }
+    return [email, { ...who, signature: '' }]
+  })
+  return { signatures, signatureFor, identities: Object.fromEntries(cleared) }
+}
 
 export function cleanSummary(summary: Partial<SummarySettings>): SummarySettings {
   return {
@@ -194,15 +277,26 @@ export function cleanBatch(batch: BatchSettings): BatchSettings {
   }
 }
 
-/** Fixed words: what a server says is never shown, and can't carry anything back to the page. */
+/** What's said while a service can't be reached, which a pass that gets through takes away. */
+const unreachable = (service: string): string => `Couldn't reach ${service}.`
+
+/** What a server turns a sign-in away with when it's busy, not when the password is wrong: RFC 5530's
+ *  codes for that, and Gmail's words for too many connections at once, which come as an [ALERT]. */
+const BUSY_CODES = new Set(['UNAVAILABLE', 'INUSE', 'LIMIT', 'SERVERBUG'])
+const BUSY_WORDS = /too many (simultaneous )?connections|try again later/i
+
+/** Fixed words: what a server says is never shown, and can't carry anything back to the page. It's
+ *  only read for whether a sign-in turned away was busy, which is waited out like a lost connection
+ *  and tried again: told "refused this password", people changed a password that was right. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
-  const e = error as { authenticationFailed?: boolean; message?: string }
+  const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
-  if (e?.authenticationFailed) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
+  if (e?.authenticationFailed && !busy) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
-  return `Couldn't reach ${service}.`
+  return unreachable(service)
 }
 
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i
@@ -244,8 +338,13 @@ type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progr
 
 /** How many messages have to be coming before it's worth saying so. */
 const WORTH_SHOWING = 40
-/** How long a lost watch on the inbox waits before trying again. Syncs carry on regardless. */
-const WATCH_RETRY_MS = 60_000
+/** How long a lost watch on the inbox waits before trying again, longer each time it's lost again
+ *  without having opened, and then the last each time. Syncs carry on regardless. */
+const WATCH_RETRY_MS = [2_000, 10_000, 30_000, 60_000]
+/** How long an account waits to try again after a pass that couldn't reach its server, longer each
+ *  time it fails again: the network is often back within seconds of waking or of a VPN reconnecting.
+ *  After the last, the three-minute passes carry on as usual. */
+export const PASS_RETRY_MS = [5_000, 15_000, 30_000, 60_000]
 /** How many previews are remade at a time, so the app stays quick while it happens. */
 const SNIPPET_STEP = 50
 /** How long a watch waits after the server's last word before syncing, so a burst of them (a
@@ -281,9 +380,12 @@ export class MailService {
    *  entry is taken out when it ends: a newer one may have it by then. */
   private watchers = new Map<string, Watch>()
   private watching = false
-  private rewatch: NodeJS.Timeout | null = null
-  /** Something arrived during a sync, too late for it to have seen. */
+  /** Accounts whose watch was lost: how many times in a row, and the try waiting to replace it. */
+  private rewatches = new Map<string, { losses: number; timer: NodeJS.Timeout | null }>()
+  /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
+  private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
    *  changes, even if the account has been added back since. */
   private removals = new Map<string, number>()
@@ -299,13 +401,43 @@ export class MailService {
   private draftsRetryAt = new Map<string, number>()
   /** How often each copy that has to go has been refused. */
   private copyRefusals = new Map<number, number>()
+  /** Drafts thrown away while Undo lasts: when each goes for good, and how it was. */
+  private discarding = new Map<number, { at: number; was: Draft }>()
   /** Drafts on the server too big to bring here, so they aren't fetched again each pass. */
   private tooBig = new Set<string>()
+  /** Searches of the servers, for mail from before the keeping window. */
+  private readonly old: OldMail
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
+    // Plain signatures become signatures of the new kind once, the first time this version runs.
+    const saved = deps.store.meta('settings')
+    if (saved && !('signatures' in (JSON.parse(saved) as object))) this.saveSettings(this.settings())
+    this.old = new OldMail({
+      store: deps.store,
+      accounts: () => this.emails(),
+      open: (email) => this.openSource(email),
+      keepFrom: () => this.deps.now() - this.settings().backfillDays * DAY_MS,
+      now: () => this.deps.now(),
+      changed: () => this.deps.changed(),
+      parse: (source) => (this.deps.parse ?? parseMail)(source),
+      receiver: (email) => receiverOf(this.config(email), this.ownAddresses(email)),
+      settleMs: deps.searchSettleMs ?? SEARCH_SETTLE_MS
+    })
+  }
+
+  /** A read-only connection to an account, signed in, or nothing left open. */
+  private async openSource(email: string): Promise<MailSource> {
+    const source = this.deps.openSource(this.config(email), await this.login(email))
+    try {
+      await source.connect()
+    } catch (e) {
+      await source.close().catch(() => undefined)
+      throw e
+    }
+    return source
   }
 
   private inLane<T>(email: string, work: () => Promise<T>): Promise<T> {
@@ -413,7 +545,7 @@ export class MailService {
         providerName: provider(config.provider).name,
         labels: config.gmail,
         folders: this.folders(email),
-        unread: this.store.unreadThreads(now, 'm.account = ?', email),
+        unread: this.store.unreadThreads(now, 'm.account = ?', email) + this.store.remindedUnseen(email),
         otherUnread: this.store.unreadThreads(now, 'm.account = ? AND m.focus = 0', email),
         color: this.identity(email).color
       }
@@ -567,6 +699,10 @@ export class MailService {
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    this.stopRetrying(email)
     this.deps.secrets.remove(`account:${email}`)
     this.store.deleteMeta(`config:${email}`)
     this.store.deleteMeta(`folders:${email}`)
@@ -590,10 +726,59 @@ export class MailService {
     await Promise.all(this.emails().map((email) => this.syncOne(email)))
   }
 
+  /** After waking from sleep, or when the network changes: every connection may be dead, so each
+   *  watch starts again, the waits between tries start over, and every account syncs. A pass that
+   *  runs before the network is back is tried again within seconds. */
+  async reconnect(): Promise<void> {
+    for (const email of [...this.retries.keys()]) this.stopRetrying(email)
+    if (this.watching) {
+      this.stopWatching()
+      this.watchAll()
+    }
+    await this.syncAll()
+  }
+
+  /** Soon after a pass that couldn't get through, and a little later each time it fails again. */
+  private retrySoon(email: string): void {
+    const retry = this.retries.get(email) ?? { tries: 0, timer: null }
+    this.retries.set(email, retry)
+    const wait = PASS_RETRY_MS[retry.tries]
+    if (retry.timer || wait === undefined) return
+    retry.tries++
+    retry.timer = setTimeout(() => {
+      retry.timer = null
+      background(this.syncOne(email))
+    }, wait)
+    retry.timer.unref?.()
+  }
+
+  /** The server answered, so saying it can't be reached is out of date. Anything else it said stays
+   *  until a pass shows otherwise. */
+  private reached(email: string): void {
+    const status = this.status.get(email)
+    if (!status?.error || status.error !== unreachable(this.serviceName(email))) return
+    status.error = null
+    this.deps.changed()
+  }
+
+  /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
+  private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
+    this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
+  }
+
+  private stopRetrying(email: string): void {
+    const retry = this.retries.get(email)
+    if (retry?.timer) clearTimeout(retry.timer)
+    this.retries.delete(email)
+  }
+
   private async syncOne(email: string): Promise<void> {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
-    if (status.syncing) return
+    // Asked for while one runs, by waking, the window coming back or the button, it goes again once
+    // that one ends: the one running may be stuck on a connection that died, and dropping this left
+    // its error up until the next three-minute pass.
+    if (status.syncing) return void this.syncAgain.add(email)
     status.syncing = true
     this.deps.changed()
     await this.inLane(email, async () => {
@@ -614,8 +799,8 @@ export class MailService {
 
   stopWatching(): void {
     this.watching = false
-    if (this.rewatch) clearTimeout(this.rewatch)
-    this.rewatch = null
+    for (const { timer } of this.rewatches.values()) if (timer) clearTimeout(timer)
+    this.rewatches.clear()
     for (const watch of this.watchers.values()) this.endWatch(watch)
     this.watchers.clear()
   }
@@ -632,6 +817,8 @@ export class MailService {
     if (!open || !this.watching || this.watchers.has(email)) return
     const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
+    const started = performance.now()
+    let up = false
     // Mail landing, leaving the inbox, or read or flagged elsewhere: each is a reason to look, and
     // what's said in one burst is one look.
     const changed = (): void => {
@@ -648,7 +835,16 @@ export class MailService {
       const login = await this.login(email)
       if (mine.stopped || !this.emails().includes(email)) return
       mine.watcher = open(this.config(email), login)
-      await mine.watcher.watch(changed)
+      await mine.watcher.watch(changed, () => {
+        up = true
+        if (mine.stopped) return
+        // Back after being lost: the server only tells of what happens from now on, so what landed
+        // meanwhile is looked for now rather than at the next pass.
+        const again = this.rewatches.has(email)
+        this.rewatches.delete(email)
+        this.reached(email)
+        if (again) changed()
+      })
     }
     const lost = (): void => {
       // A watch that failed partway, signed in but unable to open the inbox say, still holds its
@@ -657,14 +853,22 @@ export class MailService {
       if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email) || this.rewatch) return
-      this.rewatch = setTimeout(() => {
-        this.rewatch = null
-        this.emails().forEach((each) => this.watch(each))
-      }, WATCH_RETRY_MS)
-      this.rewatch.unref?.()
+      if (!this.watching || !this.emails().includes(email)) return
+      const rewatch = this.rewatches.get(email) ?? { losses: 0, timer: null }
+      this.rewatches.set(email, rewatch)
+      if (rewatch.timer) return
+      const wait = WATCH_RETRY_MS[Math.min(rewatch.losses, WATCH_RETRY_MS.length - 1)]
+      rewatch.losses++
+      rewatch.timer = setTimeout(() => {
+        rewatch.timer = null
+        if (this.emails().includes(email)) this.watch(email)
+      }, wait)
+      rewatch.timer.unref?.()
     }
-    void run().catch(() => undefined).finally(lost)
+    const ended = (error: unknown): void => {
+      if (!mine.stopped && (up || error)) this.logFailure(email, 'watch', error, started, up)
+    }
+    void run().then(() => ended(null), ended).finally(lost)
   }
 
   private async pass(email: string): Promise<void> {
@@ -694,6 +898,7 @@ export class MailService {
     const senders: string[] = []
     const blocked: number[] = []
     let source: MailSource | null = null
+    const started = performance.now()
     try {
       source = this.deps.openSource(config, await this.login(email))
       await source.connect()
@@ -714,12 +919,20 @@ export class MailService {
         stopped: removed,
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         parse: this.deps.parse,
-        added: (mail, id, holdFrom) => {
+        receiver: receiverOf(config, own),
+        ruling: (mail, remote, labels, holdFrom) => this.ruled(email, mail, remote, labels, holdFrom),
+        added: (mail, id, holdFrom, ruled) => {
+          if (ruled) this.followRules(email, id, mail.arrived, ruled)
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           const current = this.settings() // a sender blocked or muted meanwhile counts
           if (isVip(mail.from.address, current.blocked)) return void blocked.push(id)
           if (mail.from.address) senders.push(mail.from.address)
-          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
+          // Where the rules left it: filed away, or read, it isn't news.
+          const left = ruled ? this.store.visibleState(id) : null
+          if (ruled && (ruled.quiet || !left)) return
+          const labels = left?.labels ?? mail.labels
+          const seen = left?.seen ?? mail.seen
+          if (!isVip(mail.from.address, current.muted) && this.worthTelling(labels, mail.from.address, seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
@@ -731,8 +944,12 @@ export class MailService {
       await this.readDrafts(email, source, this.deps.now() - settings.backfillDays * DAY_MS, removed)
       status.syncedAt = this.deps.now()
       status.error = null
+      this.stopRetrying(email)
     } catch (e) {
-      status.error = describeFailure(e, this.serviceName(email))
+      const service = this.serviceName(email)
+      status.error = describeFailure(e, service)
+      if (!removed()) this.logFailure(email, 'sync', e, started)
+      if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
     } finally {
       await source?.close().catch(() => undefined)
       status.syncing = false
@@ -750,6 +967,105 @@ export class MailService {
     if (senders.length > 0) this.deps.noticed?.(unique(senders.map((a) => a.toLowerCase())))
     if (fresh > 0) this.deps.landed?.(fresh, fresh === 1 ? preview : undefined)
     if (summed.length > 0) this.deps.summarized?.(summed.length, unique(summed))
+  }
+
+  /** The rules that are on, in their order: read again only once they change. */
+  private rulesOn: MailRule[] | null = null
+
+  private activeRules(email?: string): MailRule[] {
+    this.rulesOn ??= this.store.rules().filter((rule) => rule.on)
+    return this.rulesOn.filter((rule) => email === undefined || !rule.account || rule.account === email)
+  }
+
+  /** What the rules make of a message a sync is storing: only new mail in the inbox, from after the
+   *  account was added, that they haven't looked at before. A blocked sender's is going to Trash
+   *  whatever they say. */
+  private ruled(email: string, mail: ParsedMail, remote: RemoteMail, labels: string[], holdFrom: number): Ruled | null {
+    if (remote.arrived <= holdFrom || !labels.includes(INBOX) || binOf(labels) > 0) return null
+    if (isVip(mail.from.address, this.settings().blocked)) return null
+    const rules = this.activeRules(email)
+    if (rules.length === 0) return null
+    const key = ruleKey(remote, mail)
+    if (this.store.ruledAlready(email, key, remote.arrived)) return null
+    const ruling = decide(rules, ruleMail(mail))
+    const { gmail } = this.config(email)
+    return { key, changes: changesOf(ruling, gmail, this.folders(email)), hold: ruling.hold, quiet: ruling.mute }
+  }
+
+  /** A message the rules have looked at is noted, and what they asked of the server goes into the
+   *  queue as any change does, so it's shown at once, waits out being offline, and is put back if
+   *  the server won't have it. One that would change nothing isn't sent. */
+  private followRules(email: string, id: number, arrived: number, ruled: Ruled): void {
+    this.store.markRuled(email, ruled.key, arrived)
+    const group = this.nextGroup()
+    for (const action of ruled.changes) {
+      const state = this.store.visibleState(id)
+      if (!state) return
+      if (changesSomething(state, action)) this.change(email, [state], action, group, 0)
+    }
+  }
+
+  /** The mail rules, in their order. */
+  mailRules(): MailRule[] {
+    return this.store.rules()
+  }
+
+  /** A rule kept, new or changed, for an account that's here or for all of them. A rule left with no
+   *  name is named by its place. */
+  saveRule(edit: RuleEdit): MailRule {
+    const rules = this.store.rules()
+    const old = edit.id === undefined ? undefined : rules.find((rule) => rule.id === edit.id)
+    if (edit.id !== undefined && !old) throw new Error('That rule is gone.')
+    if (!old && rules.length >= MAX_RULES) throw new Error(`${MAX_RULES} rules at most.`)
+    if (edit.account && !this.emails().includes(edit.account) && edit.account !== old?.account) throw new Error('That account is gone.')
+    const name = edit.name || old?.name || `Rule ${rules.length + 1}`
+    const id = this.store.saveRule({ ...edit, name })
+    if (id === null) throw new Error('That rule is gone.')
+    this.rulesOn = null
+    this.deps.changed()
+    return { ...edit, name, id }
+  }
+
+  deleteRule(id: number): void {
+    this.store.deleteRule(id)
+    this.rulesOn = null
+    this.deps.changed()
+  }
+
+  /** A rule to [to] in the order, counting from 0. */
+  moveRule(id: number, to: number): void {
+    this.store.moveRule(id, to)
+    this.rulesOn = null
+    this.deps.changed()
+  }
+
+  /** Apply now: a rule, on or off, over the inbox kept here, as if each message had just come. What
+   *  goes to the server waits out Undo, as anything else that takes mail away does, and Undo puts it
+   *  all back. What only matters as mail arrives (the Summary, straight through, muting) is left
+   *  out: it's here already. */
+  applyRule(id: number): RuleApplied {
+    const rule = this.store.rules().find((r) => r.id === id)
+    if (!rule) throw new Error('That rule is gone.')
+    const now = this.deps.now()
+    const group = this.nextGroup()
+    const wait = this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS
+    const ruling = rulingOf(rule)
+    const changed = new Set<number>()
+    const did = new Set<RuleApplied['did']>()
+    for (const email of this.emails().filter((e) => !rule.account || rule.account === e)) {
+      const matched: number[] = []
+      for (const row of this.store.ruleRows(email, now)) if (ruleHolds(rule, row.mail)) matched.push(row.id)
+      if (matched.length === 0) continue
+      for (const action of changesOf(ruling, this.config(email).gmail, this.folders(email))) {
+        const states = matched.map((m) => this.store.visibleState(m)).filter((s) => s !== null).filter((s) => changesSomething(s, action))
+        if (states.length === 0) continue
+        this.change(email, states, action, group, wait)
+        states.forEach((s) => changed.add(s.id))
+        did.add(doneBy(action))
+      }
+    }
+    const order: RuleApplied['did'][] = ['trash', 'move', 'label', 'archive', 'read', 'flag', 'important']
+    return { count: changed.size, undo: changed.size > 0 ? group : null, did: order.find((kind) => did.has(kind)) ?? null }
   }
 
   /** What decides when mail lands: the batches, who comes straight through, and the Summary. Live,
@@ -796,20 +1112,22 @@ export class MailService {
     const senders = landed.filter((mail) => !mail.summary)
     const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
-    const woken = this.store.wokenBetween(this.lastTick, now)
+    // Back as a snooze comes back, and told of the same way.
+    const woken = this.store.wokenBetween(this.lastTick, now) + this.store.settleReminders(now, (email) => this.ownAddresses(email))
     this.lastTick = now
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
       const muted = this.settings().muted
       const quiet = this.quietOther()
-      const loud = senders.filter((mail) => !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
+      const loud = senders.filter((mail) => !mail.quiet && !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
       if (loud > 0) this.deps.landed?.(loud)
       // A Summary is announced as one, apart from the batch.
-      const told = summed.filter((mail) => !isVip(mail.from, muted))
+      const told = summed.filter((mail) => !mail.quiet && !isVip(mail.from, muted))
       if (told.length > 0) this.deps.summarized?.(told.length, unique(told.map((mail) => mail.name || mail.from)))
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
+    this.discardThrown()
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email)))
@@ -829,19 +1147,32 @@ export class MailService {
   }
 
   /** Done here at once, then sent to the server: straight away, or after Undo's had its chance for
-   *  the ones that take mail out of sight. It survives a restart, and waits out being offline. */
-  act(targets: ThreadRef[], action: MailAction): number {
+   *  the ones that take mail out of sight and any other the page offers Undo for ([undoable]). A
+   *  change already sent can't be called back, so an Undo offered for one that went at once would do
+   *  nothing. It survives a restart, and waits out being offline. */
+  act(targets: ThreadRef[], action: MailAction, undoable = false): number {
+    return this.actAfter(targets, action, takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0)
+  }
+
+  /** The same, waiting [wait] before the server hears of it. */
+  private actAfter(targets: ThreadRef[], action: MailAction, wait: number): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
       if (action.kind === 'label' && !gmail) throw new Error('Only Gmail has labels. Use Move instead.')
       if (action.kind === 'move' && !this.folders(email).includes(action.to)) throw new Error("That folder isn't there any more.")
-      const states = mine.flatMap((ref) => touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail))
+      const states = mine.flatMap((ref) => {
+        const found = touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail)
+        // In the inbox only because a reminder brought it back, it's archived by letting the reminder
+        // go: on a service with folders, archiving would move your own copy out of Sent.
+        return action.kind === 'archive' && this.store.reminder(ref)?.fired && !found.some((s) => s.labels.includes(INBOX)) ? [] : found
+      })
       this.change(email, states, action, group, wait)
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
+      if (endsSnooze(action)) mine.forEach((ref) => this.store.unremind(ref))
+      if (action.kind === 'read') mine.forEach((ref) => this.store.seeReminder(ref))
     }
     return group
   }
@@ -875,11 +1206,14 @@ export class MailService {
     const due = this.store.dueActions(email, this.deps.now())
     if (due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const item of due) await this.perform(writer, email, item)
     } catch (e) {
+      this.logFailure(email, 'changes', e, started)
       // Not reached, so nothing is lost: it all goes again later, in the same order.
       this.statusOf(email).error = describeFailure(e, this.serviceName(email))
       const later = this.deps.now() + RETRY_MS
@@ -946,6 +1280,23 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** A message you sent, and its thread, come back to the inbox at [until] if nobody else has
+   *  written in it since. All kept here, as a snooze is: the server isn't told. */
+  remind(id: number, until: number): void {
+    const now = this.deps.now()
+    if (until <= now) throw new Error('Pick a time in the future.')
+    const message = this.store.message(id, now)
+    if (!message) throw new Error("That message isn't here any more.")
+    if (!this.ownAddresses(message.account).includes(message.from.address.toLowerCase())) throw new Error('Only for mail you sent.')
+    this.store.remind({ account: message.account, thread: message.thread, messageId: message.messageId }, message.date, until)
+    this.deps.changed()
+  }
+
+  unremind(targets: ThreadRef[]): void {
+    targets.forEach((ref) => this.store.unremind(ref))
+    this.deps.changed()
+  }
+
   /** Only this laptop ever knew what was opened, so this is all there is to forget. */
   clearRecent(): void {
     this.store.forgetSeen()
@@ -996,12 +1347,17 @@ export class MailService {
       spam: this.store.spamCount(now),
       assistant: this.store.assistantCounts(now),
       summary: {
-        next: summary.senders.length > 0 ? nextSummaryAfter(now, summary) : null,
+        next: summary.senders.length > 0 || this.feedsSummary() ? nextSummaryAfter(now, summary) : null,
         held: this.store.summaryHeld(now),
         unread: this.store.summaryUnread(now),
         latest: this.store.latestSummary(now)
       }
     }
+  }
+
+  /** A rule that's on can hold mail for the Summary with nobody in it. */
+  private feedsSummary(): boolean {
+    return this.activeRules().some((rule) => rule.actions.some((a) => a.kind === 'summary'))
   }
 
   private nextBatch(now: number): number | null {
@@ -1010,8 +1366,21 @@ export class MailService {
     return this.store.nextRelease(now) ?? nextBatchAfter(now, batch.times)
   }
 
-  list(query: ListQuery, limit?: number): ThreadRow[] {
-    return this.store.list(query, this.deps.now(), limit)
+  /** A search shows what's kept here first, and below it what the servers find from before the
+   *  keeping window, once they've answered. Leaving the search lets go of what they found. */
+  list(query: ListQuery, limit = 200): ThreadRow[] {
+    const found = this.store.list(query, this.deps.now(), limit)
+    if (query.kind !== 'search') {
+      this.old.leave()
+      return found
+    }
+    return [...found, ...this.old.rows(query.text, found, found.length < limit)]
+  }
+
+  /** Threads a search found on the server, from before the keeping window, are fetched before
+   *  they're opened or acted on. Anything else is here already, and this does nothing. */
+  reach(targets: ThreadRef[]): Promise<void> {
+    return this.old.bring(targets)
   }
 
   /** Opening a thread reads it, here and on the server, unless [read] is false (Settings can ask for a
@@ -1021,22 +1390,32 @@ export class MailService {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
+    if (messages.length > 0) this.store.useOutside({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
-    for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
-    return messages
+    if (read) this.store.seeReminder({ account, thread })
+    const cut = this.store.filesCut(messages.map((m) => m.id))
+    if (cut.length > 0) background(this.listFiles(cut))
+    const remind = this.store.reminder({ account, thread })
+    return remind ? messages.map((m) => ({ ...m, remind })) : messages
   }
 
   /** A message cut short when it was stored lists only the files in the part that was kept. Once
    *  it's opened, the list is made again from the whole message, so each file can be opened, saved
-   *  and forwarded. Failing says nothing: the next look tries again. */
-  private async listFiles(id: number): Promise<void> {
-    if (this.listing.has(id)) return
-    this.listing.add(id)
-    try {
-      await this.wholeAttachments(id)
-      this.deps.changed()
-    } finally {
-      this.listing.delete(id)
+   *  and forwarded. Failing says nothing: the next look tries again. One message at a time: each
+   *  opens a connection, and a thread of scans opening them all at once came near the fifteen
+   *  Gmail allows, past which it turns sign-ins away. */
+  private async listFiles(ids: number[]): Promise<void> {
+    const mine = ids.filter((id) => !this.listing.has(id))
+    for (const id of mine) this.listing.add(id)
+    for (const id of mine) {
+      try {
+        await this.wholeAttachments(id)
+        this.deps.changed()
+      } catch {
+        // Tried again the next time it's opened.
+      } finally {
+        this.listing.delete(id)
+      }
     }
   }
 
@@ -1057,7 +1436,7 @@ export class MailService {
           await source.open(box)
           const header = await source.header(message.uid)
           if (header) {
-            found = await detailsOf(header)
+            found = await detailsOf(header, receiverOf(this.config(message.account)).checks)
             this.store.saveDetails(id, found)
           }
         }
@@ -1109,9 +1488,11 @@ export class MailService {
       const box = source.mailboxes().find((b) => b.id === message.box)
       if (box) {
         await source.open(box)
-        whole = await source.whole(message.uid)
+        // As much as a service takes in one message, and no more, whatever a server would send.
+        whole = await source.whole(message.uid, MAX_WHOLE)
       }
     } catch (e) {
+      if (e instanceof TooBig) throw e
       throw new Error(describeFailure(e, this.serviceName(message.account)))
     } finally {
       await source?.close().catch(() => undefined)
@@ -1125,7 +1506,7 @@ export class MailService {
     const message = this.store.message(id, this.deps.now())
     const to = message?.unsubscribeTo
     if (!message || !to) throw new Error('This sender gives no way to unsubscribe.')
-    if (to.oneClick && to.web && isPublicHttps(to.web)) {
+    if (to.oneClick && to.web && isPublicHttps(to.web) && (await this.leadsOut(new URL(to.web).hostname))) {
       try {
         const response = await this.post(to.web, {
           method: 'POST',
@@ -1146,6 +1527,18 @@ export class MailService {
     const start = parseMailto(to.mail ?? '')
     const draft = await this.startDraft({ ...start, account: message.account, subject: start.subject || 'Unsubscribe' })
     return { kind: 'draft', draft }
+  }
+
+  /** Whether a public-looking name resolves only to public addresses: one leading to this laptop, its
+   *  network or the tailnet gets no request from here. One that can't be resolved, or with nothing to
+   *  resolve it with, gets none either. */
+  private async leadsOut(host: string): Promise<boolean> {
+    try {
+      const found = (await this.deps.addresses?.(host)) ?? []
+      return found.length > 0 && !found.some(isPrivateAddress)
+    } catch {
+      return false
+    }
   }
 
   private leftBehind(address: string): void {
@@ -1219,7 +1612,12 @@ export class MailService {
   }
 
   drafts(): Draft[] {
-    return this.store.drafts()
+    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id)).map((draft) => this.offered(draft))
+  }
+
+  /** What the composer is to offer: Send & Archive, while the thread it answers is in the inbox. */
+  private offered(draft: Draft): Draft {
+    return { ...draft, archivable: draft.about !== undefined && this.store.inInbox(draft.about, this.deps.now()) }
   }
 
   async startDraft(start: DraftStart): Promise<Draft> {
@@ -1238,17 +1636,19 @@ export class MailService {
     }
     const message = this.store.message(start.message, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
+    const about = { account: message.account, thread: message.thread }
     if (start.kind === 'forward') {
       const id = this.store.addDraft({
-        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward')
+        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward'), about
       })
       // A cut message may have files its stored list doesn't know about.
       if (message.attachments.length > 0 || message.truncated) await this.carryAttachments(id, message.id)
-      return this.draftOrThrow(id)
+      return this.offered(this.draftOrThrow(id))
     }
     const own = this.ownAddresses(message.account)
-    return this.draftOrThrow(this.store.addDraft({
+    return this.offered(this.draftOrThrow(this.store.addDraft({
       ...base,
+      about,
       account: message.account,
       // Answered from whichever of your addresses it came to.
       from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
@@ -1258,7 +1658,7 @@ export class MailService {
       quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
       inReplyTo: message.messageId,
       references: `${message.references} ${message.messageId}`.trim()
-    }))
+    })))
   }
 
   private draftOrThrow(id: number): Draft {
@@ -1279,6 +1679,36 @@ export class MailService {
     } catch {
       this.store.saveDraft({ ...draft, error: "The attachments couldn't be fetched, so they're not on this forward." })
     }
+  }
+
+  /** A reply to, or a forward of, a message opened from a file, made as one kept here would make it:
+   *  from the account it was sent to when that's yours, or the first. Nothing of it is kept, so a
+   *  forward takes its files from [files]. */
+  startDraftFromFile(message: MessageDetail, files: WholeAttachment[], kind: 'reply' | 'replyAll' | 'forward'): Draft {
+    const sentTo = [...message.to, ...message.cc].map((a) => this.ownerOf(a.address)).find(Boolean)
+    const account = sentTo ?? this.emails()[0]
+    if (!account) throw new Error('Add an account first.')
+    const base = {
+      account, from: '', to: '', cc: '', bcc: '', subject: '', html: '', text: '', quote: null, inReplyTo: '', references: '',
+      files: [], updated: this.deps.now()
+    }
+    if (kind === 'forward') {
+      const id = this.store.addDraft({ ...base, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward') })
+      const draft = this.draftOrThrow(id)
+      for (const found of files) draft.files.push(this.deps.files.fromBytes(id, found.name, found.type, found.content))
+      this.store.saveDraft(draft)
+      return this.draftOrThrow(id)
+    }
+    const own = this.ownAddresses(account)
+    return this.draftOrThrow(this.store.addDraft({
+      ...base,
+      from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
+      ...replyTargets(message, own, kind === 'replyAll'),
+      subject: replySubject(message.subject),
+      quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
+      inReplyTo: message.messageId,
+      references: `${message.references} ${message.messageId}`.trim()
+    }))
   }
 
   /** Kept here at once, and in the account's Drafts once it has been left alone a moment. Saving
@@ -1307,14 +1737,41 @@ export class MailService {
     else this.holds.delete(id)
   }
 
-  discardDraft(id: number): void {
+  /** Thrown away. With Undo on offer ([undoable]) it leaves Drafts at once and goes for good, its
+   *  copy on the server too, once Undo has had its time; until then nothing of it changes anywhere,
+   *  and a message waiting to go waits as a draft instead, so it can't leave meanwhile. */
+  discardDraft(id: number, undoable = false): void {
     const draft = this.store.draft(id)
     if (draft?.state === 'sending') throw new Error('This is already on its way.')
+    if (undoable && draft) {
+      if (draft.state === 'queued') this.store.saveDraft({ ...draft, state: 'draft', sendAt: null })
+      this.discarding.set(id, { at: this.deps.now() + this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS, was: draft })
+      this.deps.changed()
+      return
+    }
+    this.discarding.delete(id)
     this.letCopyGo(id)
     this.store.deleteDraft(id)
     this.deps.files.clear(id)
     this.dirtySince.delete(id)
+    if (draft) this.sendFailureDealt(draft.account)
     this.deps.changed()
+  }
+
+  /** Undo for a draft thrown away: it's back as it was, waiting to go again if it was. */
+  undiscardDraft(id: number): void {
+    const thrown = this.discarding.get(id)
+    if (!thrown) throw new Error('Too late: that draft has gone.')
+    this.discarding.delete(id)
+    const draft = this.store.draft(id)
+    if (draft && thrown.was.state === 'queued') this.store.saveDraft({ ...draft, state: 'queued', sendAt: thrown.was.sendAt })
+    this.deps.changed()
+  }
+
+  /** Drafts thrown away whose Undo has run out, or all of them when the app is closing. */
+  private discardThrown(all = false): void {
+    const now = this.deps.now()
+    for (const [id, { at }] of this.discarding) if (all || at <= now) this.discardDraft(id)
   }
 
   /** The draft's copy on the server is to go, now or as soon as the server can be reached, and the
@@ -1331,7 +1788,7 @@ export class MailService {
    *  for a moment or changing for a while. All of them when the app is closing. */
   private dueDrafts(email: string, all = false): DraftLink[] {
     const now = this.deps.now()
-    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed &&
+    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed && !this.discarding.has(d.id) &&
       (all || now - d.updated >= DRAFT_QUIET_MS || now - (this.dirtySince.get(d.id) ?? d.updated) >= DRAFT_MOST_MS))
   }
 
@@ -1359,13 +1816,16 @@ export class MailService {
     const due = this.dueDrafts(email, all)
     if (copies.length === 0 && due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const copy of copies) await this.deleteCopy(writer, email, copy)
       for (const { id } of due) await this.pushDraft(writer, email, id)
       this.draftsRetryAt.delete(email)
-    } catch {
+    } catch (e) {
+      this.logFailure(email, 'drafts', e, started)
       this.draftsRetryAt.set(email, this.deps.now() + RETRY_MS)
     } finally {
       await writer?.close().catch(() => undefined)
@@ -1406,7 +1866,7 @@ export class MailService {
     const messageId = draftMessageId(sender)
     let raw: Buffer
     try {
-      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now()), messageId)
+      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now(), this.signedWith(draft)), messageId)
     } catch {
       // Something of it can't be read here, a file gone from the profile say: trying again won't
       // help, and it mustn't hold up the drafts after it.
@@ -1474,14 +1934,15 @@ export class MailService {
       const lost = new Map(this.store.draftLinks(email).filter((d) => !d.copy && d.messageId).map((d) => [d.messageId, d]))
       const unknown = recent.filter((uid) => !known.has(uid) && !this.tooBig.has(`${email}:${info.uidValidity}:${uid}`))
       const own = this.ownAddresses(email)
-      const { signature } = this.identity(email)
+      // Any of them may be at the end of words that went up from here.
+      const signature = this.settings().signatures.map((s) => s.text)
       for await (const remote of source.fetch(unknown, MAX_DRAFT_SOURCE)) {
         if (removed()) return
         const cut = remote.size > MAX_DRAFT_SOURCE
         const parsed = await parseDraft(remote.source, cut)
         // Bigger than can be sent from here, it stays where it is: brought in without its files and
         // changed here, it would go back up without them.
-        if (cut || parsed.files.reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
+        if (cut || [...parsed.files, ...parsed.pictures].reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
           this.tooBig.add(`${email}:${info.uidValidity}:${remote.uid}`)
           continue
         }
@@ -1504,9 +1965,15 @@ export class MailService {
   }
 
   private keepImported(email: string, parsed: Awaited<ReturnType<typeof parseDraft>>, copy: DraftCopy, saved: number,
-    own: string[], signature: string): void {
-    const id = this.store.addDraft({ account: email, ...importedDraft(parsed, email, own, signature), files: [], updated: saved }, copy)
-    const files = parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content))
+    own: string[], signature: string[]): void {
+    const { pictures, ...imported } = importedDraft(parsed, email, own, signature)
+    const id = this.store.addDraft({ account: email, ...imported, files: [], updated: saved }, copy)
+    const files = [
+      ...parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content)),
+      // Only a picture by its own bytes goes in the words.
+      ...pictures.filter((picture) => pictureType(picture.content) === picture.type)
+        .map((picture) => ({ ...this.deps.files.fromBytes(id, safeFileName(picture.name), picture.type, picture.content), cid: picture.cid }))
+    ]
     if (files.length > 0) this.store.saveDraft({ ...this.draftOrThrow(id), files })
   }
 
@@ -1533,8 +2000,22 @@ export class MailService {
     return this.draftOrThrow(id)
   }
 
-  addFileBytes(id: number, name: string, type: string, bytes: Buffer): Draft {
-    return this.withFile(id, () => this.deps.files.fromBytes(id, name, type, bytes))
+  /** With [inline], a picture for the words, if its own bytes say it's one that goes there. */
+  addFileBytes(id: number, name: string, type: string, bytes: Buffer, inline = false): Draft {
+    const picture = inline ? pictureType(bytes) : null
+    return this.withFile(id, () => {
+      const file = this.deps.files.fromBytes(id, name, picture ?? type, bytes)
+      return picture ? { ...file, cid: `${file.id}@xrnmail` } : file
+    })
+  }
+
+  /** A picture in a draft's words, for the composer to show: only ever a picture, by its own bytes. */
+  draftPicture(id: number, file: string): string {
+    const found = this.draftOrThrow(id).files.find((f) => f.id === file && f.cid)
+    const bytes = found ? this.deps.files.read(id, found) : null
+    const type = bytes ? pictureType(bytes) : null
+    if (!bytes || !type) throw new Error("That picture isn't here any more.")
+    return `data:${type};base64,${bytes.toString('base64')}`
   }
 
   removeFile(id: number, file: string): Draft {
@@ -1549,7 +2030,23 @@ export class MailService {
   private outgoingFrom(draft: Draft): ReturnType<typeof outgoing> {
     const from = (draft.from || draft.account).toLowerCase()
     if (!this.ownAddresses(draft.account).includes(from)) throw new Error('That address isn\'t on this account.')
-    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now())
+    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now(), this.signedWith(draft))
+  }
+
+  /** The one chosen for it, or the one its From address has. */
+  private signedWith(draft: Draft): SignedWith {
+    const settings = this.settings()
+    const found = draft.signature !== undefined ? settings.signatures.find((s) => s.id === draft.signature) ?? null : signatureFor(settings, draft.account, draft.from)
+    return found ? { html: found.html, text: found.text } : null
+  }
+
+  /** A picture taken out of the words stays on the draft while it's written, so Undo in the editor
+   *  can put it back; once it's sent, only the ones the words show are kept. */
+  private shownFiles(draft: Draft): Draft['files'] {
+    const shown = new Set(placePictures(draft.html, draft.files, () => '').pictures.map((picture) => picture.cid))
+    const [kept, gone] = [draft.files.filter((f) => !f.cid || shown.has(f.cid)), draft.files.filter((f) => f.cid && !shown.has(f.cid))]
+    gone.forEach((file) => this.deps.files.remove(draft.id, file))
+    return kept
   }
 
   /** Nothing leaves here: it waits in the queue so Undo has something to call back. */
@@ -1560,12 +2057,23 @@ export class MailService {
     const now = this.deps.now()
     if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
     const sendAt = at ?? now + this.settings().undoSeconds * 1000
-    this.store.saveDraft({ ...draft, state: 'queued', sendAt, error: null, updated: now })
+    if (draft.remind !== undefined && draft.remind <= sendAt) throw new Error('Pick a reminder after it goes.')
+    this.store.saveDraft({ ...draft, files: this.shownFiles(draft), state: 'queued', sendAt, error: null, updated: now })
     // A message on its way isn't a draft: left in Drafts, another device could send it as well.
     this.letCopyGo(id)
     this.dirtySince.delete(id)
     this.deps.changed()
     return sendAt
+  }
+
+  /** Sent as Send sends it, and the thread it's about archived at once here. The server hears of the
+   *  archiving only once Undo of the send has run out too, so Undo can bring the thread back. */
+  sendAndArchive(id: number): { when: number; undo: number } {
+    const { about } = this.draftOrThrow(id)
+    const when = this.send(id)
+    if (!about) return { when, undo: 0 }
+    const { undoSeconds, undoActionSeconds } = this.settings()
+    return { when, undo: this.actAfter([about], { kind: 'archive' }, Math.max(undoSeconds, undoActionSeconds) * 1000 + UNDO_GRACE_MS) }
   }
 
   /** Back to being a draft, it goes up again as one. */
@@ -1586,6 +2094,7 @@ export class MailService {
       this.store.saveDraft({ ...draft, sendAt: now })
     }
     this.store.hurryActions(now)
+    this.discardThrown(true)
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))
@@ -1634,10 +2143,12 @@ export class MailService {
     }
     const account = due()?.account
     if (!account) return null
+    const started = performance.now()
     let login: Login
     try {
       login = await this.login(account)
     } catch (e) {
+      this.logFailure(account, 'send', e, started)
       const draft = due()
       if (!draft) return null
       // Nothing has left. A lost connection or a keyring not open yet can wait; a sign-in that's gone
@@ -1647,30 +2158,61 @@ export class MailService {
       this.store.saveDraft(gone
         ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
         : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: waiting })
+      if (gone) this.note(draft.account, SEND_FAILED)
       this.deps.changed()
       return null
     }
+    // Signed in before it's marked as sending, since failing that proves nothing left: it stays as it
+    // was, queued for the next try. Marked first, a quit during a slow connect came back as "check
+    // Sent" with nothing sent. The same connection sends it.
+    const sender = this.deps.openSender(this.config(account), login)
+    try {
+      await sender.check()
+    } catch (e) {
+      sender.close()
+      this.logFailure(account, 'send', e, started)
+      const draft = due()
+      if (!draft) return null
+      this.store.saveDraft(e instanceof NeverLeft
+        ? { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' }
+        : { ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+      if (!(e instanceof NeverLeft)) this.note(draft.account, SEND_FAILED)
+      this.deps.changed()
+      return null
+    }
+    this.reached(account)
     // Written down first: if the app dies here, this comes back as "check Sent", not sent twice. Moved
     // to another account meanwhile, it waits for the next turn and a sign-in of its own.
     const draft = this.store.claimDraft(id, account, this.deps.now())
-    if (!draft) return null
+    if (!draft) {
+      sender.close()
+      return null
+    }
     this.deps.changed()
     const config = this.config(draft.account)
-    const sender = this.deps.openSender(config, login)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
+      if (draft.remind !== undefined) {
+        // A reply's thread is known; anything else's is, once its copy in Sent is here.
+        const thread = draft.inReplyTo && draft.about?.account === draft.account ? draft.about.thread : ''
+        this.store.remind({ account: draft.account, thread, messageId: copy.messageId }, this.deps.now(), draft.remind)
+      }
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
+      this.sendFailureDealt(draft.account)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
       return draft.account
     } catch (e) {
+      if (!(e instanceof Unmade)) this.logFailure(draft.account, 'send', e, started)
       if (e instanceof NeverLeft) {
         this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
       } else if (e instanceof Unmade) {
         // Nothing was handed over, so it's said plainly, not as "check Sent".
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: "One of its attachments can't be read on this laptop any more, so nothing was sent. Remove it and send again." })
+        this.note(draft.account, SEND_FAILED)
       } else {
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+        this.note(draft.account, SEND_FAILED)
       }
       return null
     } finally {
@@ -1679,15 +2221,24 @@ export class MailService {
     }
   }
 
+  /** "Sending failed" stays beside the account while one of its drafts is still failed. */
+  private sendFailureDealt(email: string): void {
+    if (this.notes.get(email)?.text !== SEND_FAILED) return
+    if (!this.store.drafts().some((d) => d.account === email && d.state === 'failed')) this.notes.delete(email)
+  }
+
   /** The message has gone by now, so a failure here can only cost the copy, never send it again. */
   private async fileCopy(email: string, raw: Buffer, messageId: string): Promise<void> {
     await this.inLane(email, async () => {
       let writer: MailWriter | null = null
+      const started = performance.now()
       try {
         writer = this.deps.openWriter(this.config(email), await this.login(email))
         await writer.connect()
+        this.reached(email)
         await writer.fileSent(raw, messageId)
-      } catch {
+      } catch (e) {
+        this.logFailure(email, 'sent', e, started)
         this.note(email, 'Sent, but no copy could be kept in Sent.')
       } finally {
         await writer?.close().catch(() => undefined)
@@ -1707,7 +2258,8 @@ export class MailService {
       const batch = { ...DEFAULT_SETTINGS.batch, ...saved.batch }
       // Saved before there was a switch: no times meant mail came as it arrived, and still does.
       batch.live = saved.batch?.live === true || batch.times.length === 0
-      const merged = { ...DEFAULT_SETTINGS, ...saved, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
+      const signed = saved.signatures === undefined ? migratedSignatures(saved.identities ?? {}) : {}
+      const merged = { ...DEFAULT_SETTINGS, ...saved, ...signed, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
@@ -1773,10 +2325,13 @@ export class MailService {
     this.saveSettings({
       ...settings,
       identities,
+      signatures: (patch.signatures ?? settings.signatures).slice(0, 50),
+      signatureFor: patch.signatureFor ?? settings.signatureFor,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
+      sound: patch.sound ?? settings.sound,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       undoActionSeconds: patch.undoActionSeconds === undefined ? settings.undoActionSeconds : clamp(patch.undoActionSeconds, 1, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,
@@ -1807,6 +2362,7 @@ export class MailService {
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
       readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
       threadOrder: patch.threadOrder === 'oldest' || patch.threadOrder === 'newest' ? patch.threadOrder : settings.threadOrder,
+      faces: patch.faces ?? settings.faces,
       // Only the times named change, so two set one after the other both stay.
       later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })
@@ -1823,6 +2379,8 @@ export class MailService {
    *  from what it last read lost one of two senders added in quick succession. */
   editSenders(list: SenderList, addresses: string[], on: boolean): void {
     if (!addresses.some((a) => a.trim())) return
+    // Your own mail blocked would go to Trash, and let through it never waits anyway.
+    if (on && (list === 'blocked' || list === 'vip') && addresses.some((a) => this.ownerOf(a))) throw new Error("That's one of your own addresses.")
     const settings = this.settings()
     const edited = (from: string[]): string[] => editedSenders(from, addresses, on)
     if (list === 'vip') return this.saveBatch({ vip: edited(settings.batch.vip) })

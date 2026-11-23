@@ -163,6 +163,51 @@ test('search finds Vietnamese without its marks', async () => {
   await expect(page.getByText('Something else')).toHaveCount(0)
 })
 
+test('mail from before what is kept is found on the server, below what is, and opens like any other', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Harbour lease 2024', from: 'Mai Tran <mai@example.com>', text: 'The signed lease is attached' }), { arrived: earlier(24 * 400) })
+  gmail.add(rawMail({ subject: 'Harbour visit', text: 'See you there' }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  await expect(list.getByText('Harbour visit')).toBeVisible()
+  await expect(list.getByText('Harbour lease 2024')).toHaveCount(0) // older than the 90 days kept
+  await page.getByLabel('Search').fill('harbour')
+  await expect(list.locator('.thread').first()).toContainText('Harbour visit')
+  await expect(list.locator('.older-head')).toHaveText('Older')
+  await expect(list.locator('.older-head + .thread')).toContainText('Harbour lease 2024')
+  await list.getByText('Harbour lease 2024').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Harbour lease 2024')
+  await expect(page.locator('.body-text')).toHaveText('The signed lease is attached')
+  await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen') // opening it read it, on the server too
+})
+
+test('the search box offers its operators as what is typed could finish, and nothing more', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Waiting to be read' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'Read already' }), { arrived: earlier(3), flags: ['\\Seen'] })
+  await signIn(run)
+  const list = page.locator('.threads')
+  const box = page.getByRole('combobox', { name: 'Search' })
+  const offered = page.getByRole('listbox', { name: 'Search operators' })
+  await box.fill('is:un')
+  await expect(offered.getByRole('option')).toHaveText(['is:unread'])
+  await box.press('ArrowDown')
+  await box.press('Enter')
+  await expect(box).toHaveValue('is:unread ')
+  await expect(offered).toHaveCount(0)
+  await expect(list.getByText('Waiting to be read')).toBeVisible()
+  await expect(list.getByText('Read already')).toHaveCount(0)
+  await box.pressSequentially('-sub')
+  await expect(offered.getByRole('option')).toHaveText(['subject:'])
+  await offered.getByRole('option').click()
+  await expect(box).toHaveValue('is:unread -subject:')
+  await expect(box).toBeFocused()
+  await box.fill('meeting notes')
+  await expect(offered).toHaveCount(0) // a plain word that's no operator's start offers nothing
+})
+
 test('recent searches: offered under the empty search box, picked with the keys, removed one at a time or all, and kept', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -311,6 +356,29 @@ test('a very long link opens like any other', async () => {
   await expect.poll(run.opened).toEqual([long])
 })
 
+// A link's words can name one place while it goes to another, and a click went there without a word.
+test('a link that says one place and goes to another asks first', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p><a id="shown" href="https://evil.example/login">https://paypal.com/login</a></p>' +
+    '<p><a id="dressed" href="https://paypal.com@evil.example/">Sign in</a></p><p><a id="plain" href="https://shop.example/sale">See the sale</a></p>'
+  gmail.add(rawMail({ subject: 'Check your account', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Check your account').click()
+  const frame = page.frameLocator('iframe.body-frame')
+  await frame.locator('#plain').click()
+  await expect.poll(run.opened).toEqual(['https://shop.example/sale'])
+  await frame.locator('#shown').click()
+  const asking = page.getByRole('dialog').filter({ hasText: 'Go to evil.example?' })
+  await expect(asking).toContainText('It shows paypal.com.')
+  await asking.getByRole('button', { name: 'Cancel' }).click()
+  await expect(asking).toHaveCount(0)
+  await frame.locator('#dressed').click()
+  await expect(asking).toContainText('It shows paypal.com.')
+  await asking.getByRole('button', { name: 'Open' }).click()
+  await expect.poll(run.opened).toEqual(['https://shop.example/sale', 'https://paypal.com@evil.example/'])
+})
+
 // While a frame's new page is being made it has no root yet, and showing the quoted text then threw,
 // with nothing to catch it, so the whole window went white.
 test('a message that can\'t be drawn leaves the window as it was, and says so in the reader alone', async () => {
@@ -369,6 +437,37 @@ test('a mailing service\'s own pictures stay, and only its open pixel goes', asy
   await expect(frame.locator('#pixel')).not.toHaveAttribute('src', /.+/)
   await expect(page.getByText('1 tracker removed')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show images' })).toBeVisible()
+})
+
+// Only an <img> with width="1" or a known address lost its picture: after Show images, width="1px",
+// max-width:1px, CSS backgrounds from the known services, a cell's background and a picture loaded
+// only when the pointer went over a link all reported the open.
+test('open pixels written in CSS, or sized in other ways, go too, and real pictures stay', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<style>a:hover{background:url(https://beacon.example/hovered)} p.hero{background:url(https://cdn.example/hero.jpg)}</style>' +
+    '<p class="hero">Spring is here.</p><a href="https://shop.example/">Shop</a>' +
+    '<img id="px1" src="https://pixel.example/a.gif" width="1px" height="1px">' +
+    '<img id="px2" src="https://pixel.example/b.gif" style="max-width:1px;max-height:1px">' +
+    '<div id="bg" style="color:#333;background-image:url(https://mandrillapp.com/track/open.php?u=1)">Hello</div>' +
+    '<table><tr><td id="cell" background="https://u1.sendgrid.net/wf/open?upn=1">Cell</td></tr></table>' +
+    '<img id="far" loading="lazy" src="https://cdn.example/far.jpg" width="300" height="200">'
+  gmail.add(rawMail({ subject: 'Spring', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Spring', { exact: true }).click()
+  const frame = page.frameLocator('iframe.body-frame')
+  await frame.getByText('Spring is here.').waitFor()
+  await expect(page.getByText('5 trackers removed')).toBeVisible()
+  await expect(frame.locator('#px1')).not.toHaveAttribute('src', /.+/)
+  await expect(frame.locator('#px2')).not.toHaveAttribute('src', /.+/)
+  await expect(frame.locator('#bg')).not.toHaveAttribute('style', /mandrillapp/)
+  await expect(frame.locator('#bg')).toHaveAttribute('style', /color/)
+  await expect(frame.locator('#cell')).not.toHaveAttribute('background', /.*/)
+  await expect(frame.locator('#far')).toHaveAttribute('src', 'https://cdn.example/far.jpg')
+  await expect(frame.locator('#far')).not.toHaveAttribute('loading', /.*/)
+  const css = await frame.locator('body style').textContent()
+  expect(css).not.toContain('beacon.example')
+  expect(css).toContain('https://cdn.example/hero.jpg')
 })
 
 test('images stay blocked on the next message', async () => {
@@ -509,6 +608,19 @@ test('a picture that never comes leaves the message shown and working, and one t
     for (const response of waiting.values()) response.destroy()
     web.close()
   }
+})
+
+test('a plain HTML message of paragraphs shows to its last line', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p>Are you still on for Friday?</p><p>Bring the tickets.</p><p id="last">See you at seven.</p>'
+  gmail.add(rawMail({ subject: 'Friday', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Friday', { exact: true }).click()
+  const last = page.frameLocator('iframe.body-frame').locator('#last')
+  await last.waitFor()
+  // The frame is as tall as the message: its last line ends inside it, not under its edge.
+  await expect.poll(() => last.evaluate((el) => window.innerHeight - el.getBoundingClientRect().bottom)).toBeGreaterThanOrEqual(0)
 })
 
 /** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */

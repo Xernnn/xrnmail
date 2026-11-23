@@ -92,23 +92,42 @@ export class ImapWriter implements MailWriter {
     if (!from) throw new Refused('no such folder')
     if (uids.length === 0) return null
     const target = await this.destination(from, action)
+    let moved: Moved | null = null
     const lock = await this.client.getMailboxLock(from.path)
     try {
-      let moved: Moved | null = null
       for (let at = 0; at < uids.length; at += UIDS_PER_COMMAND) {
         const range = uids.slice(at, at + UIDS_PER_COMMAND).join(',')
         if (target) moved = together(moved, await this.move(from, range, target))
         // imapflow answers false, not an error, when a command fails, so every answer is checked.
         else if (!(await this.store(from, range, action))) throw this.refused(action.kind)
       }
-      return moved
+    } finally {
+      lock.release()
+    }
+    // Brought back to Gmail's inbox from Trash or Spam, it went to All Mail, and is put in the inbox there.
+    if (action.kind === 'inbox' && this.gmail && target?.role === 'all' && moved?.to && moved.map) {
+      await this.labelInbox(moved.to, [...moved.map.values()])
+    }
+    return moved
+  }
+
+  private async labelInbox(box: MailboxRef, uids: number[]): Promise<void> {
+    if (uids.length === 0) return
+    const lock = await this.client.getMailboxLock(box.path)
+    try {
+      for (let at = 0; at < uids.length; at += UIDS_PER_COMMAND) {
+        const range = uids.slice(at, at + UIDS_PER_COMMAND).join(',')
+        if (!(await this.client.messageFlagsAdd(range, ['\\Inbox'], { uid: true, useLabels: true }))) throw this.refused('inbox')
+      }
     } finally {
       lock.release()
     }
   }
 
   /** Where [action] sends mail, if it has to go anywhere. INBOX is a path on every server, though on
-   *  Gmail it isn't read: mail moved there shows up in All Mail, with a new UID, on the next sync. */
+   *  Gmail it isn't read: mail moved there would show up in All Mail, with a new UID, only on the next
+   *  sync, and be in neither Trash nor the inbox until then. So on Gmail, mail out of Trash or Spam
+   *  goes to All Mail, which is read and whose new UIDs the server names, and is labelled Inbox there. */
   private async destination(from: MailboxRef, action: MailAction): Promise<MailboxRef | null> {
     const inbox: MailboxRef = this.byRole('inbox') ?? { id: '@inbox', path: 'INBOX', role: 'inbox' }
     const away = from.role === 'trash' || from.role === 'junk'
@@ -121,7 +140,8 @@ export class ImapWriter implements MailWriter {
         if (this.gmail) return away ? this.ensure('all') : null
         return this.ensure('archive')
       case 'inbox':
-        return !this.gmail || away ? inbox : null
+        if (!this.gmail) return inbox
+        return away ? this.byRole('all') ?? inbox : null
       case 'move': {
         const found = this.boxes.find((b) => b.path === action.to)
         if (!found) throw new Refused('no such folder')

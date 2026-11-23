@@ -44,17 +44,28 @@ install -m 644 resources/icon.png "$ICON_DIR/${APP_ID}.png"
 # left running that long. xrnmail gets this TMPDIR too: Chromium's single-instance socket and the
 # attachments being looked at go in the same user-only folder, and a second launch still finds the
 # running app through the link to that socket in its profile.
+#
+# New Message is the launcher's right-click entry: an empty mail link, which opens the composer as a
+# link from a page does.
 cat > "$DESKTOP_DIR/${APP_ID}.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=xrnmail
+GenericName=Mail
 Comment=All your mail accounts in one place, delivered in batches
+Keywords=mail;email;inbox;
 Exec=env NO_CLEANUP=1 "TMPDIR=${UNPACK_DIR}" "${TARGET}" --appimage-extract-and-run %U
 Icon=${ICON_DIR}/${APP_ID}.png
 Terminal=false
 Categories=Network;Email;
-MimeType=x-scheme-handler/mailto;
+MimeType=x-scheme-handler/mailto;message/rfc822;
 StartupWMClass=xrnmail
+X-GNOME-UsesNotifications=true
+Actions=NewMessage;
+
+[Desktop Action NewMessage]
+Name=New Message
+Exec=env NO_CLEANUP=1 "TMPDIR=${UNPACK_DIR}" "${TARGET}" --appimage-extract-and-run mailto:
 DESKTOP
 chmod 644 "$DESKTOP_DIR/${APP_ID}.desktop"
 
@@ -79,4 +90,4 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "Installed: $TARGET"
-echo "To have mail links open here: xdg-mime default ${APP_ID}.desktop x-scheme-handler/mailto"
+echo "To have mail links open here: Settings, General, Use for mail links (or xdg-mime default ${APP_ID}.desktop x-scheme-handler/mailto)"

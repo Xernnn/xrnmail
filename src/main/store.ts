@@ -6,9 +6,12 @@ import type {
   Subscription, ThreadRef, ThreadRow
 } from '@shared/types'
 import { authenticated } from '@shared/images'
+import { ageStart, firstTerms, parseQuery, type Field, type Term } from '@shared/query'
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
 import type { Hold } from './batches'
 import type { Unsubscribe } from './parse'
+import type { RuleMail } from './rules'
+import { cleanRule, type MailRule, type RuleEdit } from '@shared/rules'
 
 /**
  * Everything on this laptop: one SQLite file. A message waiting for its batch is in here, but no
@@ -49,13 +52,31 @@ export interface StoredMail {
   warnings: SenderWarning[]
   /** What its headers say about where it came from, for its details. Null when they couldn't be read. */
   details?: HeaderDetails | null
+  /** What the mail rules did with it that only this laptop knows of: `RULE_QUIET` and the rest. */
+  byRule?: number
 }
+
+/** A rule said to announce nothing of it. */
+export const RULE_QUIET = 1
+/** A rule held it for the Summary. */
+export const RULE_SUMMARY = 2
+/** A rule let it straight through. */
+export const RULE_STRAIGHT = 4
 
 export interface HeldMail {
   account: string
   arrived: number
   fromAddress: string
   labels: string[]
+  /** What a rule said about when it lands, which a new timetable keeps to. */
+  rule: 'summary' | 'straight' | null
+}
+
+/** A message in the inbox, as a rule reads it. */
+export interface RuleRow {
+  id: number
+  account: string
+  mail: RuleMail
 }
 
 /** The Summary that landed last: when, and what of it is still waiting to be read in the inbox. */
@@ -294,6 +315,36 @@ export const MIGRATIONS = [
   ALTER TABLE drafts_next RENAME TO drafts;
   CREATE TABLE draft_copies(
     id INTEGER PRIMARY KEY, account TEXT NOT NULL, uid INTEGER NOT NULL, validity TEXT NOT NULL, message_id TEXT NOT NULL DEFAULT '');
+  `,
+  // Mail from before the keeping window, fetched because a search found it on the server and it was
+  // opened. It's an ordinary row, so reading and changing it work as for any other, and it's listed
+  // here as well, with when it was last opened: no list or count but its thread, Pinned and
+  // Recently Seen sees it, and a week unopened it goes.
+  `
+  CREATE TABLE outside(id INTEGER PRIMARY KEY, used INTEGER NOT NULL);
+  `,
+  // Mail rules, in their order, each kept as the page made it. Ids aren't given out twice, so a page
+  // still holding a rule that's gone can't change the one made after it. A message the rules have
+  // looked at is noted by the account and what names it on the server, so a sync finding it again
+  // (moved back to the inbox on a server that doesn't say where a move went, say) leaves it be. What
+  // they did that only this laptop knows of, kept quiet or let through or held for the Summary, is on
+  // the message, for the batch and the notices to read when it lands.
+  `
+  CREATE TABLE rules(id INTEGER PRIMARY KEY AUTOINCREMENT, place INTEGER NOT NULL, data TEXT NOT NULL);
+  CREATE TABLE rules_done(account TEXT NOT NULL, key TEXT NOT NULL, arrived INTEGER NOT NULL, PRIMARY KEY(account, key));
+  CREATE INDEX rules_done_arrived ON rules_done(account, arrived);
+  ALTER TABLE messages ADD COLUMN by_rule INTEGER NOT NULL DEFAULT 0;
+  `,
+  // Reminders: a thread comes back to the inbox at `until` if nobody else has written in it since
+  // `at`. One set as a message is sent knows only its Message-ID until the copy in Sent is here, and
+  // then its thread. `fired` once it has come back, and `seen` once it has been opened since. Kept
+  // here only, as snoozes are. Finding the thread is by Message-ID, which has an index for it.
+  `
+  CREATE TABLE reminders(
+    id INTEGER PRIMARY KEY, account TEXT NOT NULL, thread TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL DEFAULT '',
+    at INTEGER NOT NULL, until INTEGER NOT NULL, fired INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0);
+  CREATE INDEX reminders_thread ON reminders(account, thread);
+  CREATE INDEX messages_message_id ON messages(account, message_id);
   `
 ]
 
@@ -305,6 +356,8 @@ interface ThreadOptions {
   order?: string
   /** 0 for ordinary mail, 1 for Trash, 2 for Spam. */
   bin?: number
+  /** Mail from before the window that was fetched for a search counts too. */
+  outside?: boolean
 }
 
 const SECTIONS: Record<AssistantSection, string[]> = {
@@ -343,6 +396,17 @@ const parseList = <T>(text: unknown): T[] => {
  *  to the index and to what's typed. */
 export const foldForSearch = (text: string): string => text.replace(/[đĐ]/g, 'd')
 
+/** Leaves out mail from before the window that was fetched for a search. Only the row id is read, so
+ *  a count answered from an index still is. */
+const INSIDE = 'id NOT IN (SELECT id FROM outside)'
+
+/** A thread a reminder has brought back to the inbox here, for a query over `messages`, and one of
+ *  those not opened since. */
+const REMINDED = '(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 1)'
+const REMINDED_UNSEEN = '(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 1 AND seen = 0)'
+/** When a thread came back from a reminder, for ordering a list: it's on top from then. */
+const CAME_BACK = 'CASE WHEN r.fired = 1 THEN r.until ELSE 0 END'
+
 /** Whether a message's thread is pinned, for a query over `messages`. */
 const PINNED = 'EXISTS (SELECT 1 FROM pins p WHERE p.account = messages.account AND p.thread = messages.thread) AS pinned'
 
@@ -369,53 +433,98 @@ export const RECENT_KEPT = 100
 const RECENT_ORDER = `(SELECT r.at FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC,
   (SELECT r.rowid FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC`
 
-const SEARCH_FLAGS: Record<string, string> = {
-  'has:attachment': 'has_attachment = 1',
-  'is:unread': 'seen = 0',
-  'is:read': 'seen = 1',
-  'is:flagged': 'flagged = 1',
-  'is:starred': 'flagged = 1',
-  'in:inbox': 'in_inbox = 1'
-}
-
 const likeEscape = (text: string): string => text.replace(/[\\%_]/g, (c) => `\\${c}`)
 
 export interface SearchParts {
-  /** For FTS5. Quoted terms, each matching as a prefix: what's typed is never read as its syntax. */
+  /** For FTS5. Quoted terms, each matching as a prefix, or as written for a quoted phrase: what's
+   *  typed is never read as its syntax. */
   match: string
   filters: string[]
   /** For the `?` in [filters], in order. */
   params: SQLInputValue[]
 }
 
-/** Plain words, `from:`, `subject:`, `to:`, `after:` and `before:`, and the handful of flags above. */
-export function searchParts(text: string): SearchParts {
+const FTS_COLUMNS: Partial<Record<Field, string>> = { any: '', from: 'sender', subject: 'subject' }
+
+/** A word for FTS5, in quotes so nothing in it is syntax. */
+const ftsOf = (term: Extract<Term, { kind: 'word' }>): string => {
+  const column = FTS_COLUMNS[term.field]
+  return `${column ? `${column} : ` : ''}"${term.text}"${term.exact ? '' : '*'}`
+}
+
+/** Whether any of a message's labels, or on other services its folder, is [place]: as typed, or as
+ *  Gmail writes a label in a search, with dashes for spaces and slashes. */
+const LABELLED = `EXISTS (SELECT 1 FROM json_each(labels) WHERE lower(json_each.value) = ? OR replace(replace(lower(json_each.value), ' ', '-'), '/', '-') = ?)`
+const SENT_LABEL = "EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')"
+const SNOOZED = 'EXISTS (SELECT 1 FROM snoozes z WHERE z.account = messages.account AND z.thread = messages.thread AND z.until > ?)'
+const PINNED_THREAD = 'EXISTS (SELECT 1 FROM pins q WHERE q.account = messages.account AND q.thread = messages.thread)'
+
+/** One term as SQL over `messages`, with what its `?` stand for. */
+function sqlOf(term: Term, now: number): { sql: string; params: SQLInputValue[] } {
+  const like = (value: string): string => `%${likeEscape(value.toLowerCase())}%`
+  switch (term.kind) {
+    case 'word':
+      if (term.field === 'to') return { sql: "lower(to_json || cc_json) LIKE ? ESCAPE '\\'", params: [like(term.text)] }
+      if (term.field === 'filename') {
+        return { sql: "EXISTS (SELECT 1 FROM json_each(attachments) WHERE lower(json_extract(json_each.value, '$.name')) LIKE ? ESCAPE '\\')", params: [like(term.text)] }
+      }
+      return { sql: 'id IN (SELECT rowid FROM search WHERE search MATCH ?)', params: [ftsOf(term)] }
+    case 'is':
+      switch (term.what) {
+        case 'unread': return { sql: 'seen = 0', params: [] }
+        case 'read': return { sql: 'seen = 1', params: [] }
+        case 'starred': return { sql: 'flagged = 1', params: [] }
+        case 'important': return { sql: "EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Important')", params: [] }
+        case 'snoozed': return { sql: SNOOZED, params: [now] }
+        case 'pinned': return { sql: PINNED_THREAD, params: [] }
+      }
+      break
+    case 'has':
+      return { sql: 'has_attachment = 1', params: [] }
+    case 'in': {
+      const place = term.place.toLowerCase()
+      if (place === 'inbox') return { sql: 'in_inbox = 1', params: [] }
+      if (place === 'sent') return { sql: SENT_LABEL, params: [] }
+      if (place === 'archive') return { sql: `(in_inbox = 0 AND NOT ${SENT_LABEL})`, params: [] }
+      if (place === 'starred' || place === 'flagged') return { sql: 'flagged = 1', params: [] }
+      if (place === 'snoozed') return { sql: SNOOZED, params: [now] }
+      if (place === 'anywhere' || place === 'all') return { sql: '1', params: [] }
+      return { sql: LABELLED, params: [place, place.replace(/[\s/]+/g, '-')] }
+    }
+    case 'after':
+      return { sql: 'arrived >= ?', params: [term.at] }
+    case 'before':
+      return { sql: 'arrived < ?', params: [term.at] }
+    case 'newer':
+      return { sql: 'arrived >= ?', params: [ageStart(term, now)] }
+    case 'older':
+      return { sql: 'arrived < ?', params: [ageStart(term, now)] }
+    case 'larger':
+      return { sql: 'size > ?', params: [term.bytes] }
+    case 'smaller':
+      return { sql: 'size < ?', params: [term.bytes] }
+  }
+  return { sql: '1', params: [] }
+}
+
+/** A search as Gmail reads one (`shared/query.ts`): words and "phrases", OR, -word and NOT word,
+ *  from:, to:, subject:, filename:, in: and label:, is:, has:attachment, after: and before:,
+ *  newer_than: and older_than:, larger: and smaller:, the first twelve terms of it. Plain words that
+ *  must all be there go to FTS5 together, each once; the rest are filters. */
+export function searchParts(text: string, now = Date.now()): SearchParts {
   const terms: string[] = []
   const filters: string[] = []
   const params: SQLInputValue[] = []
-  for (const raw of foldForSearch(text).split(/\s+/).filter(Boolean).slice(0, 12)) {
-    const flag = SEARCH_FLAGS[raw.toLowerCase()]
-    if (flag) {
-      filters.push(flag)
+  for (const { not, any } of firstTerms(parseQuery(foldForSearch(text)))) {
+    const [only] = any
+    if (any.length === 1 && !not && only?.kind === 'word' && FTS_COLUMNS[only.field] !== undefined) {
+      if (!terms.includes(ftsOf(only))) terms.push(ftsOf(only))
       continue
     }
-    const person = /^to:(.+)$/i.exec(raw)
-    if (person) {
-      filters.push("lower(to_json || cc_json) LIKE ? ESCAPE '\\'")
-      params.push(`%${likeEscape(person[1]?.toLowerCase() ?? '')}%`)
-      continue
-    }
-    const dated = /^(after|before):(\d{4}-\d{1,2}(?:-\d{1,2})?)$/i.exec(raw)
-    const day = dated ? Date.parse(`${dated[2]}${dated[2]?.split('-').length === 2 ? '-01' : ''}`.replace(/-(\d)(?=-|$)/g, '-0$1')) : NaN
-    if (!Number.isNaN(day)) {
-      filters.push(dated?.[1]?.toLowerCase() === 'after' ? 'arrived >= ?' : 'arrived < ?')
-      params.push(day)
-      continue
-    }
-    const scoped = /^(from|subject):(.+)$/i.exec(raw)
-    const column = scoped ? (scoped[1]?.toLowerCase() === 'from' ? 'sender' : 'subject') : ''
-    const word = (scoped?.[2] ?? raw).replace(/"/g, '')
-    if (word) terms.push(column ? `${column} : "${word}"*` : `"${word}"*`)
+    const parts = any.map((term) => sqlOf(term, now))
+    const sql = parts.length === 1 ? (parts[0]?.sql ?? '1') : `(${parts.map((part) => part.sql).join(' OR ')})`
+    filters.push(not ? `NOT (${sql})` : sql)
+    params.push(...parts.flatMap((part) => part.params))
   }
   return { match: terms.join(' '), filters, params }
 }
@@ -500,6 +609,40 @@ export class Store {
     return new Set(this.all('SELECT uid FROM messages WHERE account = ? AND box = ?', account, box).map((r) => Number(r['uid'])))
   }
 
+  /** Of these UIDs in a folder, the ones kept here as mail of the window, or with [outside], the ones
+   *  kept here at all. */
+  kept(account: string, box: string, uids: number[], outside = false): Set<number> {
+    const rows = this.all(
+      `SELECT uid FROM messages WHERE account = ? AND box = ? AND uid IN (SELECT value FROM json_each(?))${outside ? '' : ` AND ${INSIDE}`}`,
+      account, box, JSON.stringify(uids)
+    )
+    return new Set(rows.map((r) => Number(r['uid'])))
+  }
+
+  /** A message from before the window, fetched for a search and opened now. */
+  addOutside(mail: StoredMail, now: number): number | null {
+    const id = this.addMail(mail)
+    if (id !== null) this.db.prepare('INSERT OR REPLACE INTO outside(id, used) VALUES(?,?)').run(id, now)
+    return id
+  }
+
+  /** A thread opened again: what it has from before the window stays another week. */
+  useOutside(ref: ThreadRef, now: number): void {
+    this.db
+      .prepare('UPDATE outside SET used = ? WHERE id IN (SELECT id FROM messages WHERE account = ? AND thread = ?)')
+      .run(now, ref.account, ref.thread)
+  }
+
+  /** Rows for these threads, with what they have from before the window, as a search shows them. A
+   *  thread with nothing left out of Trash and Spam has none. */
+  olderRows(refs: ThreadRef[], now: number): ThreadRow[] {
+    if (refs.length === 0) return []
+    return this.threadRows(
+      "(account, thread) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))",
+      [JSON.stringify(refs.map((ref) => [ref.account, ref.thread]))], now, refs.length, { outside: true }
+    )
+  }
+
   /** The new row's id, or null if it was already here. */
   addMail(mail: StoredMail): number | null {
     return this.inTransaction(() => {
@@ -508,8 +651,8 @@ export class Store {
           `INSERT OR IGNORE INTO messages(account, box, uid, thread, gmail_id, message_id, subject, from_name, from_address,
              to_json, cc_json, reply_to, refs, unsubscribe, arrived, snippet, body_text, body_html, attachments,
              has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, files_cut, size, release_at,
-             summary, focus, kind, facts, warnings, details)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+             summary, focus, kind, facts, warnings, details, by_rule)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           mail.account, mail.box, mail.uid, mail.thread, mail.gmailId, mail.messageId, mail.subject, mail.from.name, mail.from.address,
@@ -522,7 +665,7 @@ export class Store {
           mail.seen ? 1 : 0, mail.flagged ? 1 : 0, mail.labels.includes(DRAFT) ? 1 : 0,
           mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt, mail.summary ? 1 : 0,
           mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings),
-          mail.details ? JSON.stringify(mail.details) : ''
+          mail.details ? JSON.stringify(mail.details) : '', mail.byRule ?? 0
         )
       if (Number(result.changes) === 0) return null
       this.db
@@ -565,6 +708,7 @@ export class Store {
 
   private dropMessage(id: number): void {
     this.db.prepare('DELETE FROM search WHERE rowid = ?').run(id)
+    this.db.prepare('DELETE FROM outside WHERE id = ?').run(id)
     this.db.prepare('DELETE FROM messages WHERE id = ?').run(id)
   }
 
@@ -573,10 +717,13 @@ export class Store {
       this.db
         .prepare('DELETE FROM search WHERE rowid IN (SELECT id FROM messages WHERE account = ?)')
         .run(account)
+      this.db.prepare('DELETE FROM outside WHERE id IN (SELECT id FROM messages WHERE account = ?)').run(account)
       this.db.prepare('DELETE FROM messages WHERE account = ?').run(account)
       this.db.prepare('DELETE FROM sync_state WHERE account = ?').run(account)
       this.db.prepare('DELETE FROM box_state WHERE account = ?').run(account)
       this.db.prepare('DELETE FROM pending WHERE account = ?').run(account)
+      this.db.prepare('DELETE FROM rules_done WHERE account = ?').run(account)
+      this.db.prepare('DELETE FROM meta WHERE key = ?').run(`rules-floor:${account}`)
     })
   }
 
@@ -602,17 +749,27 @@ export class Store {
     this.db.prepare('DELETE FROM drafts WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM draft_copies WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM snoozes WHERE account = ?').run(account)
+    this.db.prepare('DELETE FROM reminders WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM pins WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM recent WHERE account = ?').run(account)
     return drafts
   }
 
-  /** Mail past the keeping window, once the setting's been shortened. */
-  dropOlderThan(account: string, before: number): number {
-    const old = this.all('SELECT id FROM messages WHERE account = ? AND arrived < ?', account, before)
+  /** Mail past the keeping window, once the setting's been shortened. What was fetched from before it
+   *  for a search stays while it's opened within a week, or pinned; and once the window has grown to
+   *  take it in, it's ordinary mail. */
+  dropOlderThan(account: string, before: number, now: number): number {
+    this.db.prepare('DELETE FROM outside WHERE id IN (SELECT id FROM messages WHERE account = ? AND arrived >= ?)').run(account, before)
+    const old = this.all(
+      `SELECT id FROM messages m WHERE account = ? AND arrived < ?
+         AND NOT (id IN (SELECT id FROM outside WHERE used >= ?)
+                  OR (id IN (SELECT id FROM outside) AND EXISTS (SELECT 1 FROM pins p WHERE p.account = m.account AND p.thread = m.thread)))`,
+      account, before, now - WEEK_MS
+    )
     this.inTransaction(() => {
       for (const row of old) this.dropMessage(Number(row['id']))
     })
+    this.forgetRuledBefore(account, before)
     return old.length
   }
 
@@ -620,26 +777,29 @@ export class Store {
    *  there at all and hidden mail is on its way out, so both stay out of every clause; [bin] says
    *  which of Trash, Spam or neither is being looked at. */
   private threadRows(where: string, params: SQLInputValue[], now: number, limit: number, options: ThreadOptions = {}): ThreadRow[] {
-    const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0 } = options
+    const { outer = '1', outerParams = [], order = `MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END, ${CAME_BACK}) DESC`, bin = 0, outside = false } = options
+    const inside = outside ? '' : `AND ${INSIDE}`
     const rows = this.all(
       `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, m.warnings, t.latest AS date,
-              t.n, t.unread, t.attachment, t.starred, t.important, t.delivered, s.until AS snoozed, p.at AS pinned
+              t.n, t.unread, t.attachment, t.starred, t.important, t.delivered, s.until AS snoozed, p.at AS pinned,
+              r.until AS remind, r.fired AS reminded, r.seen AS remind_seen
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
                     SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred,
                     MAX(EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Important')) AS important,
                     MAX(CASE WHEN summary = 1 THEN release_at END) AS delivered
-             FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = ? AND ${where} GROUP BY account, thread) t
+             FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = ? ${inside} AND ${where} GROUP BY account, thread) t
        JOIN messages m ON m.account = t.account AND m.thread = t.thread AND m.arrived = t.latest
-                      AND m.release_at <= ? AND m.hidden = 0 AND m.bin = ?
+                      AND m.release_at <= ? AND m.hidden = 0 AND m.bin = ? ${outside ? '' : 'AND m.id NOT IN (SELECT id FROM outside)'}
        LEFT JOIN snoozes s ON s.account = t.account AND s.thread = t.thread
        LEFT JOIN pins p ON p.account = t.account AND p.thread = t.thread
+       LEFT JOIN reminders r ON r.account = t.account AND r.thread = t.thread
        WHERE ${outer}
        GROUP BY m.account, m.thread
        ORDER BY ${order} LIMIT ?`,
       now, bin, ...params, now, bin, ...outerParams, ...(order.includes('?') ? [now] : []), limit
     )
     return rows.map((r) => ({
-      ...this.whoAndWhat(String(r['account']), String(r['thread']), now, bin),
+      ...this.whoAndWhat(String(r['account']), String(r['thread']), now, bin, outside),
       account: String(r['account']),
       thread: String(r['thread']),
       subject: String(r['subject']),
@@ -648,11 +808,13 @@ export class Store {
       snippet: String(r['snippet']),
       date: Number(r['date']),
       count: Number(r['n']),
-      unread: Number(r['unread']),
+      // Back from a reminder and not opened since, it reads as unread, though nothing new came.
+      unread: Number(r['unread']) + (Number(r['reminded']) === 1 && Number(r['remind_seen']) === 0 ? 1 : 0),
       attachment: Number(r['attachment']) > 0,
       starred: Number(r['starred']) > 0,
       important: Number(r['important']) > 0,
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
+      remind: r['remind'] == null ? null : { at: Number(r['remind']), fired: Number(r['reminded']) === 1 },
       facts: factsFrom(r['facts']),
       pinned: r['pinned'] != null,
       summaryAt: r['delivered'] == null ? null : Number(r['delivered']),
@@ -661,10 +823,10 @@ export class Store {
   }
 
   /** Who's in a thread and what's attached. Held and hidden mail stays out of this too. */
-  private whoAndWhat(account: string, thread: string, now: number, bin: number): Pick<ThreadRow, 'people' | 'file' | 'files' | 'cards'> {
+  private whoAndWhat(account: string, thread: string, now: number, bin: number, outside: boolean): Pick<ThreadRow, 'people' | 'file' | 'files' | 'cards'> {
     const rows = this.all(
       `SELECT from_name, from_address, attachments FROM messages
-       WHERE account = ? AND thread = ? AND release_at <= ? AND hidden = 0 AND bin = ? ORDER BY arrived ASC`,
+       WHERE account = ? AND thread = ? AND release_at <= ? AND hidden = 0 AND bin = ? ${outside ? '' : `AND ${INSIDE}`} ORDER BY arrived ASC`,
       account, thread, now, bin
     )
     const people = new Map<string, Address>()
@@ -685,7 +847,7 @@ export class Store {
       )
     }
     if (query.kind === 'search') {
-      const { match, filters, params } = searchParts(query.text)
+      const { match, filters, params } = searchParts(query.text, now)
       if (!match && filters.length === 0) return []
       const where = [...filters, ...(match ? ['id IN (SELECT rowid FROM search WHERE search MATCH ?)'] : [])].join(' AND ')
       try {
@@ -706,11 +868,14 @@ export class Store {
     const params = query.account ? [query.account] : []
     const by = (clause: string): string => [clause, ...scope].join(' AND ')
     const away = 's.until > ? AND s.at >= t.latest'
+    // Asked only while a reminder has brought one back, so the inbox's own query is as it always was.
+    const back = this.one('SELECT 1 AS yes FROM reminders WHERE fired = 1 LIMIT 1') !== undefined
+    const inbox = back ? `(in_inbox = 1 OR ${REMINDED})` : 'in_inbox = 1'
     switch (query.kind) {
       case 'inbox': {
         // What a Summary brought is kept apart from the rest of the inbox, under Summary.
         const side = query.focus ? ` AND focus = ${query.focus === 'focused' ? 1 : 0}` : ''
-        return this.threadRows(by(`in_inbox = 1 AND summary = 0${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+        return this.threadRows(by(`${inbox} AND summary = 0${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
       }
       case 'summary':
         // Each Summary together, the last to land first.
@@ -719,12 +884,15 @@ export class Store {
         })
       case 'snoozed':
         return this.threadRows(by('in_inbox = 1'), params, now, limit, { outer: away, outerParams: [now], order: 's.until ASC' })
+      case 'reminders':
+        // Waiting to come back, the soonest first.
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 0)'), params, now, limit, { order: 'r.until ASC', outside: true })
       case 'starred':
         return this.threadRows(by('flagged = 1'), params, now, limit)
       case 'pinned':
-        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM pins)'), params, now, limit)
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM pins)'), params, now, limit, { outside: true })
       case 'recent':
-        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM recent)'), params, now, limit, { order: RECENT_ORDER })
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM recent)'), params, now, limit, { order: RECENT_ORDER, outside: true })
       case 'sent':
         return this.threadRows(by(`EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')`), params, now, limit)
       case 'all':
@@ -740,7 +908,8 @@ export class Store {
         // The open thread stays while it's read, in its place, until another is opened.
         const keep = query.keep ? [query.keep.account, query.keep.thread] : []
         const unread = query.keep ? '(seen = 0 OR (account = ? AND thread = ?))' : 'seen = 0'
-        return this.threadRows(by(`in_inbox = 1 AND ${unread}`), [...keep, ...params], now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+        const fresh = back ? `((in_inbox = 1 AND ${unread}) OR ${REMINDED_UNSEEN})` : `in_inbox = 1 AND ${unread}`
+        return this.threadRows(by(fresh), [...keep, ...params], now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
       }
       case 'attachments':
         return this.threadRows(by('has_attachment = 1'), params, now, limit)
@@ -751,14 +920,14 @@ export class Store {
 
   /** Threads in Spam with something unread. */
   spamCount(now: number): number {
-    return Number(this.one('SELECT COUNT(DISTINCT account || thread) AS n FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 2 AND seen = 0', now)?.['n'] ?? 0)
+    return Number(this.one(`SELECT COUNT(DISTINCT account || thread) AS n FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 2 AND seen = 0 AND ${INSIDE}`, now)?.['n'] ?? 0)
   }
 
   /** Unread mail the Assistant recognised, by section. */
   assistantCounts(now: number): Record<AssistantSection, number> {
     const rows = this.all(
       `SELECT kind, COUNT(DISTINCT account || thread) AS n FROM messages
-       WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND seen = 0 AND kind > '' GROUP BY kind`,
+       WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND seen = 0 AND kind > '' AND ${INSIDE} GROUP BY kind`,
       now
     )
     const count = (kind: string): number => Number(rows.find((r) => r['kind'] === kind)?.['n'] ?? 0)
@@ -1024,6 +1193,69 @@ export class Store {
     this.db.exec('DELETE FROM recent')
   }
 
+  /** A reminder for a thread, or for the message with [messageId] until its thread is here. One
+   *  for a thread takes the place of any it had. */
+  remind(where: { account: string; thread: string; messageId: string }, at: number, until: number): void {
+    this.inTransaction(() => {
+      if (where.thread) this.db.prepare('DELETE FROM reminders WHERE account = ? AND thread = ?').run(where.account, where.thread)
+      this.db.prepare('INSERT INTO reminders(account, thread, message_id, at, until) VALUES(?,?,?,?,?)')
+        .run(where.account, where.thread, where.messageId, at, until)
+    })
+  }
+
+  unremind(ref: ThreadRef): void {
+    this.db.prepare('DELETE FROM reminders WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
+  }
+
+  /** The thread's reminder, waiting or come back. */
+  reminder(ref: ThreadRef): { at: number; fired: boolean } | null {
+    const row = this.one('SELECT until, fired FROM reminders WHERE account = ? AND thread = ? ORDER BY id DESC LIMIT 1', ref.account, ref.thread)
+    return row ? { at: Number(row['until']), fired: Number(row['fired']) === 1 } : null
+  }
+
+  /** Opened since it came back, it isn't unread any more. */
+  seeReminder(ref: ThreadRef): void {
+    this.db.prepare('UPDATE reminders SET seen = 1 WHERE account = ? AND thread = ? AND fired = 1').run(ref.account, ref.thread)
+  }
+
+  /** Reminders put right as time passes: each finds its thread once the message it was set on is
+   *  here, one that someone else has written in since goes, and those whose time has come with
+   *  nobody having written come back. [own] is an account's own addresses, whose mail is no answer.
+   *  Returns how many came back. */
+  settleReminders(now: number, own: (account: string) => string[]): number {
+    return this.inTransaction(() => {
+      this.db.exec(`UPDATE reminders SET thread = (SELECT m.thread FROM messages m WHERE m.account = reminders.account AND m.message_id = reminders.message_id LIMIT 1)
+        WHERE thread = '' AND message_id != '' AND EXISTS (SELECT 1 FROM messages m WHERE m.account = reminders.account AND m.message_id = reminders.message_id)`)
+      this.db.exec(`DELETE FROM reminders WHERE thread != '' AND id NOT IN (SELECT MAX(id) FROM reminders WHERE thread != '' GROUP BY account, thread)`)
+      for (const row of this.all("SELECT DISTINCT account FROM reminders WHERE thread != ''")) {
+        const account = String(row['account'])
+        this.db.prepare(`DELETE FROM reminders WHERE account = ? AND thread != '' AND EXISTS (
+            SELECT 1 FROM messages m WHERE m.account = reminders.account AND m.thread = reminders.thread AND m.arrived > reminders.at
+              AND m.hidden = 0 AND m.bin = 0 AND lower(m.from_address) NOT IN (SELECT value FROM json_each(?)))`)
+          .run(account, JSON.stringify(own(account).map((a) => a.toLowerCase())))
+      }
+      return Number(this.db.prepare("UPDATE reminders SET fired = 1, seen = 0 WHERE fired = 0 AND thread != '' AND until <= ?").run(now).changes)
+    })
+  }
+
+  /** Back from a reminder and not opened since, in an account, with no unread mail in its inbox
+   *  besides, which counts it already. */
+  remindedUnseen(account: string): number {
+    return Number(this.one(
+      `SELECT COUNT(*) AS n FROM reminders q WHERE q.account = ? AND q.fired = 1 AND q.seen = 0
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.account = q.account AND m.thread = q.thread AND m.in_inbox = 1 AND m.seen = 0 AND m.hidden = 0 AND m.bin = 0)`,
+      account
+    )?.['n'] ?? 0)
+  }
+
+  /** Whether any of a thread's mail is in the inbox, for anyone to see. */
+  inInbox(ref: ThreadRef, now: number): boolean {
+    return this.one(
+      'SELECT 1 AS yes FROM messages WHERE account = ? AND thread = ? AND in_inbox = 1 AND hidden = 0 AND bin = 0 AND release_at <= ? LIMIT 1',
+      ref.account, ref.thread, now
+    ) !== undefined
+  }
+
   /** How many snoozed threads came back in (after, upto]. */
   wokenBetween(after: number, upto: number): number {
     return Number(this.one('SELECT COUNT(*) AS n FROM snoozes WHERE until > ? AND until <= ?', after, upto)?.['n'] ?? 0)
@@ -1117,7 +1349,7 @@ export class Store {
   }
 
   saveDraft(draft: Draft): void {
-    const { id, account, state, sendAt, error, updated, ...data } = draft
+    const { id, account, state, sendAt, error, updated, archivable: _now, ...data } = draft
     this.db
       .prepare('UPDATE drafts SET account = ?, data = ?, updated = ?, state = ?, send_at = ?, error = ? WHERE id = ?')
       .run(account, JSON.stringify(data), updated, state, sendAt, error, id)
@@ -1152,11 +1384,11 @@ export class Store {
     const rows = this.all(
       `SELECT name, address, SUM(weight) AS score FROM (
          SELECT from_name AS name, lower(from_address) AS address, 1 AS weight
-           FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND from_address != ''
+           FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND from_address != '' AND ${INSIDE}
          UNION ALL
          SELECT json_extract(j.value, '$.name'), lower(json_extract(j.value, '$.address')), 5
            FROM messages m, json_each(m.to_json) j
-           WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0
+           WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.${INSIDE}
              AND EXISTS (SELECT 1 FROM json_each(m.labels) l WHERE l.value = '\\Sent'))
        WHERE lower(address) LIKE ? ESCAPE '\\' OR lower(name) LIKE ? ESCAPE '\\'
        GROUP BY address ORDER BY score DESC, address LIMIT ?`,
@@ -1176,6 +1408,27 @@ export class Store {
     return row !== undefined
   }
 
+  /** Of these addresses, the ones whose newest mail here passed DMARC, by the account's own server:
+   *  a company's logo is shown only for mail its domain is proved to have sent. */
+  passedDmarc(addresses: string[]): Set<string> {
+    const wanted = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter(Boolean))].slice(0, 500)
+    const passed = new Set<string>()
+    if (wanted.length === 0) return passed
+    const rows = this.all(
+      `SELECT lower(from_address) AS address, details FROM messages
+       WHERE lower(from_address) IN (${wanted.map(() => '?').join(', ')}) ORDER BY arrived DESC`,
+      ...wanted
+    )
+    const seen = new Set<string>()
+    for (const row of rows) {
+      const address = String(row['address'])
+      if (seen.has(address)) continue
+      seen.add(address)
+      if (detailsFrom(row['details'])?.checks?.dmarc === 'pass') passed.add(address)
+    }
+    return passed
+  }
+
   /** Moves what a sender has already sent to one side of the inbox. */
   setFocus(address: string, focused: boolean): void {
     this.db.prepare('UPDATE messages SET focus = ? WHERE lower(from_address) = ?').run(focused ? 1 : 0, address.toLowerCase())
@@ -1187,7 +1440,7 @@ export class Store {
     const row = this.one(
       `SELECT COUNT(*) AS n FROM (SELECT DISTINCT m.account, m.thread FROM messages m
          LEFT JOIN snoozes s ON s.account = m.account AND s.thread = m.thread
-         WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.in_inbox = 1 AND m.seen = 0 AND m.summary = 0
+         WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.in_inbox = 1 AND m.seen = 0 AND m.summary = 0 AND m.${INSIDE}
            AND NOT (s.until IS NOT NULL AND s.until > ? AND s.at >= m.arrived) AND ${where})`,
       now, now, ...params
     )
@@ -1199,7 +1452,7 @@ export class Store {
     return this.all(
       `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest,
               SUM(seen) AS opened, SUM(arrived >= ?) AS week
-       FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND unsubscribe != '' AND from_address != ''
+       FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND unsubscribe != '' AND from_address != '' AND ${INSIDE}
        GROUP BY account, lower(from_address) ORDER BY n DESC, latest DESC LIMIT 300`,
       now - WEEK_MS, now
     ).map(subscriptionFrom)
@@ -1210,7 +1463,7 @@ export class Store {
     return this.all(
       `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest, MAX(id) AS newest,
               SUM(seen) AS opened, SUM(arrived >= ?) AS week
-       FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND lower(from_address) IN (SELECT value FROM json_each(?))
+       FROM messages WHERE release_at <= ? AND hidden = 0 AND bin = 0 AND lower(from_address) IN (SELECT value FROM json_each(?)) AND ${INSIDE}
        GROUP BY account, lower(from_address) ORDER BY n DESC, latest DESC`,
       now - WEEK_MS, now, JSON.stringify(addresses.map((a) => a.toLowerCase()))
     ).map(subscriptionFrom)
@@ -1222,7 +1475,7 @@ export class Store {
     const row = this.one(
       `SELECT account, lower(from_address) AS address, MAX(from_name) AS name, COUNT(*) AS n, MAX(arrived) AS latest,
               COALESCE(MAX(CASE WHEN unsubscribe != '' THEN id END), MAX(id)) AS newest, SUM(seen) AS opened, SUM(arrived >= ?) AS week
-       FROM messages WHERE account = ? AND lower(from_address) = ? AND release_at <= ? AND hidden = 0 AND bin = 0`,
+       FROM messages WHERE account = ? AND lower(from_address) = ? AND release_at <= ? AND hidden = 0 AND bin = 0 AND ${INSIDE}`,
       now - WEEK_MS, account, address.toLowerCase(), now
     )
     return row && Number(row['n']) > 0 ? subscriptionFrom(row) : null
@@ -1231,7 +1484,7 @@ export class Store {
   /** Every thread a sender has mail in, that could be seen now. */
   threadsFrom(account: string, address: string, now: number): ThreadRef[] {
     return this.all(
-      'SELECT DISTINCT thread FROM messages WHERE account = ? AND lower(from_address) = ? AND release_at <= ? AND hidden = 0 AND bin = 0',
+      `SELECT DISTINCT thread FROM messages WHERE account = ? AND lower(from_address) = ? AND release_at <= ? AND hidden = 0 AND bin = 0 AND ${INSIDE}`,
       account, address.toLowerCase(), now
     ).map((r) => ({ account, thread: String(r['thread']) }))
   }
@@ -1278,11 +1531,14 @@ export class Store {
 
   /** Who sent each message a delivery brought in (after, upto], one entry a message, whether it
    *  came with a Summary, and whether it's in Focused. */
-  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean; focused: boolean }[] {
+  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean; focused: boolean; quiet: boolean }[] {
     return this.all(
-      'SELECT from_address, from_name, summary, focus FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
+      'SELECT from_address, from_name, summary, focus, by_rule FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
       after, upto
-    ).map((r) => ({ from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0, focused: Number(r['focus']) > 0 }))
+    ).map((r) => ({
+      from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0, focused: Number(r['focus']) > 0,
+      quiet: (Number(r['by_rule']) & RULE_QUIET) > 0
+    }))
   }
 
   landedBetween(after: number, upto: number): number {
@@ -1302,14 +1558,16 @@ export class Store {
   /** Moves waiting mail onto a new timetable, after the batch or Summary settings change, and into or
    *  out of the Summary. */
   retime(compute: (mail: HeldMail) => Hold, now: number): void {
-    const rows = this.all('SELECT id, account, arrived, from_address, labels FROM messages WHERE release_at > ?', now)
+    const rows = this.all('SELECT id, account, arrived, from_address, labels, by_rule FROM messages WHERE release_at > ?', now)
     this.inTransaction(() => {
       for (const row of rows) {
+        const byRule = Number(row['by_rule'])
         const hold = compute({
           account: String(row['account']),
           arrived: Number(row['arrived']),
           fromAddress: String(row['from_address']),
-          labels: parseList<string>(row['labels'])
+          labels: parseList<string>(row['labels']),
+          rule: byRule & RULE_SUMMARY ? 'summary' : byRule & RULE_STRAIGHT ? 'straight' : null
         })
         this.db.prepare('UPDATE messages SET release_at = ?, summary = ? WHERE id = ?').run(hold.at, hold.summary ? 1 : 0, Number(row['id']))
       }
@@ -1322,11 +1580,91 @@ export class Store {
     const rows = this.all(
       `SELECT m.account AS account, j.value AS label, COUNT(*) AS n
        FROM messages m INDEXED BY messages_visible, json_each(m.labels) j
-       WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND j.value NOT LIKE '\\%' ESCAPE '|'
+       WHERE m.release_at <= ? AND m.hidden = 0 AND m.bin = 0 AND m.${INSIDE} AND j.value NOT LIKE '\\%' ESCAPE '|'
        GROUP BY m.account, j.value ORDER BY m.account, j.value`,
       now
     )
     return rows.map((r) => ({ account: String(r['account']), label: String(r['label']), count: Number(r['n']) }))
+  }
+
+  /** The rules in their order. One the profile has that can't be read is left out. */
+  rules(): MailRule[] {
+    return this.all('SELECT id, data FROM rules ORDER BY place, id').flatMap((r) => {
+      try {
+        return [{ ...cleanRule(JSON.parse(String(r['data']))), id: Number(r['id']) }]
+      } catch {
+        return []
+      }
+    })
+  }
+
+  /** A new rule goes last. Returns its id; null when the one to change is gone. */
+  saveRule(rule: RuleEdit): number | null {
+    const { id, ...data } = rule
+    if (id === undefined) {
+      const place = Number(this.one('SELECT COALESCE(MAX(place), 0) + 1 AS p FROM rules')?.['p'] ?? 1)
+      return Number(this.db.prepare('INSERT INTO rules(place, data) VALUES(?,?)').run(place, JSON.stringify(data)).lastInsertRowid)
+    }
+    const changed = this.db.prepare('UPDATE rules SET data = ? WHERE id = ?').run(JSON.stringify(data), id)
+    return Number(changed.changes) > 0 ? id : null
+  }
+
+  deleteRule(id: number): void {
+    this.db.prepare('DELETE FROM rules WHERE id = ?').run(id)
+  }
+
+  /** Puts a rule at [to] in the order, counting from 0, and the others after it along. */
+  moveRule(id: number, to: number): void {
+    const ids = this.all('SELECT id FROM rules ORDER BY place, id').map((r) => Number(r['id']))
+    const from = ids.indexOf(id)
+    if (from < 0) return
+    ids.splice(from, 1)
+    ids.splice(Math.max(0, Math.min(to, ids.length)), 0, id)
+    this.inTransaction(() => ids.forEach((each, place) => this.db.prepare('UPDATE rules SET place = ? WHERE id = ?').run(place + 1, each)))
+  }
+
+  /** Whether the rules have looked at this message already, on this account. Mail from before the
+   *  oldest that's still noted, which the keeping window let go of, counts as looked at. */
+  ruledAlready(account: string, key: string, arrived: number): boolean {
+    if (arrived < Number(this.meta(`rules-floor:${account}`) ?? 0)) return true
+    return this.one('SELECT 1 AS y FROM rules_done WHERE account = ? AND key = ?', account, key) !== undefined
+  }
+
+  markRuled(account: string, key: string, arrived: number): void {
+    this.db.prepare('INSERT OR IGNORE INTO rules_done(account, key, arrived) VALUES(?,?,?)').run(account, key, arrived)
+  }
+
+  /** What the keeping window let go of needn't be remembered, and what comes back into it when the
+   *  window grows isn't new. */
+  private forgetRuledBefore(account: string, before: number): void {
+    this.db.prepare('DELETE FROM rules_done WHERE account = ? AND arrived < ?').run(account, before)
+    if (before > Number(this.meta(`rules-floor:${account}`) ?? 0)) this.setMeta(`rules-floor:${account}`, String(before))
+  }
+
+  /** The inbox mail kept here that can be seen, of one account or all, for a rule to read. Not what's
+   *  waiting for its moment, in Trash or Spam, or from before the window. */
+  *ruleRows(account: string, now: number): Generator<RuleRow> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, account, from_name, from_address, to_json, cc_json, subject, body_text, details, attachments FROM messages
+         WHERE in_inbox = 1 AND release_at <= ? AND hidden = 0 AND bin = 0 AND ${INSIDE} AND (? = '' OR account = ?) ORDER BY id`
+      )
+      .iterate(now, account, account) as Iterable<Row>
+    for (const r of rows) {
+      yield {
+        id: Number(r['id']),
+        account: String(r['account']),
+        mail: {
+          from: { name: String(r['from_name']), address: String(r['from_address']) },
+          to: parseList<Address>(r['to_json']),
+          cc: parseList<Address>(r['cc_json']),
+          subject: String(r['subject']),
+          text: String(r['body_text']),
+          list: detailsFrom(r['details'])?.list ?? null,
+          attachments: parseList<AttachmentInfo>(r['attachments']).map((a) => a.name)
+        }
+      }
+    }
   }
 
   meta(key: string): string | null {

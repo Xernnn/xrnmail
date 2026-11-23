@@ -59,9 +59,11 @@ something the person did. imapflow answers `false` rather than throwing when a c
 ## Changes
 
 An action applies to `store.ts` at once, so the app never waits on the network, and joins the `pending`
-table. That's what lets it survive being offline or a restart. Anything that takes mail out of view waits
-out Undo (5 seconds, or up to 30 as Settings, General say) and one second more before setting off;
-everything else goes straight away.
+table. That's what lets it survive being offline or a restart. Anything that takes mail out of view,
+and any other change the page offers Undo for (Move to Inbox, a label added from a selection, Mark
+all as read), waits out Undo (5 seconds, or up to 30 as Settings, General say) and one second more
+before setting off, since a change already sent can't be called back; everything else goes straight
+away.
 
 - Only mail that can be seen is touched. A held reply in the same thread is left alone.
 - `MailService.inLane` runs one thing at a time per account. A sync reading the server while a change is
@@ -77,11 +79,23 @@ everything else goes straight away.
   then the message is put back as it was and the sidebar says so.
 - Moves use `UID MOVE` where the server has it, and copy then delete where it doesn't. A service with no
   Archive or Trash folder gets one the first time it's needed.
+- On Gmail, mail brought back from Trash or Spam is moved to All Mail and labelled Inbox there, rather
+  than moved to `INBOX`: All Mail is read and the server names the new UIDs there, so the row follows
+  it and the thread is in the inbox at once, not only after the next sync.
 - Delete and spam change the row's `bin` at once, which is what makes Undo possible. `hidden` is only for
   mail being deleted for good, and Gmail's own unsent drafts. Every read leaves out hidden rows, as it
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+- A reminder is kept here only too (`reminders`): a thread comes back at `until` if nobody but you
+  has written in it since `at`, when the message was sent. One set as a message goes knows only that
+  message's Message-ID until its copy in Sent is here, and then its thread. Each tick puts them
+  right: one whose thread has mail from someone else since goes, and one whose time has come is
+  marked `fired` and told of as a woken snooze is. A fired one puts its thread in the inbox's list,
+  on top from its time, as unread until it's opened (`seen`), and in the account's count; the inbox's
+  query is the one it always was while none has fired. Archiving a thread that's there only because
+  of its reminder lets the reminder go and sends nothing: on a folder service, archiving would move
+  your own copy out of Sent. Archiving, deleting and moving end one, as they end a snooze.
 - A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
   means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
   a pinned thread keeps its place in every other list.
@@ -106,10 +120,19 @@ is all Undo and "send later" are. `tick()` sends what's due.
 - `SmtpSender` connects and signs in as its own step first, since that's the one failure that proves
   nothing left. nodemailer reports a connection lost after the message was handed over the same way as
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
+  The message goes on that same connection (nodemailer's `SMTPConnection`, not its transport, which
+  opened one connection to check and another to send, so the network going between the two failed a
+  message that never left as "check Sent"). A sign-in answered with a 4xx is that first step failing
+  too: SMTP's "not now".
 - A message that can't be put together, an attachment gone from the profile say, fails before
   anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
-- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
-  attempt, so a crash comes back the same way instead of as a retry.
+- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` once
+  signed in, before the message is handed over, so a crash comes back the same way instead of as a
+  retry. Until then it's still `queued`: a quit during a slow connect, which finishing up gives up on
+  after eight seconds, leaves it to go next time rather than to be checked for.
+- A draft that ends in `failed` stays in Drafts with what went wrong, and the account says "Sending
+  failed" in the sidebar until it's sent or thrown away. The page says "Sent" only once the draft has
+  gone, never when it's queued.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
   changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
@@ -141,6 +164,15 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
 - **A copy that has to go** (the draft was sent, thrown away, moved to another account or emptied)
   is noted in `draft_copies` and goes as soon as the server can be reached, like the pending queue:
   offline, or after a restart, nothing is lost. Refused three times, it's let go of and said.
+- **Thrown away** from the composer or Drafts, a draft with something in it leaves Drafts at once and
+  goes for good, with its copy, once Undo has had its time, or when the app closes; until then
+  nothing about it changes on the server, and one that was waiting to go waits as a draft, so it
+  can't leave meanwhile. Undo gives it back as it was. A crash meanwhile keeps it.
+- **Send & Archive** is Send, and an archive of the thread the draft was started from (`about`),
+  done here at once. The archive waits for whichever of the two Undo times is longer before the
+  server hears of it, so Undo of the send, which also undoes the archive, still has it to call back.
+  It's offered while that thread is in the inbox (`archivable`, worked out each time a draft is
+  handed to the page, never kept).
 - **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
   draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
   or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
@@ -151,8 +183,8 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
   on the server, as one older than the keeping window does: brought in without its files and changed
   here, it would go back up without them. Its words go into the composer as text: the copy's HTML is the server's, may hold a
   stranger's quoted HTML, and never reaches the page. What it quotes is kept apart, as a reply's quote
-  is, and goes out as it was quoted, not quoted again; the account's own signature comes off the end
-  of the words, so a draft that went up from here and came back isn't signed twice.
+  is, and goes out as it was quoted, not quoted again; whichever of the signatures is at the end of
+  the words comes off, so a draft that went up from here and came back isn't signed twice.
 - **Each draft here knows its copy**: the UID, the folder's UIDVALIDITY when it was had, its
   Message-ID, and which version of the draft it was made from (`pushed`). A renumbered folder finds
   its copies again by Message-ID instead of bringing them in twice.
@@ -185,9 +217,27 @@ message that loses the label (the phone sending a draft it saved can do that) sh
 
 ## Sync
 
-Every three minutes, and on waking, each account connects, syncs and logs out. Batching means nothing
+Every three minutes, on waking, and when the network changes, each account connects, syncs and logs
+out. Batching means nothing
 depends on being fast, so these passes are what the app relies on; watching the inbox, below, only
 brings the next one forward.
+
+A pass that can't reach the server is tried again after 5 seconds, then 15, 30 and 60 (`PASS_RETRY_MS`),
+and after that the three-minute passes carry on as usual. Waking from sleep is often seconds ahead of
+the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the quick tries, "Couldn't
+reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
+that gets through ends them. A refused password isn't tried again this way: asking again won't help.
+A sign-in turned away because the server is busy isn't a refused password, though imapflow marks
+any NO to LOGIN as one: RFC 5530's `[UNAVAILABLE]`, `[INUSE]`, `[LIMIT]` and `[SERVERBUG]`, and
+Gmail's "Too many simultaneous connections", are waited out like a lost connection, and so is an
+SMTP sign-in answered with a 4xx. Only that is read of what the server said; none of it is shown.
+Anything else that gets through to the server (a change, a draft going up, a copy filed in Sent, a
+message sent, a watch opening) takes "Couldn't reach" away too; any other error waits for a pass.
+
+A sync asked for while one is running (waking, the window coming back, F5, the button) goes once
+more when that one ends, however many times it was asked. The one running may be stuck on a
+connection that died with the lid shut, and turning the asks away left its error up until the next
+three-minute pass.
 
 A pass goes through each folder in turn, inbox first. For each it fetches what's missing, newest first,
 then applies label and flag changes, then forgets what's gone. A folder the server has stopped listing
@@ -209,9 +259,17 @@ stopping the rest.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
-- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
+- Mail is read on a thread of its own (`parser.ts`), so a long backfill doesn't make the window
+  stutter. A message that takes over 20 seconds to read is kept as one that can't be read, as any
+  other that fails is, and the thread, stuck on it, is replaced; left alone it held the account's
+  pass, and so its changes, drafts and Sent copies, until the app restarted. It isn't tried again
+  on the main process, where it would hang the window too.
+- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`:
+  64 MB of a message at most, past the 50 MB Gmail delivers, so a server can't have the laptop
+  hold more. A message bigger than that says it's too big to open here.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
-  and made again from the whole message the first time it's opened. A forward takes the files of the
+  and made again from the whole message the first time it's opened, one message of a thread at a
+  time, since each takes a connection. A forward takes the files of the
   whole message, whatever the list says.
 - Gmail's own unsent drafts are in All Mail too. They're kept hidden, so a thread doesn't show them.
 
@@ -224,9 +282,11 @@ so there's still one way into the store and the batches apply as usual. It waits
 been quiet for 750 ms first, so a burst of news is one sync. If the sync is already running it's asked
 to go again afterwards, because what changed may have missed it. The watch has its own connection, so
 a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
-it again, as it does after anything else on that connection. A lost connection is retried after a
-minute, and the three-minute passes carry on regardless, so watching can fail without anything being
-missed. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
+it again, as it does after anything else on that connection. A lost connection is retried after 2
+seconds, then 10 and 30, then every minute, and the three-minute passes carry on regardless, so
+watching can fail without anything being missed. A watch that opens again after being lost asks for
+a sync at once, since IDLE only tells of what happens from then on, and takes away "Couldn't reach",
+since the server has just answered. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
 left open, every minute's try added one, until the service refused the account for having too many.
 
 Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
@@ -235,9 +295,66 @@ line and Deliver now; the Summary keeps its own time. The batch times stay saved
 Settings saved before the switch existed are live exactly when they have no times, which is how they
 behaved; batches always have a time, so taking the last one away is going live.
 
-There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
-them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
-connection running that nothing will close. Gmail allows fifteen at once.
+There's one watch per account, counted from when it starts signing in. Waking from sleep, or the
+network changing, replaces them all, and an old one finishing its goodbye only ever clears its own
+place, so a wake can't leave a connection running that nothing will close. Gmail allows fifteen at
+once.
+
+### The log of failures
+
+Every connection that fails (a pass, a watch, a change, drafts, a copy for Sent, a message sent)
+adds a line to `sync.log` in the profile, so "Couldn't reach" can be looked into afterwards:
+
+```
+2026-11-23T01:02:03.456Z gmail:3f2a9c sync connect CONNECT_TIMEOUT 30012ms ipv4 142.250.4.108:993 timeout, ipv6 [2404:6800:4003:c00::6c]:993 no answer
+```
+
+The account is its service and the first six hex of a SHA-256 of its address. The stage is how far
+the connection got (`dns`, `connect`, `tls`, `greeting`, `login`, `command`, `idle` for a watch
+that had opened, `smtp`). Only codes are kept, Node's (`ECONNREFUSED`), imapflow's
+(`GREETING_TIMEOUT`), the IMAP status and response code (`NO [UNAVAILABLE]`) or an SMTP reply's
+number, each checked to be a short code: a server's words, which could carry anything, never go in.
+The addresses tried come from Node itself: `imapClient` and `SmtpSender` connect inside
+`noteAttempts`, and every socket opened meanwhile is followed through the `net.client.socket`
+diagnostics channel, each address with what came of it (`up`, `timeout` for Node's per-address
+wait, an error code, or `no answer` when the whole connection gave up first). That's the line that
+would have shown the VPN's IPv4 tries dropped after 250 ms and the IPv6 one swallowed. Past 256 KB
+the file becomes `sync.log.1` and a new one starts. A log that can't be written changes nothing.
+
+### Noticing the network change
+
+Linux tells an app nothing when a VPN reconnects, its kill switch comes up or the Wi-Fi changes, and
+a socket on the old route can take a minute to find out. So `network.ts` reads the interfaces and
+their addresses every 5 seconds (one system call) and, when they've changed and held for 2 seconds,
+does what waking does: every watch starts again, the quick tries start over, and every account
+syncs. The loopback isn't counted, nor the order the system lists them in.
+
+### Mail from before the window
+
+Only the keeping window is read, so a search would never find anything older. It asks the servers as
+well (`server-search.ts`), on read-only connections through `MailSource` like a sync. The search box
+shows what's kept here at once, and 500 ms after the text last changed every account is asked about
+mail from before the window: Gmail with `X-GM-RAW` over All Mail, in Gmail's own language and mostly
+as typed (`gmailQuery`), anything else with IMAP SEARCH in each folder but Trash and Junk
+(`imapPlan`), where a term without a SEARCH key is tried on the headers that come back. Both ask
+only about mail from before the window starts (to the next day, since a server's days are its own),
+so held mail stays out, and what's kept here already is left out of the answer.
+
+- Only the newest 200 found on each account are read, and only their headers (`HEADER.FIELDS`, with
+  `BODY.PEEK`), which is all a row needs. Their rows go below what's kept here, once that's all shown.
+- A new search, or leaving search, drops the connections of the one before at once, mid-command,
+  rather than waiting for a slow server to answer what nobody's asking any more.
+- A server that can't be reached, or won't search, adds nothing and says nothing: the search is what's
+  kept here, as it was before servers were asked.
+- Opening a row it found, or acting on one, fetches its thread first (`reach`, before `thread` and `act`
+  in the main process): on Gmail everything with its X-GM-THRID in All Mail, elsewhere whatever in a
+  folder sync reads names its first Message-ID (`Message-ID`, `References` or `In-Reply-To`), kept only
+  if it works out to the same thread. They're stored as ordinary rows, so the reader, Reply, every
+  action, attachments and Save as .eml work on them by folder and UID as on any, and listed in
+  `outside` with when they were last opened. No list, count, contact or subscription reads them but
+  their own thread, Pinned and Recently Seen. The keeping step at the end of a pass lets them go a
+  week after they were last opened, unless their thread is pinned, and once the window has grown to
+  take them in they're ordinary mail. What's in the window of such a thread is left for a sync.
 
 ## Staying open
 
@@ -246,6 +363,27 @@ notifications and mail set for later still work. Without a tray there would be n
 quits instead. Quitting properly runs `finishUp`: mail only waiting out Undo goes now, as do pending
 changes, within eight seconds. Mail scheduled for later stays scheduled; its time hasn't come, and
 sending early would be worse than sending late.
+
+### Notices
+
+Electron's Notification has no actions on Linux, so a notice for one message (`notifier.ts`) goes to
+the desktop's notification server through `notify-send` with Open, Archive and Mark read, after
+`gdbus` has asked the server whether it shows actions at all (asked again every ten minutes, since the
+server can be restarted or swapped). notify-send waits on the bus and prints the action chosen, and
+because it's the connection that sent the notice, it hears servers that tell only that connection
+(dunst, Plasma) as well as those that tell everyone (mako, Quickshell); a `gdbus monitor` beside a
+one-off `gdbus call` would miss the first kind. Archive and Mark read go through `act`, as the
+thread's buttons do, so they work with the window closed. A notice for several messages, a Summary's,
+and any desktop without notify-send, gdbus or actions keep Electron's plain notice, whose click opens
+the window. Both programs run without a shell, the words after `--`, and the body has `&`, `<` and `>`
+escaped, since a server may read it as markup. At most six notices wait on a button; the oldest stops
+waiting, and quitting stops them all.
+
+With Sound on, each notice plays `resources/new-mail.wav` through `pw-play`, or `paplay` where that
+fails, so it's heard with the window closed. It's two bell notes made from sine waves by
+`scripts/make-chime.mjs`, so no one else's recording is in the app, and it's unpacked from the archive
+with the icon so a player outside the app can read it. Only mail that's announced makes it: a muted
+sender's, an account with its notices off, and Other while only Focused is announced make none.
 
 ## The Assistant
 
@@ -269,17 +407,43 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
   any other, so it waits out Undo and goes through the same door. Nothing goes out unless a button is
   pressed.
 
-Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
-server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
-work and on a server that adds no line of its own the top one is too. The one thing a pass there
-does is let the pictures of a sender trusted for them load by themselves (`shared/images.ts`): on a
-server that adds no line, a sender who writes a passing one of their own above the rest still gets
-that far.
+Sender warnings only ever warn. They read the `Authentication-Results` lines the account's own
+server wrote, and a pass is never shown as a mark of trust. A server names itself at the start of
+its line (its authserv-id, RFC 8601 §5), so only lines with the account's server's name count
+(`receiverOf` in parse.ts): Gmail's are `mx.google.com` (so are a Workspace account's), Microsoft's
+name nobody, Yahoo, AOL, iCloud, Fastmail and Zoho sign under their own companies, and any other
+server under the company its IMAP server or the address belongs to. The top line counts if it's
+the server's, and so do the ones straight under it that the same server wrote under other names
+(iCloud writes one per check); the first naming anyone else, or a name already read, is where a
+sender's own begin, since servers put theirs on top. A failure is taken from the top line whoever
+wrote it, since a sender can only forge one against themselves. What a pass from those lines does:
+it lets the pictures of a sender trusted for them load by themselves (`shared/images.ts`), lets a
+company's logo show (Faces), and lets a list's headers excuse replies going elsewhere.
+
+- **Forged:** DMARC failed, or SPF and DKIM both did.
+- **Unverified:** SPF failed or soft-failed, and neither DMARC nor a DKIM signature of the From
+  line's domain spoke for it, as a spoof of a domain without DMARC is.
+- **From you:** your own address on mail the server checked and couldn't tie to your domain, by
+  DMARC, a DKIM signature or an SPF pass for it. What you sent never came in from outside, so it
+  has no such line and gets no warning.
+- **Name and address:** a name showing another address, a name with hidden characters (below), and
+  a domain with characters that can imitate others.
+- **Replies elsewhere:** Reply-To at another company, by the part of a domain that's bought
+  (`organization`), so bank.com.au and evil.com.au differ. List-Id, Precedence and Auto-Submitted
+  are the sender's own words, so they excuse it only on mail proved to be the sender's.
+
+Names, subjects and attachment names lose, as a message is read, the characters that turn text
+around (U+202A–202E, U+2066–2069), the marks that steer it (U+200E, U+200F, U+061C) and what draws
+nothing at all (`plainName`); the body keeps them, as the sender wrote it. U+202E turned
+`moc.lapyap@ytiruces` into a bold "security@paypal.com", and the check for a name showing another
+address saw it backwards, so a name that had any of the first kind is warned about. Names are drawn
+in `<bdi>`, so even a right-to-left one can't move the address beside it.
 
 A message's details show those results all the same, as Gmail's details do, labelled as what the
 receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
-strings are dropped before a result is looked for, only the top `Authentication-Results`,
-`Delivered-To` and the topmost `Received` line that names where it came from are read, every value is
+strings are dropped before a result is looked for, only the account's server's
+`Authentication-Results` (as above; none when the top line isn't its), the top `Delivered-To` and the
+topmost `Received` line that names where it came from are read, every value is
 cut short and stripped of control and bidirectional characters, and all of it is shown as text. They
 are kept with the message when it arrives (`details`, as JSON). Mail stored before that has none; the
 first time its details are opened its header alone is fetched, with `BODY.PEEK[HEADER]` so nothing
@@ -329,6 +493,42 @@ this reaches the server, where the mail sits in the inbox as usual.
   time, says so the same way instead of announcing its mail as new. Muted senders count in neither.
 - xrnhub hears only about batches.
 
+## Mail rules
+
+`shared/rules.ts` says what a rule is, and `cleanRule` cleans every one the page sends and the profile
+holds; `main/rules.ts` says whether one holds for a message and what the ones that hold ask for. They
+are kept in `rules`, in their order, and an id is never given out twice.
+
+- They run in `toStored` (`ruling` in `SyncOptions`), as a sync stores each new message and before
+  `holdOf`. A rule that archives, files or deletes makes it mail that doesn't wait, as a filter on
+  the server does. Let straight through and Add to Summary beat both sender lists (`Arrival.rule`),
+  since the rule was made for this message. Mute keeps it out of the sync's notice and the tick's
+  count. What only this laptop knows of is kept on the message (`by_rule`), so `retime` leaves a
+  rule's Summary alone.
+- Only new inbox mail is looked at: from after the account was added, not in Trash or Spam, not from a
+  blocked sender (it's going to Trash), and not while a folder starts over. Mail from before the
+  window that a search brings is stored by `addOutside`, never by a sync, so no rule sees it.
+- What they ask of the server goes through `change` once the message is stored, with no wait, so it's
+  shown at once, waits out being offline and is put back if refused, like anything done by hand. On
+  Gmail that's the labels, then the flags, then Archive or Delete; on a folder server the flags,
+  then one move: Delete, or else the first folder named, or else Archive. A change that would change
+  nothing isn't queued.
+- A message is looked at once. `rules_done` notes the account and Gmail's id, or the Message-ID, or
+  failing both a hash of sender, subject and arrival. A move on a server without UIDPLUS drops the
+  row, and the next sync stores the message again where it went; brought back to the inbox on the
+  phone, it would have been moved away again. The keeping step lets go of notes older than the
+  window and raises `rules-floor:<account>`, under which everything counts as looked at, so the mail
+  a longer window brings back isn't new.
+- A pattern is JavaScript's, which backtracks: `(a+)+$` over forty a's and a "!" doesn't finish. Each
+  runs in a `vm` context with a 50 ms limit, over the first 100,000 characters of each field, and one
+  that runs out never runs again until a restart, so it costs a pass 50 ms once. Patterns are 200
+  characters at most, and one that doesn't compile is turned down when the rule is saved.
+- Apply now runs one rule, on or off, over the inbox mail that can be seen (`ruleRows`): one group of
+  changes that waits out Undo, as a selection's would. It leaves out Add to Summary, straight through
+  and Mute, which are about mail arriving, and says how many messages it changed and what it did.
+- There's no forwarding. A rule forwarding to a mistyped address would send mail to a stranger, with
+  nobody seeing it go.
+
 ## Hostile mail
 
 A stranger writes every email, and the window holds a bridge to all of them. So there are several
@@ -341,13 +541,24 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
 4. The main process cancels every request from the page, whatever the CSP says, except images while
    "Show images" is on. That resets on leaving the thread. Images can be set to always load, or for
    one sender at a time, but that only presses the same button for you: it goes through the same switch
-   in the main process. The default is to ask. A sender's own load only on mail the top
-   `Authentication-Results` says is theirs, by DMARC or by a DKIM signature from their domain, since
-   anyone can write their address on a From line; the rest asks, as a stranger's does.
+   in the main process. The default is to ask. A sender's own load only on mail the account's server
+   says is theirs, by DMARC or by a DKIM signature from their domain, since anyone can write their
+   address on a From line; the rest asks, as a stranger's does.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
-   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
+   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning
+   (`shared/trackers.ts`). Invisible is two pixels or less however it's written (`1`, `1px`,
+   `max-width:1px`), or hidden. CSS is cleaned the same way, in style attributes and `<style>`: the
+   known services' pictures, any picture a rule loads only under the pointer or on a click, and
+   `@import`, and a cell's `background` from them goes too; `loading=lazy` is dropped, so a picture
+   far down can't say how far you read. CSS can name a picture in more ways than that can find, so
+   the main process refuses the known services' addresses even with Show images on. A picture sized
+   to nothing by a class in a style sheet still loads once allowed.
 6. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
+   A link whose words are an address or a domain at another company than the one it goes to, or
+   whose address puts a name before an @ (`https://paypal.com@evil.example/`), asks first: "Go to
+   evil.example?", with what it shows (`shared/links.ts`). Companies are told apart as for sender
+   warnings, so a newsletter's own click-tracking under its domain doesn't ask.
 7. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
    A page can't open a window. Only the main process does, for a thread or a draft, and that window
    is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
@@ -360,6 +571,15 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **The editor holds only what's typed.** A quoted message would otherwise put a stranger's HTML in the
   app's own page, next to the bridge. The quote stays out of the editor, is sanitised on its way into
   the draft, and shows only in a sandboxed frame. Pasting is as plain text, for the same reason.
+  A picture pasted or dropped is the one exception, and only as bytes: it becomes one of the draft's
+  files, marked with a Content-ID (only PNG, JPEG, GIF and WebP, by their own bytes; anything else is
+  attached), and the words name it `cid:…`. The editor shows it as a `data:` address the main process
+  makes from that file, and drops any other `<img>` whatever a draft says, so nothing in the editor
+  is ever fetched. Sending, and the copy in the service's Drafts, put each picture the words show in
+  a part of its own under `multipart/related`; pictures in what's quoted, which the reader holds as
+  `data:` addresses, go the same way. A picture taken out of the words stays on the draft until it's
+  sent, so Undo in the editor can put it back. The text part says `[image: name]` where each one
+  was, as Gmail's does, and a draft coming back from the server has its pictures put back there.
 - **Every reply starts in the composer.** Reply, Reply All and Forward at the foot of a thread open it,
   with the recipients, the address it goes from and the quote on show before anything is sent. There's
   no box under a thread to type into, as Edison has none, so all of a reply is decided where it can
@@ -367,14 +587,34 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **Files enter a draft only through the system's picker, or as bytes that were dropped or pasted.** The
   page never names a path, so a compromised page can't attach `~/.ssh/id_ed25519` and send it. Being able
   to send mail is the new thing a compromised page could do, which is why this line is held so firmly.
-- **Attachments are saved, or opened only if they can't run.** `canOpenDirectly` refuses scripts,
-  programs, `.desktop` files and anything that renders as a page. File names are cleaned before they're
+- **Attachments are saved, or opened only if they can't run.** Linux picks the program for a file by
+  its bytes, not its name: xdg-open asks `xdg-mime query filetype`, which looks inside, so a Java
+  archive called `invoice.pdf` is typed as a Java archive and handed to `java -jar`. So a name is
+  only the first test (`canOpenDirectly`, a list of documents, pictures, sound and film, plain text
+  and archives). `opening.ts` then reads the bytes themselves, and refuses programs, scripts,
+  launchers, Java archives under any name (a ZIP with a manifest, classes or the jar tool's mark),
+  Office files with macros, and anything that renders as a page. Last, it asks `xdg-mime` what the
+  written file is, run without a shell, and opens it only if that's a type of the same kind. With no
+  `xdg-mime` the bytes decide alone, except for old Office files, whose container is also an
+  installer's. Anything refused says "Save it to open", and a name that can't be opened saves
+  straight away. What's opened is written to a folder of its own in the temporary folder, named so it
+  can't be guessed and noted in the profile, and taken away when the app quits, or at the next start
+  if it didn't get to. Saving asks before writing over a file. File names are cleaned before they're
   suggested, so `../../.ssh/authorized_keys` can't climb out.
 - **Unsubscribing makes one fixed request.** The address comes from a stranger's header, so the app sends
-  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name, and
+  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name that
+  resolves to no address of this laptop, its network or the tailnet (as faces' lookups check), and
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft
   to read, never a message sent behind your back.
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.
+- **A mail file is a stranger's message with no server behind it.** `xrnmail some.eml` (or a file:
+  URL, as a launcher's `%U` gives) reads only a plain file, never a pipe or a device, of 64 MB at
+  most, parses it on the parser's thread and follows nothing in it (`letters.ts`). Its
+  Authentication-Results lines are words anyone could have written, so it's unverified, never
+  "from you", and no sender's pictures load by themselves. It's shown in a window of its own by a
+  token (`solo.ts` `file`), as `Letter.tsx`: the reader with nothing to archive, flag or move, behind
+  the same walls as mail. The page's calls for it (details, attachments, View original) use a number
+  below zero, so they can't be taken for a stored message's, and it's let go when the window closes.
 - **Blocking** matches the `From` address, which a sender writes, so it's a filter for nuisances and not
   a security wall. Mail it catches goes to Trash, where it can still be found.
 
@@ -395,18 +635,30 @@ wanted, rather than showing initials until its month is out.
 
 Each lookup tells someone something, so the rules are about when and how:
 
-- **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
-  mail that arrived after the account was added), and a list's rows, which ask for everyone they
-  name. The reader, the composer's suggestions and the drafts only ask what's already known
-  (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
-  with a sender warning ask nothing for that sender and show initials.
+- **When.** Only a list's rows ask for lookups, for everyone they name. Mail arriving doesn't
+  (the service's `noticed` is left unused): a lookup then told a sender, by a TXT query for a name
+  only they used and a logo fetched from where they said, that the address works and when the mail
+  got here, even for mail still waiting for its batch. The reader, the composer's suggestions and
+  the drafts only ask what's already known (`faces(addresses, false)`), so opening a message never
+  makes a request anyone else can see. Rows with a sender warning ask nothing for that sender and
+  show initials. With Show faces off (`faces` in Settings), nothing is looked up and only an
+  account's chosen photo shows; turning it off or on has the page ask for every face again.
+- **Logos.** A company's logo, BIMI or site icon, is looked up and shown only for an address whose
+  newest mail here passed DMARC by the account's own server (`Store.passedDmarc`), so for its own
+  domain: a stranger writing a company's address gets initials, and any domain can name any SVG in
+  its BIMI record, so one with no checks of its own can't put a bank's logo on its mail. A domain
+  that passes its own DMARC still shows whatever logo it names: the certificate a BIMI record can
+  point to (`a=`) isn't checked.
 - **How.** The main process does all of it with Node's own fetch, which the page's network walls
   don't cover and don't need to. Only https to a public name that resolves to no private, loopback,
   shared (carrier NAT, Tailscale) or link-local address, GET, no redirects, no cookies, a time
   limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
   from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
 - **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again
-  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. An
+  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. Their
+  size is read from their header before that (`pictureSize`), and one of more than four million
+  pixels (a chosen photo, a hundred million) isn't drawn at all, since a few kilobytes of JPEG can
+  say it's 60,000 pixels square and take gigabytes to decode in the main process. An
   SVG is shown only as an `<img>`, where scripts don't run and nothing loads, never placed in the
   page. A picture that fails to draw shows initials.
 - **Testing.** The sources are passed in. Unit tests answer from lists, and the UI tests from files
@@ -500,8 +752,26 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
-- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
-  signature and the rest is held once for every page until the field is left.
+- `Find.tsx`: the find bar over a thread. Electron's `findInPage` searches the whole window, the
+  list and sidebar beside the thread and the bar's own box with them, so the bar reads the thread's
+  words itself: the open messages under `.messages` and each message's frame (same-origin, so its
+  page can be read), a frame's words apart from the window's and a block's apart from the next.
+  Matching is `shared/find.ts`, case and marks folded one character at a time so a match maps back
+  to the text it came from. Matches are marked with the CSS Custom Highlight API in the page they're
+  in, which changes nothing in a message's page, and only what's drawn counts. It finds again when the
+  thread's page changes or a frame says it has drawn a new page (`xrn-shown`).
+- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name and
+  the rest is held once for every page until the field is left.
+- Signatures are a list in settings (`signatures`), each with its HTML, written in Settings with the
+  composer's own toolbar (`FormatBar`), and its text for the text part. A picture in one is a `data:`
+  image in that HTML, 512 KB at most since settings are read often, and goes as a part of the
+  message like a picture in the words; nothing of a signature is fetched or hosted anywhere.
+  `signatureFor` says which one each address signs with, an account's own or an alias, and an alias
+  with none chosen takes its account's. A draft keeps the one picked in the composer (`signature`,
+  `''` for none); a draft with none picked, and one whose From changes, takes its address's. It goes
+  under what's written and above the quote, as the one plain signature did. Settings saved before
+  there were several have each account's plain signature made into one of these with the same
+  words, its account's, once, the first time this version starts.
 
 Settings are saved as changes, never as a whole copy put back. Each save names only what it changes
 (`saveProfile`, `saveBatch` and `saveSummary` all take part of their settings, and an identity
@@ -535,7 +805,9 @@ conflict is settled by asking and then saving the change, with nothing else to k
 of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for itself (Tab, Enter,
 Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
 named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
-off the choosing instead of closing Settings.
+off the choosing instead of closing Settings. Send & Archive is pressed inside the composer, so its
+key has to be held with Ctrl or Alt (`WRITING`), or it would send as it was typed; no set gives it
+one, since none of their apps has it.
 
 Subscriptions say how much of each sender's mail is read (`Subscription.read` over `count`, from the
 `\Seen` flag, so read anywhere) and how much came in the last week, counted in the same query that

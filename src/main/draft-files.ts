@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { DraftFile } from '@shared/types'
 
@@ -42,6 +42,10 @@ export class DraftFiles {
     const { id, to } = this.place(draft)
     writeFileSync(to, bytes, { mode: 0o600 })
     return { id, name, size: bytes.length, type }
+  }
+
+  read(draft: number, file: Pick<DraftFile, 'id'>): Buffer {
+    return readFileSync(this.path(draft, file))
   }
 
   remove(draft: number, file: Pick<DraftFile, 'id'>): void {

@@ -1,6 +1,9 @@
-import { ImapFlow, type ListResponse } from 'imapflow'
+import { ImapFlow, type ListResponse, type SearchObject } from 'imapflow'
 import { createHash } from 'node:crypto'
+import type { TcpNetConnectOpts } from 'node:net'
+import type { ConnectionOptions } from 'node:tls'
 import type { Security } from '@shared/providers'
+import { noteAttempts } from './sync-log'
 
 /**
  * The mailbox, as syncing sees it. This interface has no way to change anything, and `ImapSource`
@@ -21,6 +24,14 @@ export interface RemoteMail extends RemoteHeader {
   arrived: number
   size: number
   source: Buffer
+}
+
+/** What a row of the list needs about a message, without its body. */
+export interface RemoteHeaders extends RemoteHeader {
+  thread: string
+  arrived: number
+  size: number
+  header: Buffer
 }
 
 export interface MailboxInfo {
@@ -96,12 +107,19 @@ export interface MailSource {
   changesSince(modseq: string): AsyncIterable<RemoteHeader>
   /** Flags as they are now, for servers that can't say what changed. */
   flagsOf(uids: number[]): AsyncIterable<RemoteHeader>
-  /** One message with nothing cut, for its attachments. */
-  whole(uid: number): Promise<Buffer | null>
+  /** One message with nothing cut, for its attachments: [TooBig] past [maxBytes], of which no more
+   *  is read. */
+  whole(uid: number, maxBytes: number): Promise<Buffer | null>
   /** One message's header alone, for its details. */
   header(uid: number): Promise<Buffer | null>
+  /** The UIDs a search finds in the folder open now. Throws if the server won't say. */
+  search(query: SearchObject): Promise<number[]>
+  /** The headers of these messages, read with BODY.PEEK so nothing is marked read. */
+  headers(uids: number[]): AsyncIterable<RemoteHeaders>
   done(): void
   close(): Promise<void>
+  /** Lets go of the connection at once, whatever it's waiting for: a search nobody wants any more. */
+  drop(): void
 }
 
 /** `none` exists only for the fake servers in tests: no account can be set up to use it. */
@@ -133,6 +151,18 @@ export interface ImapTimeouts {
  *  less than a minute; a big message coming in is never quiet that long. */
 export const IMAP_TIMEOUTS: ImapTimeouts = { connect: 30_000, greeting: 20_000, quiet: 60_000 }
 
+/** How long each of a server's addresses is given to answer before the next is tried, in ms.
+ *  Node tries them one at a time and drops each after 250 ms, except the last, which waits out the
+ *  whole connect time. Through a VPN to a far exit, Gmail takes 400 ms or more to answer, so every
+ *  IPv4 try was dropped and the connection ended on an IPv6 address the VPN's kill switch swallows,
+ *  waiting until the 30 seconds ran out: "Couldn't reach Gmail." This is long enough for a slow
+ *  route and one lost packet, and an address that's truly gone still hands over in seconds. */
+export const ADDRESS_ATTEMPT_MS = 2_500
+
+/** Handed to the socket as it's opened, alongside the certificate checks Node does by default. A
+ *  socket takes it, though the TLS options' type doesn't list it. */
+const SOCKET: ConnectionOptions & Pick<TcpNetConnectOpts, 'autoSelectFamilyAttemptTimeout'> = { autoSelectFamilyAttemptTimeout: ADDRESS_ATTEMPT_MS }
+
 /** Providers show app passwords in groups with spaces, which aren't part of them. */
 export const cleanSecret = (secret: string): string => secret.replace(/\s+/g, '')
 
@@ -149,17 +179,22 @@ export function imapClient(config: ImapConfig, extra: { maxIdleTime?: number; so
     secure: config.security === 'tls',
     auth: config.accessToken ? { user: config.user, accessToken: config.accessToken } : { user: config.user, pass: config.secret },
     logger: false,
-    doSTARTTLS: config.security === 'tls' ? undefined : config.security === 'starttls'
+    doSTARTTLS: config.security === 'tls' ? undefined : config.security === 'starttls',
+    tls: SOCKET
   })
   client.on('error', () => undefined) // the work in progress fails on its own; unhandled this ends the app
+  // Each address the connection tries is noted, for the log of failures.
+  const connect = client.connect.bind(client)
+  client.connect = () => noteAttempts(connect)
   return client
 }
 
 /** Waits on the inbox for something to happen there. It reads nothing and can change nothing. */
 export interface MailWatcher {
   /** Calls [changed] whenever the server says mail landed in the inbox, left it, or had its flags
-   *  changed (read or flagged elsewhere), and resolves when the connection ends. */
-  watch(changed: () => void): Promise<void>
+   *  changed (read or flagged elsewhere), and resolves when the connection ends. [opened] is told
+   *  once the inbox is open and being watched. */
+  watch(changed: () => void, opened?: () => void): Promise<void>
   close(): Promise<void>
 }
 
@@ -180,7 +215,9 @@ export class ImapWatcher implements MailWatcher {
    *  flagged or unflagged. Each only says to look; the sync does the reading. IDLE is broken and
    *  started again every few minutes (`maxIdleTime`), and imapflow starts it again by itself after
    *  anything else on this connection, so it's asked for once. */
-  async watch(changed: () => void): Promise<void> {
+  async watch(changed: () => void, opened?: () => void): Promise<void> {
+    let failed: unknown = null
+    this.client.on('error', (e: unknown) => (failed = e))
     const ended = new Promise<void>((resolve) => this.client.once('close', () => resolve()))
     try {
       await this.client.connect()
@@ -192,7 +229,9 @@ export class ImapWatcher implements MailWatcher {
     }
     for (const event of ['exists', 'expunge', 'flags']) this.client.on(event, () => changed())
     void this.client.idle().catch(() => undefined)
+    opened?.()
     await ended
+    if (failed) throw failed // what ended it, for the log
   }
 
   async close(): Promise<void> {
@@ -212,10 +251,24 @@ export function threadOf(references: string, inReplyTo: string, messageId: strin
 
 const labelsOf = (labels: Set<string> | undefined): string[] => [...(labels ?? [])]
 
+/** What a row of the list is made from, and what finds the rest of a thread on a server without
+ *  threads. Authentication-Results and Reply-To say whether the sender gets a warning. */
+const HEADERS_FOR_ROWS = [
+  'from', 'to', 'cc', 'reply-to', 'subject', 'date', 'message-id', 'in-reply-to', 'references', 'content-type',
+  'authentication-results', 'list-id', 'list-unsubscribe', 'precedence', 'auto-submitted'
+]
+
 /** The server said NO or BAD to a search. It carries the status imapflow's own refusals do, so an
  *  ordinary folder that won't be searched is skipped like one that won't open. */
 class SearchRefused extends Error {
   readonly responseStatus = 'NO'
+}
+
+/** A message bigger than a mail service takes, which isn't fetched whole. */
+export class TooBig extends Error {
+  constructor() {
+    super('Too big to open here.')
+  }
 }
 
 export class ImapSource implements MailSource {
@@ -322,15 +375,41 @@ export class ImapSource implements MailSource {
     }
   }
 
-  async whole(uid: number): Promise<Buffer | null> {
-    const found = await this.client.fetchOne(String(uid), { uid: true, source: true }, { uid: true })
-    return found ? (found.source ?? null) : null
+  async whole(uid: number, maxBytes: number): Promise<Buffer | null> {
+    const found = await this.client.fetchOne(String(uid), { uid: true, size: true, source: { maxLength: maxBytes } }, { uid: true })
+    if (!found) return null
+    if ((found.size ?? 0) > maxBytes || (found.source?.length ?? 0) > maxBytes) throw new TooBig()
+    return found.source ?? null
   }
 
   /** BODY.PEEK[HEADER]: reading it leaves the message unread. */
   async header(uid: number): Promise<Buffer | null> {
     const found = await this.client.fetchOne(String(uid), { uid: true, headers: true }, { uid: true })
     return found ? (found.headers ?? null) : null
+  }
+
+  async search(query: SearchObject): Promise<number[]> {
+    const found = await this.client.search(query, { uid: true })
+    if (found === false) throw new SearchRefused()
+    if (!Array.isArray(found)) throw new Error('The connection went during a search.')
+    return found
+  }
+
+  async *headers(uids: number[]): AsyncIterable<RemoteHeaders> {
+    if (uids.length === 0) return
+    const query = { uid: true, flags: true, internalDate: true, size: true, threadId: true, labels: true, headers: HEADERS_FOR_ROWS }
+    for await (const m of this.client.fetch(uids.join(','), query, { uid: true })) {
+      yield {
+        uid: m.uid,
+        labels: labelsOf(m.labels),
+        seen: m.flags?.has('\\Seen') ?? false,
+        flagged: m.flags?.has('\\Flagged') ?? false,
+        thread: m.threadId ?? '',
+        arrived: new Date(m.internalDate ?? Date.now()).getTime(),
+        size: m.size ?? 0,
+        header: m.headers ?? Buffer.alloc(0)
+      }
+    }
   }
 
   done(): void {
@@ -345,5 +424,10 @@ export class ImapSource implements MailSource {
     } catch {
       this.client.close()
     }
+  }
+
+  drop(): void {
+    this.done()
+    this.client.close()
   }
 }

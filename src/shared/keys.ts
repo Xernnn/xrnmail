@@ -6,14 +6,18 @@ export type KeySet = 'edison' | 'gmail' | 'apple' | 'outlook' | 'inbox'
 export type KeyCommand =
   | 'compose' | 'search' | 'next' | 'previous' | 'close' | 'reply' | 'replyAll' | 'forward' | 'archive' | 'trash' | 'removeFromView'
   | 'flag' | 'pin' | 'labels' | 'read' | 'unread' | 'toggleRead' | 'spam' | 'snooze' | 'select' | 'selectAll' | 'undo' | 'sync' | 'help'
+  | 'find'
+  /** In the composer, so only a key held with Ctrl or Alt: none of the sets' own apps has one. */
+  | 'sendArchive'
 
 /** Every command, in the order Settings and the list of keys show them, with what it does in words. */
 export const COMMANDS: [KeyCommand, string][] = [
-  ['compose', 'New message'], ['search', 'Search'], ['next', 'Next thread'], ['previous', 'Previous thread'], ['close', 'Close'],
+  ['compose', 'New message'], ['search', 'Search'], ['find', 'Find in message'], ['next', 'Next thread'], ['previous', 'Previous thread'], ['close', 'Close'],
   ['reply', 'Reply'], ['replyAll', 'Reply all'], ['forward', 'Forward'], ['archive', 'Archive'], ['removeFromView', 'Remove from view'],
   ['trash', 'Delete'], ['spam', 'Report spam'], ['flag', 'Flag'], ['pin', 'Pin'], ['labels', 'Labels or Move to'],
   ['read', 'Mark read'], ['unread', 'Mark unread'], ['toggleRead', 'Mark read or unread'], ['snooze', 'Snooze'],
-  ['select', 'Select'], ['selectAll', 'Select all'], ['undo', 'Undo'], ['sync', 'Check for mail'], ['help', 'These keys']
+  ['select', 'Select'], ['selectAll', 'Select all'], ['undo', 'Undo'], ['sync', 'Check for mail'], ['help', 'These keys'],
+  ['sendArchive', 'Send & Archive']
 ]
 
 const isCommand = (value: unknown): value is KeyCommand => COMMANDS.some(([command]) => command === value)
@@ -38,13 +42,19 @@ const MODIFIERS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsL
 export const RESERVED: Record<string, string> = {
   'Ctrl+N': 'New Message in the menu', 'Ctrl+,': 'Settings in the menu', 'Ctrl+P': 'Print in the menu', 'Ctrl+W': 'Close Window in the menu',
   'Ctrl+Q': 'Quit in the menu', 'Ctrl+F': 'Search in the menu', F5: 'Check for Mail in the menu', F1: 'Keyboard Shortcuts in the menu',
-  'Ctrl+Enter': 'sending', Enter: 'pressing what has the focus', ' ': 'pressing what has the focus', Tab: 'moving the focus', 'Shift+Tab': 'moving the focus'
+  'Ctrl+Enter': 'sending', Enter: 'pressing what has the focus', ' ': 'pressing what has the focus', Tab: 'moving the focus', 'Shift+Tab': 'moving the focus',
+  F3: 'finding in a message', 'Shift+F3': 'finding in a message'
 }
 
-/** Why a press can't be a key of its own, if it can't: half a press, or the menu's or a page's own. */
-export function unbindable(name: string, key: string): string | null {
+/** Commands pressed while writing, whose key mustn't be one that types. */
+export const WRITING: readonly KeyCommand[] = ['sendArchive']
+
+/** Why a press can't be a key of its own, if it can't: half a press, or the menu's or a page's own,
+ *  or for a command pressed while writing, a key that types. */
+export function unbindable(name: string, key: string, command?: KeyCommand): string | null {
   if (MODIFIERS.has(key)) return 'Hold it with another key.'
   if (name in RESERVED) return `${spell(name)} is for ${RESERVED[name]}.`
+  if (command && WRITING.includes(command) && !/^(Ctrl|Alt)\+/.test(name)) return 'Hold it with Ctrl or Alt.'
   return name.length > 40 ? 'That press has no name.' : null
 }
 
@@ -68,32 +78,39 @@ export const KEYS: Record<KeySet, Record<string, KeyCommand>> = {
     ...SHARED,
     d: 'compose', 'Ctrl+R': 'reply', 'Ctrl+Shift+R': 'replyAll', 'Ctrl+Shift+F': 'forward', 'Ctrl+Alt+A': 'archive',
     'Shift+Backspace': 'trash', Backspace: 'removeFromView', Delete: 'removeFromView', 'Ctrl+S': 'flag', 'Ctrl+Shift+M': 'labels',
-    I: 'read', 'Ctrl+Shift+U': 'unread', _: 'unread'
+    I: 'read', 'Ctrl+Shift+U': 'unread', _: 'unread',
+    // Edison names no key for finding in a message, and its Ctrl+Shift+F forwards: Ctrl+G is the
+    // Find Next of Apple Mail, Outlook and browsers.
+    'Ctrl+G': 'find'
   },
-  gmail: { ...SHARED, Delete: 'trash' },
+  /** Gmail has no key of its own for finding in a message, which is the browser's Ctrl+F there. */
+  gmail: { ...SHARED, Delete: 'trash', 'Ctrl+Shift+F': 'find' },
   /** Apple's "Keyboard shortcuts in Mail on Mac". It leaves out what Mail's menus show: Delete deletes,
-   *  Shift-Command-L flags, and Option-Command-F searches the mailbox. Command-N is the menu's here too. */
+   *  Shift-Command-L flags, and Option-Command-F searches the mailbox. Command-N is the menu's here too,
+   *  and so is Command-F, Mail's Find, so finding in a message is its Find Next, Command-G. */
   apple: {
     ...BASE,
     'Ctrl+R': 'reply', 'Ctrl+Shift+R': 'replyAll', 'Ctrl+Shift+F': 'forward', 'Ctrl+Alt+A': 'archive', 'Ctrl+Shift+J': 'spam',
     'Ctrl+Shift+U': 'toggleRead', 'Ctrl+Shift+N': 'sync', 'Ctrl+Z': 'undo', Backspace: 'trash', Delete: 'trash',
-    'Ctrl+Shift+L': 'flag', 'Ctrl+Alt+F': 'search', 'Ctrl+A': 'selectAll'
+    'Ctrl+Shift+L': 'flag', 'Ctrl+Alt+F': 'search', 'Ctrl+A': 'selectAll', 'Ctrl+G': 'find'
   },
   /** Microsoft's "Keyboard shortcuts in Outlook for Mac". Its Delete is the Mac's, which is Backspace
-   *  here, and both its flags (for today, and with no date) are a flag. Command-N is the menu's. */
+   *  here, and both its flags (for today, and with no date) are a flag. Command-N is the menu's, and
+   *  Command-F too, so finding in a message is its Find Next, Command-G. */
   outlook: {
     ...BASE,
     'Ctrl+R': 'reply', 'Ctrl+Shift+R': 'replyAll', 'Ctrl+J': 'forward', 'Ctrl+Shift+M': 'labels', 'Ctrl+Shift+J': 'spam',
     Backspace: 'trash', Delete: 'trash', 'Ctrl+E': 'archive', 'Ctrl+T': 'read', 'Ctrl+Shift+T': 'unread',
     'Ctrl+[': 'previous', 'Ctrl+]': 'next', 'Ctrl+1': 'flag', 'Ctrl+5': 'flag', 'Ctrl+Alt+F': 'search', 'Ctrl+Shift+F': 'search',
-    'Ctrl+Alt+K': 'sync', 'Ctrl+A': 'selectAll', 'Ctrl+Z': 'undo'
+    'Ctrl+Alt+K': 'sync', 'Ctrl+A': 'selectAll', 'Ctrl+Z': 'undo', 'Ctrl+G': 'find'
   },
   /** Inbox by Gmail's, as its own Shift+? list had them. Done is archiving here, and a pin was Inbox's
-   *  mark where Gmail has a star. */
+   *  mark where Gmail has a star. Finding in a message was the browser's, as in Gmail. */
   inbox: {
     ...BASE,
     c: 'compose', '/': 'search', j: 'next', k: 'previous', u: 'close', r: 'reply', a: 'replyAll', f: 'forward',
-    e: 'archive', y: 'archive', '[': 'archive', ']': 'archive', '#': 'trash', s: 'snooze', P: 'pin', z: 'undo'
+    e: 'archive', y: 'archive', '[': 'archive', ']': 'archive', '#': 'trash', s: 'snooze', P: 'pin', z: 'undo',
+    'Ctrl+Shift+F': 'find'
   }
 }
 
@@ -148,7 +165,7 @@ export function cleanChanges(value: unknown): KeyChanges {
   const entries = value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : []
   for (const [command, key] of entries.reverse()) {
     if (!isCommand(command) || command in clean || typeof key !== 'string' || key.length > 40) continue
-    if (key && (key in RESERVED || used.has(key))) continue
+    if (key && (key in RESERVED || used.has(key) || (WRITING.includes(command) && !/^(Ctrl|Alt)\+/.test(key)))) continue
     used.add(key)
     clean[command] = key
   }
@@ -169,9 +186,20 @@ export function spell(name: string): string {
   return name.replace('Escape', 'Esc').replace(/^Delete$|(\+)Delete$/, '$1Del').replace(/Arrow(Down|Up|Left|Right)/, '$1')
 }
 
+/** The key a tooltip names beside an action: the first of the first command given that has one in
+ *  the set as changed, spelt for reading. None when none of them has a key. */
+export function hintFor(set: KeySet, changes: KeyChanges = {}, ...commands: KeyCommand[]): string | undefined {
+  for (const command of commands) {
+    const [key] = keysOf(set, changes, command)
+    if (key) return spell(key)
+  }
+  return undefined
+}
+
 /** What can't be changed, at the end of every list. */
 export const FIXED: [string, string][] = [
-  ['Ctrl+N', 'New message'], ['Ctrl+F', 'Search'], ['Ctrl+Enter', 'Send'], ['F5', 'Check for mail'], ['F1', 'These keys']
+  ['Ctrl+N', 'New message'], ['Ctrl+F', 'Search'], ['Ctrl+Enter', 'Send'], ['F5', 'Check for mail'], ['F1', 'These keys'],
+  ['F3, Shift+F3', 'Next or previous match']
 ]
 
 /** A set with its changes, for reading: each command that has a key, its keys, then what's fixed. */

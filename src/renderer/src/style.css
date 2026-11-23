@@ -336,6 +336,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .bulk .icon { color: var(--on-primary); }
 .bulk .icon:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); color: var(--on-primary); }
 .bulk .popover { color: var(--text); }
+/* A menu from the bar opens over the whole bar, clear of its count, Select All and Cancel. */
+.bulk-tools .anchor { position: static; }
 .bulk :focus-visible { outline-color: var(--on-primary); }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12.5px; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
 .pill:hover { background: var(--hover-solid); border-color: var(--outline); }
@@ -372,12 +374,15 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .count { flex: none; font-size: 15px; }
 .thread.unread .count { font-weight: 700; }
 .thread time { flex: none; margin-left: auto; padding-left: 10px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.thread time.back { display: inline-flex; align-items: center; gap: 4px; }
 .thread-mid { display: flex; align-items: center; gap: 6px; min-width: 0; height: 22px; }
 .subject { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .thread.unread .subject { font-weight: 700; }
 .mark { flex: none; color: var(--muted); }
 .mark.flag { color: var(--star); fill: currentColor; }
 .mark.pin { color: var(--accent); fill: currentColor; }
+.mark.remind { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
+.mark.reminded { color: var(--accent); }
 .mark.important { opacity: 0.8; }
 .snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--preview-lines, 2); overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 14px; line-height: 20px; }
 .cards { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 6px; overflow: hidden; }
@@ -477,8 +482,18 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .icon.on { color: var(--star); }
 .icon.on svg { fill: currentColor; }
 .anchor { position: relative; }
+.row-snooze { position: fixed; z-index: 20; width: 0; height: 0; }
 .back { display: none; }
 .messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px calc(28px + var(--details-room, 0px)); overflow-y: auto; }
+.find-bar { flex: none; display: flex; align-items: center; gap: 4px; height: 36px; margin: 0 22px 8px 30px; padding: 0 6px 0 12px; border-radius: 8px; background: var(--field); color: var(--muted); }
+.find-bar:focus-within { background: var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+.find-bar input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 14px; }
+.find-bar input::placeholder { color: var(--muted); }
+.find-bar input:focus-visible { outline: none; box-shadow: none; }
+.find-bar .icon:disabled { opacity: 0.35; }
+.find-count { flex: none; padding: 0 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+::highlight(xrn-find) { background: color-mix(in srgb, var(--star) 35%, transparent); }
+::highlight(xrn-find-now) { background: var(--star); color: #1c1f24; }
 .thread-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }
 .thread-head.marked { padding-left: 18px; }
 .account-bar { position: absolute; left: 0; top: 6px; bottom: 14px; width: 6px; border-radius: 3px; }
@@ -619,6 +634,12 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .chips input { width: 120px; padding: 5px 9px; }
 .chip { padding: 5px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .line { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.signature-card { display: grid; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.signature-card > .line { padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.signature-card > .line input { border: 0; background: transparent; font-weight: 600; }
+.signature-editor { min-height: 90px; padding: 10px 14px; font-size: 14px; color: var(--text); }
+.signature-card .format { border-bottom: 0; }
+.signature-card .error { padding: 0 14px 10px; }
 
 .add-account { display: grid; gap: 12px; }
 .settings .add-account { max-width: 480px; }
@@ -657,6 +678,15 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .shortcut-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .shortcut-actions .quiet { padding: 4px 10px; }
 .shortcuts > .quiet { justify-self: start; margin-top: 14px; }
+
+/* Settings, Rules: a rule a line, and in the editor a condition or an action a line. */
+.rule-row { min-height: 40px; border-bottom: 1px solid var(--line-soft); }
+.rule-move { display: inline-flex; }
+.rule-part select { flex: none; width: auto; padding-block: 6px; }
+.rule-part select.grow { flex: 1; }
+.rule-part input { padding-block: 6px; }
+.rule-buttons { display: flex; gap: 8px; }
+.rule-editor > .row-end { max-width: 620px; padding: 4px 0 18px; }
 
 /* The Summary's schedule, in Settings and on first use: Daily or Weekly, then the time. */
 .schedule { display: grid; gap: 10px; max-width: 380px; }

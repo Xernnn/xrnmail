@@ -1,5 +1,6 @@
 import type { KeyChanges, KeySet } from './keys'
 import type { LaterTimes } from './later'
+import type { MailRule, RuleApplied, RuleEdit } from './rules'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -78,6 +79,8 @@ export interface BatchSettings {
 /** Who you are when writing from an account. */
 export interface Identity {
   name: string
+  /** The plain signature of versions before there were several. It becomes one of `signatures` the
+   *  first time settings are read, and is empty from then on. */
   signature: string
   /** Other addresses this account can send from. */
   aliases: string[]
@@ -89,6 +92,18 @@ export interface Identity {
 
 export interface Template {
   name: string
+  text: string
+  /** The subject it gives a message that has none yet. */
+  subject?: string
+}
+
+/** A signature, written with the composer's own toolbar. A picture in it is a data: image in its
+ *  HTML, sent as a part of the message of its own, never fetched from anywhere. */
+export interface Signature {
+  id: string
+  name: string
+  html: string
+  /** The same, as text, for the text part. */
   text: string
 }
 
@@ -109,6 +124,11 @@ export interface Settings {
   hub: { url: string; user: string; connected: boolean }
   /** By account email. */
   identities: Record<string, Identity>
+  /** Every signature, in the order Settings shows them. */
+  signatures: Signature[]
+  /** Which signature goes under mail from each of your addresses, an account's own or an alias, by
+   *  address: a signature's id, or '' for none. An alias with nothing chosen takes its account's. */
+  signatureFor: Record<string, string>
   templates: Template[]
   /** Addresses or @domains whose new mail goes straight to Trash. */
   blocked: string[]
@@ -116,6 +136,8 @@ export interface Settings {
   muted: string[]
   /** With the inbox split, only mail in Focused is announced. */
   notifyFocusedOnly: boolean
+  /** New mail's notice comes with a short chime. */
+  sound: boolean
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
   /** How long Undo is offered after archiving, deleting, moving and the rest, and how long the change
@@ -182,6 +204,8 @@ export interface Settings {
   later: LaterTimes
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
+  /** Faces are looked up: Gravatar photos, company logos and site icons. Off, everyone has initials. */
+  faces: boolean
 }
 
 /** A picture for an address: a person's photo, or a company's logo, as a data: address. */
@@ -189,6 +213,13 @@ export interface Face {
   url: string
   /** A logo is drawn whole on white; a photo fills its circle. */
   logo: boolean
+}
+
+/** A thread comes back to the inbox at [at] if nobody else has written in it by then. [fired] once
+ *  it has. */
+export interface Reminder {
+  at: number
+  fired: boolean
 }
 
 export interface ThreadRow {
@@ -207,6 +238,8 @@ export interface ThreadRow {
   important: boolean
   /** Set while it's away, and for a while after it comes back. */
   snoozedUntil: number | null
+  /** When it comes back to the inbox if nobody else writes, and whether it has. */
+  remind?: Reminder | null
   facts: Facts | null
   /** Who wrote in it, oldest first, each once. */
   people: Address[]
@@ -221,6 +254,8 @@ export interface ThreadRow {
   summaryAt: number | null
   /** Its newest message has a sender warning, so it's shown with initials whatever pictures there are. */
   warned: boolean
+  /** Found on the server by a search, from before the mail kept here. */
+  older?: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */
@@ -237,7 +272,7 @@ export type Facts =
 export type AssistantSection = 'packages' | 'travel' | 'money' | 'events'
 
 /** Why a sender may not be who they say. Words for each are in the page; a server's are never shown. */
-export type SenderWarning = 'forged' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere'
+export type SenderWarning = 'forged' | 'self' | 'unverified' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere' | 'hidden'
 
 export interface Subscription {
   account: string
@@ -318,6 +353,8 @@ export interface MessageView {
   replyTo: Address[]
   /** Its thread is kept under Pinned. */
   pinned: boolean
+  /** Its thread's reminder. */
+  remind?: Reminder | null
 }
 
 export interface LabelCount {
@@ -354,7 +391,7 @@ export interface SummaryOverview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'reminders' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
   /** [keep] is the open thread, which stays listed while it's read. */
   | { kind: 'unread'; account?: string; keep?: ThreadRef }
   | { kind: 'label'; account: string; label: string }
@@ -362,6 +399,13 @@ export type ListQuery =
   | { kind: 'assistant'; section: AssistantSection }
   /** A sender's page: their threads on one account. */
   | { kind: 'from'; account: string; address: string }
+
+/** The signature that goes under mail from [from], an address of [account]'s: the one chosen for it,
+ *  or for an alias with none chosen, the account's. */
+export function signatureFor(settings: Pick<Settings, 'signatures' | 'signatureFor'>, account: string, from: string): Signature | null {
+  const chosen = settings.signatureFor[(from || account).toLowerCase()] ?? settings.signatureFor[account.toLowerCase()] ?? ''
+  return settings.signatures.find((s) => s.id === chosen) ?? null
+}
 
 /** Gmail's label for mail it thinks matters, which its importance markers show. It's added and taken
  *  off as any label is. */
@@ -378,7 +422,12 @@ export interface DraftFile {
   name: string
   size: number
   type: string
+  /** A picture placed in the words, which name it by this Content-ID, rather than attached. */
+  cid?: string
 }
+
+/** The pictures that go in a message's words when pasted or dropped there. Anything else is attached. */
+export const INLINE_PICTURES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
 /** The message being answered or passed on. Its HTML comes from a stranger, so the composer
  *  sanitises it before saving or sending, and it's never placed in the app's own page. */
@@ -401,6 +450,8 @@ export interface Draft {
   to: string
   cc: string
   bcc: string
+  /** Where replies are to go, when not to the address it's from. */
+  replyTo?: string
   subject: string
   /** What the person wrote. */
   html: string
@@ -409,6 +460,14 @@ export interface Draft {
   inReplyTo: string
   references: string
   files: DraftFile[]
+  /** The signature under it: a signature's id, '' for none, or, not chosen, its From address's. */
+  signature?: string
+  /** The thread a reply or forward was started from. */
+  about?: ThreadRef
+  /** Once it has gone, it comes back to the inbox at this time if nobody else has written. */
+  remind?: number
+  /** Not kept: that thread is in the inbox now, so Send & Archive is offered. */
+  archivable?: boolean
   /** An answer to a calendar invitation, sent as one. */
   ical?: string
   state: DraftState
@@ -417,7 +476,7 @@ export interface Draft {
   updated: number
 }
 
-export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote'>
+export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'replyTo' | 'subject' | 'html' | 'text' | 'quote' | 'signature' | 'remind'>
 
 export type DraftStart =
   | { kind: 'new'; account?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string }
@@ -436,9 +495,9 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'signatures' | 'signatureFor' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'sound' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder'>> & {
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder' | 'faces'>> & {
   /** Only the times named. */
   later?: Partial<LaterTimes>
 }
@@ -487,6 +546,15 @@ export interface MailApi {
   editSenders(list: SenderList, addresses: string[], on: boolean): Promise<void>
   /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
   summarySenders(): Promise<Subscription[]>
+  /** The mail rules, in their order. */
+  mailRules(): Promise<MailRule[]>
+  /** A rule kept, new without an id; it comes back as kept. */
+  saveRule(rule: RuleEdit): Promise<MailRule>
+  deleteRule(id: number): Promise<void>
+  /** A rule to [to] in the order, counting from 0. */
+  moveRule(id: number, to: number): Promise<void>
+  /** Runs a rule over the inbox kept here now, with Undo. */
+  applyRule(id: number): Promise<RuleApplied>
   saveBackfill(days: number): Promise<void>
   connectHub(url: string, user: string, secret: string): Promise<void>
   disconnectHub(): Promise<void>
@@ -495,11 +563,16 @@ export interface MailApi {
   finishEarly(): Promise<number>
   /** Lets remote images load, for the message on screen only. */
   allowRemoteImages(allow: boolean): Promise<void>
-  /** Applies at once here and reaches Gmail shortly after. Returns what undoes it. */
-  act(targets: ThreadRef[], action: MailAction): Promise<number>
+  /** Applies at once here and reaches Gmail shortly after: with [undoable], once Undo has had its
+   *  time, as what takes mail away always does. Returns what undoes it. */
+  act(targets: ThreadRef[], action: MailAction, undoable?: boolean): Promise<number>
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
+  /** Brings a message you sent, and its thread, back to the inbox at [until] if nobody else has
+   *  written in it by then. */
+  remind(message: number, until: number): Promise<void>
+  unremind(targets: ThreadRef[]): Promise<void>
   /** Keeps threads under Pinned, or lets them go. It's kept on this laptop: mail servers have no such mark. */
   pin(targets: ThreadRef[], on: boolean): Promise<void>
   block(address: string): Promise<void>
@@ -532,7 +605,8 @@ export interface MailApi {
   /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the
    *  scenes, and `onFaces` says when there are more. Only lists look up; opening a message doesn't. */
   faces(addresses: string[], lookUp: boolean): Promise<Record<string, Face | null>>
-  onFaces(listener: () => void): () => void
+  /** [again] says every face known so far is to be asked for again: Faces was turned off or on. */
+  onFaces(listener: (again: boolean) => void): () => void
   /** A photo for one of your accounts, from the system's file picker, kept on this laptop. Says
    *  whether one was chosen. */
   choosePhoto(account: string): Promise<boolean>
@@ -543,6 +617,11 @@ export interface MailApi {
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
   openDraftWindow(id: number): Promise<void>
+  /** The message of a file opened in a window of its own, named by its token, read-only. Its id is
+   *  below zero. Throws why when the file couldn't be read. */
+  letter(token: string): Promise<MessageView>
+  /** A reply to that message, or a forward, in a composer of its own. */
+  replyToLetter(token: string, kind: 'reply' | 'replyAll' | 'forward'): Promise<void>
   /** Makes a folder, or on Gmail a label, on the server there and then. A slash puts it inside another.
    *  Returns its path as the server has it. */
   createFolder(account: string, name: string): Promise<string>
@@ -555,19 +634,33 @@ export interface MailApi {
   /** A composer has this draft open, or has let it go. While one has, what the server says about the
    *  draft leaves it as it is here. */
   holdDraft(id: number, on: boolean): Promise<void>
-  discardDraft(id: number): Promise<void>
+  /** With [undoable], it waits out Undo before it goes for good, out of Drafts meanwhile. */
+  discardDraft(id: number, undoable?: boolean): Promise<void>
+  /** Undo for a draft thrown away. */
+  undiscardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
-  addFile(id: number, name: string, type: string, bytes: ArrayBuffer): Promise<Draft>
+  /** With [inline], a picture for the words, which the draft names by its `cid`; one that isn't a
+   *  picture by its own bytes is attached. */
+  addFile(id: number, name: string, type: string, bytes: ArrayBuffer, inline?: boolean): Promise<Draft>
+  /** A picture in a draft's words, as a data: address for the composer to show. */
+  draftPicture(id: number, file: string): Promise<string>
   removeFile(id: number, file: string): Promise<Draft>
   /** With [at], waits until then; otherwise it waits out the undo time. Returns when it will leave. */
   send(id: number, at?: number): Promise<number>
+  /** Sends as `send` does, and archives the thread it answers or passes on, for as long as Undo of
+   *  the send lasts before the server hears: [undo] undoes the archiving. */
+  sendAndArchive(id: number): Promise<{ when: number; undo: number }>
   /** Calls a queued message back. */
   unsend(id: number): Promise<void>
   saveProfile(patch: ProfilePatch): Promise<void>
   openInGmail(email: string, thread: string): Promise<void>
   /** A link from a message or the app. Only web and mail addresses open. */
   openLink(url: string): Promise<void>
+  /** Whether mail links open here ('default'), elsewhere ('other'), or can't be set here ('none'). */
+  mailLinks(): Promise<'default' | 'other' | 'none'>
+  /** Makes mail links open here, and says the same as mailLinks after. */
+  useForMailLinks(): Promise<'default' | 'other' | 'none'>
   onChanged(listener: () => void): () => void
   /** A mail address was opened, from a message or the system, and here's the draft for it. */
   onCompose(listener: (draft: Draft) => void): () => void

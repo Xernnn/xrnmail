@@ -14,6 +14,14 @@ export class FakeSmtp {
   delivered: (raw: string) => void = () => undefined
   /** Takes this token and no password. */
   token: string | null = null
+  /** Answers AUTH with this, a busy server's 454 say, whatever the password. */
+  authAnswer: string | null = null
+  /** Connections taken so far. */
+  connections = 0
+  /** Takes a connection and says nothing on it, not even hello, as a server slow to answer. */
+  silent = false
+  /** Hangs up on every connection after this many, as a network that goes between two. */
+  refuseAfter: number | null = null
   private server: Server | null = null
   private sockets = new Set<Socket>()
 
@@ -40,6 +48,9 @@ export class FakeSmtp {
     this.sockets.add(socket)
     socket.on('error', () => undefined)
     socket.on('close', () => this.sockets.delete(socket))
+    this.connections++
+    if (this.refuseAfter !== null && this.connections > this.refuseAfter) return void socket.destroy()
+    if (this.silent) return
     socket.write('220 fake ESMTP\r\n')
     let from = ''
     let to: string[] = []
@@ -72,6 +83,7 @@ export class FakeSmtp {
         }
         const verb = line.split(/[ :]/)[0]?.toUpperCase()
         if (verb === 'EHLO' || verb === 'HELO') socket.write(`250-fake\r\n250-AUTH PLAIN LOGIN${this.token ? ' XOAUTH2' : ''}\r\n250 8BITMIME\r\n`)
+        else if (verb === 'AUTH' && this.authAnswer) socket.write(`${this.authAnswer}\r\n`)
         else if (verb === 'AUTH') {
           const given = Buffer.from(line.split(' ')[2] ?? '', 'base64').toString()
           const fine = this.token ? given.includes(`auth=Bearer ${this.token}`) : given.endsWith(`\0${this.secret}`)
