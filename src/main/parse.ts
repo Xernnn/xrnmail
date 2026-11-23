@@ -1,8 +1,11 @@
 import { htmlToText } from 'html-to-text'
 import { simpleParser, type AddressObject, type Attachment } from 'mailparser'
+import { plainName, reorders } from '@shared/names'
 import { splitQuoted } from '@shared/quoted'
-import type { Address, AttachmentInfo, HeaderDetails, SenderWarning } from '@shared/types'
-import { headerDetails } from './details'
+import { authenticated } from '@shared/images'
+import type { AccountConfig, Address, AttachmentInfo, HeaderDetails, SenderWarning } from '@shared/types'
+import { organization } from './avatars'
+import { headerDetails, trustedChecks } from './details'
 import { inviteOf, type Invite } from './invite'
 
 /** The most of one message kept on this laptop. Attachments are the usual reason to go past it,
@@ -42,18 +45,23 @@ export interface ParsedMail {
   /** Sent to a list or by a machine, by its own headers. */
   bulk: boolean
   warnings: SenderWarning[]
+  /** Its Authentication-Results lines, top first, for reading again once the account is known. */
+  authentication: string[]
   invite: Invite | null
   /** Where it came from and how, for its details. */
   details: HeaderDetails
 }
 
-function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
+/** The people a header names. Their names lose what turns text around or draws nothing, unless
+ *  [asWritten], for a warning to see what the sender did. */
+function addresses(field: AddressObject | AddressObject[] | undefined, asWritten = false): Address[] {
   const found: Address[] = []
+  const named = (name: string | undefined): string => (asWritten ? name ?? '' : plainName(name ?? ''))
   for (const group of Array.isArray(field) ? field : field ? [field] : []) {
     for (const item of group.value) {
-      if (item.address) found.push({ name: item.name ?? '', address: item.address })
+      if (item.address) found.push({ name: named(item.name), address: item.address })
       for (const member of item.group ?? []) {
-        if (member.address) found.push({ name: member.name ?? '', address: member.address })
+        if (member.address) found.push({ name: named(member.name), address: member.address })
       }
     }
   }
@@ -64,13 +72,16 @@ function attachmentInfo(parts: Attachment[]): AttachmentInfo[] {
   // Pictures placed in the body aren't things to list as attachments.
   return parts
     .filter((a) => !a.related)
-    .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, size: a.size }))
+    .map((a) => ({ name: plainName(a.filename ?? 'attachment'), type: a.contentType, size: a.size }))
 }
 
 const headerValue = (lines: readonly { key: string; line: string }[], key: string): string => {
   const found = lines.find((h) => h.key === key)?.line ?? ''
   return found.slice(found.indexOf(':') + 1).replace(/\r?\n[ \t]*/g, ' ').trim()
 }
+
+const allValues = (lines: readonly { key: string; line: string }[], key: string): string[] =>
+  lines.filter((h) => h.key === key).map((h) => h.line.slice(h.line.indexOf(':') + 1).replace(/\r?\n[ \t]*/g, ' ').trim())
 
 /** A header a stranger wrote: only what's between angle brackets, and only web and mail addresses. */
 export function parseUnsubscribe(list: string, post: string): Unsubscribe | null {
@@ -87,37 +98,89 @@ export function parseUnsubscribe(list: string, post: string): Unsubscribe | null
 
 const domainOf = (address: string): string => address.split('@')[1]?.toLowerCase() ?? ''
 
-/** The part of a domain that's bought, so mail.example.com and example.com count as the same. */
-const baseOf = (domain: string): string => domain.split('.').slice(-2).join('.')
+/** The account's own server, by the authserv-id it writes on its Authentication-Results, and the
+ *  account's own addresses. Mail read without one trusts the top line, whoever wrote it. */
+export interface Receiver {
+  checks(id: string): boolean
+  own: string[]
+}
+
+/** Companies each service's servers sign their Authentication-Results under. Microsoft's lines
+ *  name nobody, and Gmail's always name mx.google.com. */
+const CHECKED_BY: Record<string, string[]> = {
+  yahoo: ['yahoo.com'], aol: ['aol.com', 'yahoo.com'], icloud: ['icloud.com'], fastmail: ['messagingengine.com', 'fastmail.com'],
+  zoho: ['zoho.com', 'zohomail.com', 'zoho.eu', 'zoho.in']
+}
+
+/** Which Authentication-Results lines an account's server wrote: by the service, or for any other,
+ *  by its own company, the one its IMAP server or the address belongs to. */
+export function receiverOf(account: Pick<AccountConfig, 'email' | 'provider' | 'gmail' | 'signIn' | 'imap'>, own: string[] = [account.email]): Receiver {
+  const lower = own.map((address) => address.toLowerCase())
+  if (account.gmail) return { checks: (id) => id === 'mx.google.com', own: lower }
+  if (account.signIn === 'microsoft' || account.provider === 'outlook') return { checks: (id) => id === '', own: lower }
+  const companies = CHECKED_BY[account.provider] ?? [organization(account.imap.host), organization(domainOf(account.email))].filter(Boolean)
+  return { checks: (id) => id !== '' && companies.includes(organization(id)), own: lower }
+}
+
+/** The order warnings are given in, the gravest first. */
+const ORDER: SenderWarning[] = ['forged', 'self', 'unverified', 'name-mismatch', 'hidden', 'lookalike', 'replies-elsewhere']
+/** Those that depend on what the receiving server found, worked out again once its lines are known. */
+const CHECKED: SenderWarning[] = ['forged', 'self', 'unverified', 'replies-elsewhere']
+const inOrder = (found: Iterable<SenderWarning>): SenderWarning[] => {
+  const set = new Set(found)
+  return ORDER.filter((warning) => set.has(warning))
+}
 
 /**
- * Whether a sender may not be who they say. Only ever a warning: the top Authentication-Results is
- * the receiving server's, but a sender can add their own below it, so a pass proves nothing here and
- * none is ever shown. A sender can only forge a failure against themselves.
+ * Whether a sender may not be who they say. Only ever a warning, never a mark of trust. A pass
+ * counts only from the lines the receiving server wrote ([receiver]; without one, the top line), and
+ * a failure from those or the top line whoever wrote it: a sender can only forge a failure against
+ * themselves. [authentication] is every Authentication-Results line, top first.
  */
-export function senderWarnings(mail: { from: Address; replyTo: Address[]; authentication: string; bulk: boolean }): SenderWarning[] {
+export function senderWarnings(mail: { from: Address; replyTo: Address[]; authentication: string | string[]; bulk: boolean; receiver?: Receiver }): SenderWarning[] {
   const found: SenderWarning[] = []
+  const lines = [mail.authentication].flat()
   // Each result opens its own part of the line, after a semicolon. The rest of a part, its comments
   // and quoted values most of all, repeats addresses the sender chose, and `dmarc=pass@evil.example`
-  // is a valid one: searched for anywhere, it would be read as the server's answer.
-  const results = mail.authentication.replace(/"[^"]*"|\([^()]*\)/g, ' ').split(';').map((part) => part.trim())
-  const said = (check: string): string => {
-    const result = new RegExp(`^${check}\\s*=\\s*(\\w+)`, 'i')
-    for (const part of results) {
-      const answer = result.exec(part)?.[1]
-      if (answer) return answer.toLowerCase()
-    }
-    return ''
+  // is a valid one: searched for anywhere, it would be read as the server's answer (readChecks).
+  const trusted = trustedChecks(lines, mail.receiver?.checks)
+  const top = trustedChecks(lines)
+  const failed = ({ checks }: typeof top): boolean => checks !== null && (checks.dmarc === 'fail' || (checks.spf === 'fail' && checks.dkim === 'fail'))
+  const forged = failed(trusted) || failed(top)
+  // From the domain on its From line, by DMARC or a DKIM signature of that domain's.
+  const proved = authenticated(trusted, mail.from.address)
+  if (forged) found.push('forged')
+  else if (!proved && trusted.checks) {
+    // Mail with your own address on it that the server checked, and couldn't tie to your domain.
+    // What you sent yourself has no such line, since it never came in from outside.
+    const mine = mail.receiver?.own.includes(mail.from.address.toLowerCase()) ?? false
+    const spf = trusted.checks.spf
+    const spfProved = spf === 'pass' && organization(trusted.mailedBy) === organization(domainOf(mail.from.address))
+    if (mine && !spfProved) found.push('self')
+    else if (spf === 'fail' || spf === 'softfail') found.push('unverified')
   }
-  const both = said('spf') === 'fail' && said('dkim') === 'fail'
-  if (said('dmarc') === 'fail' || both) found.push('forged')
-  const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(mail.from.name.slice(0, 300))?.[0]?.toLowerCase()
+  const inName = /[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.[a-z]{2,}/i.exec(plainName(mail.from.name.slice(0, 300)))?.[0]?.toLowerCase()
   if (inName && inName !== mail.from.address.toLowerCase()) found.push('name-mismatch')
+  // A name can turn itself around to show "security@paypal.com" while the check above sees it as
+  // written, backwards. No real name needs that.
+  if (reorders(mail.from.name.slice(0, 300)) || reorders(mail.from.address)) found.push('hidden')
   const domain = domainOf(mail.from.address)
   if (domain.split('.').some((part) => part.startsWith('xn--')) || /[^\x00-\x7f]/.test(domain)) found.push('lookalike')
-  const elsewhere = mail.replyTo.find((who) => baseOf(domainOf(who.address)) !== baseOf(domain))
-  if (elsewhere && !mail.bulk) found.push('replies-elsewhere')
-  return found
+  // By the company a domain belongs to, so bank.com.au and evil.com.au differ. A list's headers are
+  // the sender's own words, so they excuse replies going elsewhere only on mail proved theirs.
+  const elsewhere = mail.replyTo.find((who) => organization(domainOf(who.address)) !== organization(domain))
+  if (elsewhere && !(mail.bulk && proved)) found.push('replies-elsewhere')
+  return inOrder(found)
+}
+
+/** A message's warnings and details again, now that the account's own server is known: what was
+ *  worked out from the top line alone is worked out from that server's lines. */
+export function checkedBy(mail: ParsedMail, receiver: Receiver): Pick<ParsedMail, 'warnings' | 'details'> {
+  const again = senderWarnings({ ...mail, receiver })
+  return {
+    warnings: inOrder([...mail.warnings.filter((w) => !CHECKED.includes(w)), ...again.filter((w) => CHECKED.includes(w))]),
+    details: { ...mail.details, ...trustedChecks(mail.authentication, receiver.checks) }
+  }
 }
 
 const PLAIN_MAIL = /^(no|false)?$/i
@@ -246,12 +309,14 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
   const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML, keepCidLinks: true })
   const markup = typeof mail.html === 'string' ? capped(mail.html, MAX_HTML) : null
   const text = (mail.text ?? '').slice(0, MAX_TEXT)
-  const from = addresses(mail.from)[0] ?? { name: '', address: '' }
+  const sender = addresses(mail.from, true)[0] ?? { name: '', address: '' }
+  const from = { name: plainName(sender.name), address: sender.address }
   const replyTo = addresses(mail.replyTo)
   const bulk = looksBulk(mail.headerLines)
+  const authentication = allValues(mail.headerLines, 'authentication-results').slice(0, 8).map((line) => line.slice(0, 8192))
   const calendar = (mail.attachments ?? []).find((a) => a.contentType === 'text/calendar')
   return {
-    subject: mail.subject ?? '',
+    subject: plainName(mail.subject ?? ''),
     from,
     to: addresses(mail.to),
     cc: addresses(mail.cc),
@@ -267,16 +332,17 @@ export async function parseMail(source: Buffer): Promise<ParsedMail> {
     snippet: makeSnippet(mail.html && !hasTextPart(mail.headerLines, source) ? '' : text, markup?.html ?? null),
     attachments: attachmentInfo(mail.attachments ?? []),
     bulk,
-    warnings: senderWarnings({ from, replyTo, bulk, authentication: headerValue(mail.headerLines, 'authentication-results') }),
+    warnings: senderWarnings({ from: sender, replyTo, bulk, authentication }),
+    authentication,
     invite: calendar ? inviteOf(calendar.content.toString('utf8')) : null,
     details: headerDetails(mail.headerLines, addresses(mail.bcc), mail.date)
   }
 }
 
 /** The details from a message's headers alone, as fetched for mail stored before they were kept. */
-export async function detailsOf(header: Buffer): Promise<HeaderDetails> {
+export async function detailsOf(header: Buffer, checks?: (id: string) => boolean): Promise<HeaderDetails> {
   const mail = await simpleParser(Buffer.concat([header, Buffer.from('\r\n')]), { maxHtmlLengthToParse: 0 })
-  return headerDetails(mail.headerLines, addresses(mail.bcc), mail.date)
+  return headerDetails(mail.headerLines, addresses(mail.bcc), mail.date, checks)
 }
 
 export interface WholeAttachment {
@@ -290,7 +356,7 @@ export async function attachmentsOf(source: Buffer): Promise<WholeAttachment[]> 
   const mail = await simpleParser(source, { maxHtmlLengthToParse: MAX_HTML })
   return (mail.attachments ?? [])
     .filter((a) => !a.related)
-    .map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
+    .map((a) => ({ name: plainName(a.filename ?? 'attachment'), type: a.contentType, content: a.content }))
 }
 
 /** A draft from the account's Drafts folder: the person's own, written on another device, or this

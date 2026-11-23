@@ -1176,6 +1176,27 @@ export class Store {
     return row !== undefined
   }
 
+  /** Of these addresses, the ones whose newest mail here passed DMARC, by the account's own server:
+   *  a company's logo is shown only for mail its domain is proved to have sent. */
+  passedDmarc(addresses: string[]): Set<string> {
+    const wanted = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter(Boolean))].slice(0, 500)
+    const passed = new Set<string>()
+    if (wanted.length === 0) return passed
+    const rows = this.all(
+      `SELECT lower(from_address) AS address, details FROM messages
+       WHERE lower(from_address) IN (${wanted.map(() => '?').join(', ')}) ORDER BY arrived DESC`,
+      ...wanted
+    )
+    const seen = new Set<string>()
+    for (const row of rows) {
+      const address = String(row['address'])
+      if (seen.has(address)) continue
+      seen.add(address)
+      if (detailsFrom(row['details'])?.checks?.dmarc === 'pass') passed.add(address)
+    }
+    return passed
+  }
+
   /** Moves what a sender has already sent to one side of the inbox. */
   setFocus(address: string, focused: boolean): void {
     this.db.prepare('UPDATE messages SET focus = ? WHERE lower(from_address) = ?').run(focused ? 1 : 0, address.toLowerCase())

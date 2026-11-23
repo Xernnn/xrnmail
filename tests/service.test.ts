@@ -41,9 +41,11 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     ...over,
     store, secrets, changed, landed, summarized,
     post: post as unknown as typeof fetch,
+    // No test asks real DNS: every name is a public address unless a test says otherwise.
+    addresses: over.addresses ?? (async () => ['203.0.113.7']),
     now: () => clock,
     files: new DraftFiles(folder),
-    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
+    openSource: over.openSource ?? ((account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts })),
     openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
@@ -1052,6 +1054,29 @@ describe('attachments', () => {
     expect(forward.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf', 'c.pdf'])
     expect(forward.error).toBeNull()
   })
+
+  // A message was fetched whole with nothing to stop it, so a server could have the laptop hold as
+  // much as it cared to send.
+  it('fetches no more of a message than a mail service takes, and says when it is bigger', async () => {
+    gmail.add(rawMail({ subject: 'Huge', attachment: { name: 'big.bin', type: 'application/octet-stream', body: Buffer.alloc(6000, 7) } }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Huge')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    // The limit is a mail service's, 36 MB; here it's made small, so the test needn't be that big.
+    service = make({
+      openSource: (account, login) => {
+        const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })
+        const whole = source.whole.bind(source)
+        source.whole = (uid) => whole(uid, 4000)
+        return source
+      }
+    })
+    await expect(service.attachment(message?.id ?? 0, 0)).rejects.toThrow('Too big to open here.')
+    await expect(service.original(message?.id ?? 0)).rejects.toThrow('Too big to open here.')
+    const asked = gmail.commands.filter((c) => /BODY\.PEEK\[\]/i.test(c))
+    expect(asked.length).toBeGreaterThan(0)
+    for (const command of asked) expect(command).toMatch(/BODY\.PEEK\[\]<0\.\d+>/i) // only ever a part, never all of it
+  })
 })
 
 describe('sending', () => {
@@ -1523,6 +1548,22 @@ describe('unsubscribing', () => {
     const id = await arrived(['List-Unsubscribe: <https://127.0.0.1/admin>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
     expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://127.0.0.1/admin' })
     expect(post).not.toHaveBeenCalled()
+  })
+
+  // The check was on the name alone: a public-looking name that resolves to this laptop, the home
+  // network or the tailnet got the POST, with no click on anything but Unsubscribe.
+  it('will not post to a name that leads to this machine, its network or the tailnet', async () => {
+    const id = await arrived(['List-Unsubscribe: <https://list.example/u/1>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
+    for (const found of [['127.0.0.1'], ['192.168.1.1'], ['10.0.0.8'], ['100.101.102.103'], ['169.254.169.254'], ['203.0.113.7', '::1'],
+      ['fd7a:115c:a1e0::1'], ['fe80::1'], ['ff02::1'], ['::ffff:192.168.0.1'], ['224.0.0.1'], []]) {
+      service = make({ addresses: async () => found })
+      expect(await service.unsubscribe(id), found.join()).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    }
+    service = make({ addresses: async () => { throw new Error('ENOTFOUND') } })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    expect(post).not.toHaveBeenCalled()
+    service = make({ addresses: async (host) => (host === 'list.example' ? ['2001:db8::5', '198.51.100.4'] : []) })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'done' })
   })
 
   it('without one-click it opens the sender page', async () => {
@@ -2177,6 +2218,27 @@ describe('faces', () => {
     gmail.add(rawMail({ subject: 'Fine', from: 'Ada <ada@example.com>' }), { arrived: new Date(at(9)) })
     await signedIn()
     expect(Object.fromEntries(service.list({ kind: 'inbox' }).map((r) => [r.subject, r.warned]))).toEqual({ Locked: true, Fine: false })
+  })
+
+  // The top Authentication-Results line was believed whoever wrote it. On a server that adds none,
+  // a sender's own "dmarc=pass" there loaded a trusted sender's pictures and showed as a pass.
+  it('believes only the lines the account\'s own server wrote', async () => {
+    const pass = 'dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=shop.example'
+    gmail.add(rawMail({ subject: 'Planted', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.evil.example; ${pass}`] }), { arrived: new Date(at(9)) })
+    gmail.add(rawMail({ subject: 'Real', from: 'Shop <news@shop.example>', headers: [`Authentication-Results: mx.google.com; ${pass}`] }), { arrived: new Date(at(9, 5)) })
+    gmail.add(rawMail({ subject: 'Me?', from: `Me <${ME}>`, headers: ['Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'] }), { arrived: new Date(at(9)) })
+    await signedIn()
+    const open = (subject: string) => {
+      const row = service.list({ kind: 'all' }).find((r) => r.subject === subject)
+      return store.thread(ME, row?.thread ?? '', clock).find((m) => m.subject === subject)
+    }
+    expect(open('Planted')?.authenticated).toBe(false)
+    expect((await service.details(open('Planted')?.id ?? 0)).checks).toBeNull()
+    expect(open('Real')?.authenticated).toBe(true)
+    expect((await service.details(open('Real')?.id ?? 0)).checks?.dmarc).toBe('pass')
+    expect(open('Me?')?.warnings).toEqual(['self'])
+    // A company's logo is for the sender whose newest mail passed, by the account's own server.
+    expect([...store.passedDmarc(['NEWS@shop.example', 'me@example.com', 'nobody@example.com'])]).toEqual(['news@shop.example'])
   })
 
   it('knows which of your accounts an address is, aliases too', async () => {

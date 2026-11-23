@@ -238,7 +238,9 @@ stopping the rest.
   other that fails is, and the thread, stuck on it, is replaced; left alone it held the account's
   pass, and so its changes, drafts and Sent copies, until the app restarted. It isn't tried again
   on the main process, where it would hang the window too.
-- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
+- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`:
+  36 MB of a message at most, as much as a service takes in one, so a server can't have the laptop
+  hold more. A message bigger than that says it's too big to open here.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
   and made again from the whole message the first time it's opened, one message of a thread at a
   time, since each takes a connection. A forward takes the files of the
@@ -331,17 +333,43 @@ A stranger wrote all of it, so it's held to the same standard as the mail:
   any other, so it waits out Undo and goes through the same door. Nothing goes out unless a button is
   pressed.
 
-Sender warnings only ever warn. They read the top `Authentication-Results` line, which the receiving
-server wrote, and a pass is never shown as a mark of trust, because lower lines are the sender's own
-work and on a server that adds no line of its own the top one is too. The one thing a pass there
-does is let the pictures of a sender trusted for them load by themselves (`shared/images.ts`): on a
-server that adds no line, a sender who writes a passing one of their own above the rest still gets
-that far.
+Sender warnings only ever warn. They read the `Authentication-Results` lines the account's own
+server wrote, and a pass is never shown as a mark of trust. A server names itself at the start of
+its line (its authserv-id, RFC 8601 §5), so only lines with the account's server's name count
+(`receiverOf` in parse.ts): Gmail's are `mx.google.com` (so are a Workspace account's), Microsoft's
+name nobody, Yahoo, AOL, iCloud, Fastmail and Zoho sign under their own companies, and any other
+server under the company its IMAP server or the address belongs to. The top line counts if it's
+the server's, and so do the ones straight under it that the same server wrote under other names
+(iCloud writes one per check); the first naming anyone else, or a name already read, is where a
+sender's own begin, since servers put theirs on top. A failure is taken from the top line whoever
+wrote it, since a sender can only forge one against themselves. What a pass from those lines does:
+it lets the pictures of a sender trusted for them load by themselves (`shared/images.ts`), lets a
+company's logo show (Faces), and lets a list's headers excuse replies going elsewhere.
+
+- **Forged:** DMARC failed, or SPF and DKIM both did.
+- **Unverified:** SPF failed or soft-failed, and neither DMARC nor a DKIM signature of the From
+  line's domain spoke for it, as a spoof of a domain without DMARC is.
+- **From you:** your own address on mail the server checked and couldn't tie to your domain, by
+  DMARC, a DKIM signature or an SPF pass for it. What you sent never came in from outside, so it
+  has no such line and gets no warning.
+- **Name and address:** a name showing another address, a name with hidden characters (below), and
+  a domain with characters that can imitate others.
+- **Replies elsewhere:** Reply-To at another company, by the part of a domain that's bought
+  (`organization`), so bank.com.au and evil.com.au differ. List-Id, Precedence and Auto-Submitted
+  are the sender's own words, so they excuse it only on mail proved to be the sender's.
+
+Names, subjects and attachment names lose, as a message is read, the characters that turn text
+around (U+202A–202E, U+2066–2069), the marks that steer it (U+200E, U+200F, U+061C) and what draws
+nothing at all (`plainName`); the body keeps them, as the sender wrote it. U+202E turned
+`moc.lapyap@ytiruces` into a bold "security@paypal.com", and the check for a name showing another
+address saw it backwards, so a name that had any of the first kind is warned about. Names are drawn
+in `<bdi>`, so even a right-to-left one can't move the address beside it.
 
 A message's details show those results all the same, as Gmail's details do, labelled as what the
 receiving server wrote down (`details.ts`). The same care is taken reading them: comments and quoted
-strings are dropped before a result is looked for, only the top `Authentication-Results`,
-`Delivered-To` and the topmost `Received` line that names where it came from are read, every value is
+strings are dropped before a result is looked for, only the account's server's
+`Authentication-Results` (as above; none when the top line isn't its), the top `Delivered-To` and the
+topmost `Received` line that names where it came from are read, every value is
 cut short and stripped of control and bidirectional characters, and all of it is shown as text. They
 are kept with the message when it arrives (`details`, as JSON). Mail stored before that has none; the
 first time its details are opened its header alone is fetched, with `BODY.PEEK[HEADER]` so nothing
@@ -403,13 +431,24 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
 4. The main process cancels every request from the page, whatever the CSP says, except images while
    "Show images" is on. That resets on leaving the thread. Images can be set to always load, or for
    one sender at a time, but that only presses the same button for you: it goes through the same switch
-   in the main process. The default is to ask. A sender's own load only on mail the top
-   `Authentication-Results` says is theirs, by DMARC or by a DKIM signature from their domain, since
-   anyone can write their address on a From line; the rest asks, as a stranger's does.
+   in the main process. The default is to ask. A sender's own load only on mail the account's server
+   says is theirs, by DMARC or by a DKIM signature from their domain, since anyone can write their
+   address on a From line; the rest asks, as a stranger's does.
 5. Images that exist to report an open (invisible ones, and known tracking services) lose their `src`
    while DOMPurify cleans the message, so "Show images" can't set one off and a reply can't pass one on.
-   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning.
+   It's done there, on the tree, because taking clean HTML apart and rebuilding it can undo the cleaning
+   (`shared/trackers.ts`). Invisible is two pixels or less however it's written (`1`, `1px`,
+   `max-width:1px`), or hidden. CSS is cleaned the same way, in style attributes and `<style>`: the
+   known services' pictures, any picture a rule loads only under the pointer or on a click, and
+   `@import`, and a cell's `background` from them goes too; `loading=lazy` is dropped, so a picture
+   far down can't say how far you read. CSS can name a picture in more ways than that can find, so
+   the main process refuses the known services' addresses even with Show images on. A picture sized
+   to nothing by a class in a style sheet still loads once allowed.
 6. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
+   A link whose words are an address or a domain at another company than the one it goes to, or
+   whose address puts a name before an @ (`https://paypal.com@evil.example/`), asks first: "Go to
+   evil.example?", with what it shows (`shared/links.ts`). Companies are told apart as for sender
+   warnings, so a newsletter's own click-tracking under its domain doesn't ask.
 7. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
    A page can't open a window. Only the main process does, for a thread or a draft, and that window
    is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
@@ -429,11 +468,23 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **Files enter a draft only through the system's picker, or as bytes that were dropped or pasted.** The
   page never names a path, so a compromised page can't attach `~/.ssh/id_ed25519` and send it. Being able
   to send mail is the new thing a compromised page could do, which is why this line is held so firmly.
-- **Attachments are saved, or opened only if they can't run.** `canOpenDirectly` refuses scripts,
-  programs, `.desktop` files and anything that renders as a page. File names are cleaned before they're
+- **Attachments are saved, or opened only if they can't run.** Linux picks the program for a file by
+  its bytes, not its name: xdg-open asks `xdg-mime query filetype`, which looks inside, so a Java
+  archive called `invoice.pdf` is typed as a Java archive and handed to `java -jar`. So a name is
+  only the first test (`canOpenDirectly`, a list of documents, pictures, sound and film, plain text
+  and archives). `opening.ts` then reads the bytes themselves, and refuses programs, scripts,
+  launchers, Java archives under any name (a ZIP with a manifest, classes or the jar tool's mark),
+  Office files with macros, and anything that renders as a page. Last, it asks `xdg-mime` what the
+  written file is, run without a shell, and opens it only if that's a type of the same kind. With no
+  `xdg-mime` the bytes decide alone, except for old Office files, whose container is also an
+  installer's. Anything refused says "Save it to open", and a name that can't be opened saves
+  straight away. What's opened is written to a folder of its own in the temporary folder, named so it
+  can't be guessed and noted in the profile, and taken away when the app quits, or at the next start
+  if it didn't get to. Saving asks before writing over a file. File names are cleaned before they're
   suggested, so `../../.ssh/authorized_keys` can't climb out.
 - **Unsubscribing makes one fixed request.** The address comes from a stranger's header, so the app sends
-  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name, and
+  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name that
+  resolves to no address of this laptop, its network or the tailnet (as faces' lookups check), and
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft
   to read, never a message sent behind your back.
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.
@@ -457,18 +508,30 @@ wanted, rather than showing initials until its month is out.
 
 Each lookup tells someone something, so the rules are about when and how:
 
-- **When.** Only two things ask for lookups: a sync that stores new mail (`noticed`, for senders of
-  mail that arrived after the account was added), and a list's rows, which ask for everyone they
-  name. The reader, the composer's suggestions and the drafts only ask what's already known
-  (`faces(addresses, false)`), so opening a message never makes a request anyone else can see. Rows
-  with a sender warning ask nothing for that sender and show initials.
+- **When.** Only a list's rows ask for lookups, for everyone they name. Mail arriving doesn't
+  (the service's `noticed` is left unused): a lookup then told a sender, by a TXT query for a name
+  only they used and a logo fetched from where they said, that the address works and when the mail
+  got here, even for mail still waiting for its batch. The reader, the composer's suggestions and
+  the drafts only ask what's already known (`faces(addresses, false)`), so opening a message never
+  makes a request anyone else can see. Rows with a sender warning ask nothing for that sender and
+  show initials. With Show faces off (`faces` in Settings), nothing is looked up and only an
+  account's chosen photo shows; turning it off or on has the page ask for every face again.
+- **Logos.** A company's logo, BIMI or site icon, is looked up and shown only for an address whose
+  newest mail here passed DMARC by the account's own server (`Store.passedDmarc`), so for its own
+  domain: a stranger writing a company's address gets initials, and any domain can name any SVG in
+  its BIMI record, so one with no checks of its own can't put a bank's logo on its mail. A domain
+  that passes its own DMARC still shows whatever logo it names: the certificate a BIMI record can
+  point to (`a=`) isn't checked.
 - **How.** The main process does all of it with Node's own fetch, which the page's network walls
   don't cover and don't need to. Only https to a public name that resolves to no private, loopback,
   shared (carrier NAT, Tailscale) or link-local address, GET, no redirects, no cookies, a time
   limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
   from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
 - **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again
-  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. An
+  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. Their
+  size is read from their header before that (`pictureSize`), and one of more than four million
+  pixels (a chosen photo, a hundred million) isn't drawn at all, since a few kilobytes of JPEG can
+  say it's 60,000 pixels square and take gigabytes to decode in the main process. An
   SVG is shown only as an `<img>`, where scripts don't run and nothing loads, never placed in the
   page. A picture that fails to draw shows initials.
 - **Testing.** The sources are passed in. Unit tests answer from lists, and the UI tests from files

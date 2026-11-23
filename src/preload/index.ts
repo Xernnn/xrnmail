@@ -83,7 +83,7 @@ const api: MailApi = {
     return () => ipcRenderer.removeListener('changed', relay)
   },
   onFaces: (listener) => {
-    const relay = (_event: IpcRendererEvent): void => listener()
+    const relay = (_event: IpcRendererEvent, again?: unknown): void => listener(again === true)
     ipcRenderer.on('faces', relay)
     return () => ipcRenderer.removeListener('faces', relay)
   },

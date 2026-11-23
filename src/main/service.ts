@@ -17,12 +17,12 @@ import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
-import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
+import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
-import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import { cleanSecret, TooBig, type MailSource, type MailWatcher } from './source'
 import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
@@ -100,7 +100,8 @@ const DEFAULT_SETTINGS: Settings = {
   imagesFrom: [],
   readAfter: 0,
   threadOrder: 'oldest',
-  later: DEFAULT_LATER
+  later: DEFAULT_LATER,
+  faces: true
 }
 
 const SWIPES: readonly SwipeAction[] = ['archive', 'trash', 'read', 'star', 'snooze', 'none']
@@ -154,6 +155,8 @@ export interface ServiceDeps {
   /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
   noticed?(addresses: string[]): void
   post?: typeof fetch
+  /** Every address a name resolves to, for a request a stranger's header aims (unsubscribing). */
+  addresses?: (host: string) => Promise<string[]>
   records?: DomainRecords
   /** How synced mail is read, when not on this thread. */
   parse?: (source: Buffer) => Promise<ParsedMail>
@@ -811,6 +814,7 @@ export class MailService {
         stopped: removed,
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         parse: this.deps.parse,
+        receiver: receiverOf(config, own),
         added: (mail, id, holdFrom) => {
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           const current = this.settings() // a sender blocked or muted meanwhile counts
@@ -1168,7 +1172,7 @@ export class MailService {
           await source.open(box)
           const header = await source.header(message.uid)
           if (header) {
-            found = await detailsOf(header)
+            found = await detailsOf(header, receiverOf(this.config(message.account)).checks)
             this.store.saveDetails(id, found)
           }
         }
@@ -1220,9 +1224,11 @@ export class MailService {
       const box = source.mailboxes().find((b) => b.id === message.box)
       if (box) {
         await source.open(box)
-        whole = await source.whole(message.uid)
+        // As much as a service takes in one message, and no more, whatever a server would send.
+        whole = await source.whole(message.uid, MAX_DRAFT_SOURCE)
       }
     } catch (e) {
+      if (e instanceof TooBig) throw e
       throw new Error(describeFailure(e, this.serviceName(message.account)))
     } finally {
       await source?.close().catch(() => undefined)
@@ -1236,7 +1242,7 @@ export class MailService {
     const message = this.store.message(id, this.deps.now())
     const to = message?.unsubscribeTo
     if (!message || !to) throw new Error('This sender gives no way to unsubscribe.')
-    if (to.oneClick && to.web && isPublicHttps(to.web)) {
+    if (to.oneClick && to.web && isPublicHttps(to.web) && (await this.leadsOut(new URL(to.web).hostname))) {
       try {
         const response = await this.post(to.web, {
           method: 'POST',
@@ -1257,6 +1263,18 @@ export class MailService {
     const start = parseMailto(to.mail ?? '')
     const draft = await this.startDraft({ ...start, account: message.account, subject: start.subject || 'Unsubscribe' })
     return { kind: 'draft', draft }
+  }
+
+  /** Whether a public-looking name resolves only to public addresses: one leading to this laptop, its
+   *  network or the tailnet gets no request from here. One that can't be resolved, or with nothing to
+   *  resolve it with, gets none either. */
+  private async leadsOut(host: string): Promise<boolean> {
+    try {
+      const found = (await this.deps.addresses?.(host)) ?? []
+      return found.length > 0 && !found.some(isPrivateAddress)
+    } catch {
+      return false
+    }
   }
 
   private leftBehind(address: string): void {
@@ -1947,6 +1965,7 @@ export class MailService {
       imagesFrom: patch.imagesFrom ? cleanSenders(patch.imagesFrom) : settings.imagesFrom,
       readAfter: patch.readAfter === undefined ? settings.readAfter : patch.readAfter < 0 ? -1 : clamp(Math.round(patch.readAfter), 0, 60),
       threadOrder: patch.threadOrder === 'oldest' || patch.threadOrder === 'newest' ? patch.threadOrder : settings.threadOrder,
+      faces: patch.faces ?? settings.faces,
       // Only the times named change, so two set one after the other both stay.
       later: patch.later ? cleanLater({ ...settings.later, ...patch.later }) : settings.later
     })

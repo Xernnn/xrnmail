@@ -17,6 +17,8 @@ export interface Running {
   openedFiles: () => Promise<string[]>
   /** Where a "Save" lands. */
   savedTo: string
+  /** The profile, for starting the app on it again. */
+  data: string
   stop(): Promise<void>
 }
 
@@ -29,12 +31,14 @@ const HEADLESS = process.env['E2E_HEADLESS'] ? ['--ozone-platform=headless', '--
  *  finds none. Either way nothing is looked up on the network. */
 export async function launch(options: {
   colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number]; pictures?: Record<string, Buffer | string>
+  /** A profile an earlier run left, instead of a new one. */
+  data?: string
 } = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
   const port = await gmail.listen()
   const smtp = new FakeSmtp(gmail.secret)
   const smtpPort = await smtp.listen()
-  const data = mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
+  const data = options.data ?? mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
   const faces: Record<string, string> = options.pictures ? { XRNMAIL_PICTURES: writePictures(mkdtempSync(join(data, 'faces-')), options.pictures) } : {}
   const app = await _electron.launch({
     args: ['.', '--no-sandbox', ...HEADLESS],
@@ -53,13 +57,17 @@ export async function launch(options: {
   await app.evaluate(({ dialog, shell }, savedTo) => {
     const seen: string[] = []
     const files: string[] = []
-    Object.assign(globalThis, { openedLinks: seen, openedFiles: files })
+    const saves: unknown[] = []
+    Object.assign(globalThis, { openedLinks: seen, openedFiles: files, saveDialogs: saves })
     shell.openExternal = async (url: string) => void seen.push(url)
     shell.openPath = async (path: string) => {
       files.push(path)
       return ''
     }
-    dialog.showSaveDialog = (async () => ({ canceled: false, filePath: savedTo })) as typeof dialog.showSaveDialog
+    dialog.showSaveDialog = (async (...args: unknown[]) => {
+      saves.push(args.at(-1))
+      return { canceled: false, filePath: savedTo }
+    }) as typeof dialog.showSaveDialog
   }, join(data, 'saved-attachment'))
   const page = await app.firstWindow()
   if (options.size) {
@@ -75,6 +83,7 @@ export async function launch(options: {
     opened: () => app.evaluate(() => (globalThis as unknown as { openedLinks: string[] }).openedLinks),
     openedFiles: () => app.evaluate(() => (globalThis as unknown as { openedFiles: string[] }).openedFiles),
     savedTo: join(data, 'saved-attachment'),
+    data,
     stop: async () => {
       await app.close()
       await gmail.stop()

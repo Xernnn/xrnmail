@@ -87,8 +87,10 @@ kept on the laptop.
   Senders go in from Subscriptions or a message's menu. When it lands, one notice says so, and the top
   of the inbox has one entry for it until it's read. Its mail is under Summary in the sidebar, each
   Summary under its own heading with Delete all, and stays out of the inbox and its counts.
-- **Sender warnings:** forged mail, lookalike addresses, a name showing a different address, replies
-  going somewhere else. It warns; it never vouches.
+- **Sender warnings:** forged mail, mail your service couldn't tie to its sender, mail that says it's
+  from you and isn't, lookalike addresses, a name showing a different address, a name with hidden
+  characters that turn it around, replies going somewhere else. Only your own service's checks count,
+  not ones a sender wrote in. It warns; it never vouches.
 - **Message details:** "To: me ⌄" over a message opens everything about it, with what Gmail's
   details add: From, Reply-To, To, Cc and Bcc (on your own copies), the full date and the one the
   sender wrote if it's far off, the account and where it is, the address it was
@@ -106,8 +108,13 @@ kept on the laptop.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
-- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images.
-- **Attachments:** fetched when you ask, saved or opened. Anything that can run is saved, never opened.
+- **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images:
+  in pictures, CSS backgrounds and table cells, pictures a rule loads only under the pointer, and
+  pictures that wait to be scrolled to. A picture sized to nothing by a style sheet's class still
+  gets through, unless it's from a known tracking service, which is never fetched at all.
+- **Attachments:** fetched when you ask, saved or opened. A file opens only when its name and its own
+  bytes agree it's a document, picture, sound, film or archive, so a program dressed up as
+  `invoice.pdf` is saved, never opened.
   A row in the list shows its thread's files as small cards, unless Appearance says not to.
 - **Windows of their own:** the last button over a thread opens it in its own window, and the
   composer's does the same for what you're writing. A thread's window follows it into Trash and back,
@@ -117,15 +124,16 @@ kept on the laptop.
   The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
-- **Faces:** a sender's photo, or their company's logo, where one exists, and coloured initials
-  otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or one you
-  choose there. Who is asked about whom, and when, is under
-  [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
+- **Faces:** a sender's photo, or their company's logo where their mail passed DMARC, and coloured
+  initials otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or
+  one you choose there. Settings, General, Show faces turns the lookups off. Who is asked about whom,
+  and when, is under [Faces, and what they tell whom](#faces-and-what-they-tell-whom).
 - **Safe with hostile mail:** no scripts, and no remote pictures until you ask: Show images for one
   message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
   way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
   signature from their domain) say is theirs; anything else with their address on it asks again.
-  A picture that can't be fetched is a plain block, with a count and Try again. See
+  A picture that can't be fetched is a plain block, with a count and Try again. A link that shows one
+  address and goes to another asks before it opens. See
   [docs/design.md](docs/design.md#hostile-mail).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.
@@ -261,20 +269,23 @@ Finding a picture for someone means asking somebody else, so this is all that's 
 - **Gravatar** (gravatar.com, run by Automattic), for each sender and for your own accounts: the
   SHA-256 hash of the address, never the address itself, asking for a 96-pixel photo. Gravatar sees
   your IP address and when you asked, and can tell whose hash it is for an address it already knows.
-- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain: the TXT
+- **DNS**, through your usual resolver, for a sender with no Gravatar on a company's domain, whose
+  newest mail here passed DMARC by your service's checks: the TXT
   record `default._bimi.<domain>`, then the same for the company domain above it
   (`e.shop.example`, then `shop.example`). That's where a company publishes its
   [BIMI](https://bimigroup.org/) logo.
-- **Whoever hosts that logo**, named in the record, often the company itself or a certificate
-  authority such as DigiCert or Entrust: one fetch of the SVG.
+- **Whoever hosts that logo**, named in the record, so the sender's domain chooses who: often the
+  company itself or a certificate authority such as DigiCert or Entrust. One fetch of the SVG.
 - **DuckDuckGo's icon service** (`icons.duckduckgo.com`, no account or key; Clearbit's free logo
   service closed in December 2025), for a company with no BIMI logo: the domain name, for its site's
   icon. Free mail domains (gmail.com, outlook.com, yahoo.com and the like) never get a logo, so a
   friend on Gmail doesn't get Gmail's, and nor do your own addresses.
 
-When: as new mail from someone arrives here, or when they're first named in a list (a row of the
-inbox, search, Subscriptions and the rest). Never when a message is opened, so nobody learns when
-you read anything. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
+When: when someone is first named in a list (a row of the inbox, search, Subscriptions and the
+rest). Never as their mail arrives, which would tell them it had, and so mail waiting for its batch
+asks nothing until it's there; and never when a message is opened, so nobody learns when you read
+anything. With Show faces off (Settings, General) nothing is asked at all, and everyone has their
+initials, apart from a photo you chose for your own account. A face found is kept for 30 days in the profile's `faces` folder, "none" for 7,
 and a lookup that failed is tried again after 6 hours, so each person and company is asked about
 rarely. Every request is https to a public name (never one that resolves to this laptop or its local
 network, so a logo record can't point at your router), with no cookies or redirects, 8 seconds and 200 KB
@@ -284,7 +295,9 @@ an SVG is only ever shown as an `<img>`, where it can neither run nor fetch anyt
 messages are as before: blocked until you ask.
 
 A face proves nothing: anyone can publish one for their own address or domain. Mail with a sender
-warning shows initials, whatever pictures there are.
+warning shows initials, whatever pictures there are, and a company's logo or icon shows only for a
+sender whose mail passed DMARC, so a stranger writing a company's address, or a domain with no
+checks of its own, doesn't get the company's face.
 
 Your own accounts: Google has no way to get a Google account's profile photo without signing in
 with OAuth. The People API needs it, and the old Picasa address that answered by email was shut down

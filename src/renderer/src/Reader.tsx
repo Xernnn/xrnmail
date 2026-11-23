@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { imagesLoad } from '@shared/images'
 import { plainName } from '@shared/names'
+import { canOpenDirectly } from '@shared/openable'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
@@ -14,7 +15,7 @@ import { MailBody } from './MailBody'
 import { Original } from './Original'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
 
-const nameOf = (who: Address): string => who.name || who.address || 'Unknown'
+const nameOf = (who: Address): string => plainName(who.name) || who.address || 'Unknown'
 
 /** The mail system's own addresses, which send bounces and notices: no person to block. */
 const SYSTEM_SENDER = /^(?:mailer-daemon|postmaster)@/i
@@ -28,9 +29,12 @@ const LONG_THREAD = 4
 
 const CAUTIONS: Record<SenderWarning, (m: MessageView) => string> = {
   forged: () => "This message failed the checks that prove who sent it. It may not be from who it says.",
+  self: () => "This says it's from you, but your mail service couldn't confirm it.",
+  unverified: () => "Your mail service couldn't confirm who sent this.",
   'name-mismatch': (m) => `The name on this message shows a different address from the one it came from: ${m.from.address}.`,
   lookalike: () => 'This sender\'s address uses characters that can imitate another one.',
-  'replies-elsewhere': (m) => `Replies to this go to a different address: ${m.replyTo[0]?.address ?? ''}.`
+  'replies-elsewhere': (m) => `Replies to this go to a different address: ${m.replyTo[0]?.address ?? ''}.`,
+  hidden: () => "This sender's name hides characters that change how it reads."
 }
 
 function Cautions({ message }: { message: MessageView }): ReactNode {
@@ -84,9 +88,11 @@ function Attachments(props: { message: MessageView; say(text: string): void }): 
       {m.attachments.map((file, i) => {
         const kind = fileKind(file.name)
         const Icon = KIND_ICONS[kind]
+        // What can't be opened here is saved, to be opened from where it lands.
+        const openable = canOpenDirectly(plainName(file.name))
         return (
           <li key={i}>
-            <button type="button" className="file" title="Open" onClick={() => open(i)}>
+            <button type="button" className="file" title={openable ? 'Open' : 'Save'} onClick={() => (openable ? open(i) : save(i))}>
               <span className={`file-tile file-${kind}`} aria-hidden="true"><Icon size={18} /></span>
               <span className="file-words">
                 <span className="file-name">{plainName(file.name)}</span>
@@ -163,7 +169,7 @@ function Message(props: {
           <Avatar name={m.from.name} address={m.from.address} size={36} plain={m.warnings.length > 0} />
           <span className="who">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
-            <strong>{nameOf(m.from)}</strong>
+            <strong><bdi>{nameOf(m.from)}</bdi></strong>
             <span className="muted"> {(m.snippet || m.text.replace(/\s+/g, ' ')).slice(0, 160)}</span>
           </span>
           <span className="muted when">{shortTime(m.date)}</span>
@@ -178,8 +184,8 @@ function Message(props: {
         <div className="who">
           <div className="who-name">
             {m.warnings.length > 0 && <TriangleAlert className="mark warn" size={13} aria-label="Check this sender" />}
-            <strong>{nameOf(m.from)}</strong>
-            {m.from.name && <span className="muted who-address"> {m.from.address}</span>}
+            <strong><bdi>{nameOf(m.from)}</bdi></strong>
+            {m.from.name && <span className="muted who-address"> <bdi>{m.from.address}</bdi></span>}
             {props.straight && (
               <span className="straight">
                 <Zap size={11} aria-hidden="true" />Straight through

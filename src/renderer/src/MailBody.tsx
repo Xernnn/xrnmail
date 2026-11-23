@@ -1,7 +1,10 @@
 import DOMPurify from 'dompurify'
 import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { oddLink } from '@shared/links'
 import { splitQuoted } from '@shared/quoted'
+import { cleanCss, tinyImage, TRACKER } from '@shared/trackers'
+import { Confirm, type Question } from './Common'
 import { darkenDocument, UNLOADED_DARK } from './darken'
 import { fitDocument } from './fit'
 
@@ -18,18 +21,7 @@ const SANITIZE = {
   ALLOW_DATA_ATTR: false
 }
 
-/** Mail services that report back when a message is opened. HubSpot hosts its senders' pictures on
- *  the same hubspotemail.net, so only its open-tracking paths count. */
-const TRACKER = /\b(list-manage\.com\/track|sendgrid\.net\/wf\/open|mandrillapp\.com\/track|mailtrack\.io|(?:hubspotemail\.net|hubspotlinks\.com|sidekickopen\d{0,3}\.com)\/(?:e[12]t\/t?o\/|Cto\/)|track\.hubspot\.com\/__ptq|sparkpostmail\.com\/q|track\.customer\.io|mailgun\.org\/o|mixmax\.com\/api\/track|bananatag\.com|superhuman\.com\/[^"']{0,200}pixel|yesware\.com\/trk|cirrusinsight\.com\/[^"']{0,200}track)/i
-
-const tiny = (image: Element): boolean => {
-  const small = (name: string): boolean => {
-    const value = image.getAttribute(name)?.trim()
-    return Boolean(value) && Number(value) <= 2
-  }
-  const style = image.getAttribute('style') ?? ''
-  return small('width') || small('height') || /(?:^|;|\s)(?:width|height)\s*:\s*[012]px/i.test(style) || /display\s*:\s*none/i.test(style)
-}
+const tiny = (image: Element): boolean => tinyImage(image.getAttribute('width'), image.getAttribute('height'), image.getAttribute('style'))
 
 let trackers = 0
 
@@ -38,12 +30,35 @@ let trackers = 0
 // carry it on to someone else. It runs inside DOMPurify, on the tree it has cleaned, because taking
 // clean HTML apart and putting it back together is how sanitised markup gets turned hostile again.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  const element = node as Element
+  // CSS can load a picture too: a known service's, from a style or a table cell's background.
+  const style = element.getAttribute('style')
+  if (style) {
+    const cleaned = cleanCss(style)
+    if (cleaned.removed > 0) element.setAttribute('style', cleaned.css)
+    trackers += cleaned.removed
+  }
+  if (TRACKER.test(element.getAttribute('background') ?? '')) {
+    element.removeAttribute('background')
+    trackers++
+  }
   if (node.nodeName !== 'IMG') return
-  const image = node as Element
+  const image = element
+  // A picture far down that loads only once it's scrolled to says how far the message was read.
+  image.removeAttribute('loading')
   const src = image.getAttribute('src') ?? ''
   if (!/^(?:https?:)?\/\//i.test(src) || !(tiny(image) || TRACKER.test(src))) return
   image.removeAttribute('src')
   trackers++
+})
+
+// The same for a <style> block's CSS, which is the text inside it.
+DOMPurify.addHook('afterSanitizeElements', (node) => {
+  if (node.nodeType !== 3 || node.parentNode?.nodeName !== 'STYLE') return
+  const cleaned = cleanCss(node.textContent ?? '')
+  if (cleaned.removed === 0) return
+  node.textContent = cleaned.css
+  trackers += cleaned.removed
 })
 
 export const sanitize = (html: string): string => DOMPurify.sanitize(html, SANITIZE)
@@ -116,6 +131,23 @@ function useDark(): boolean {
   return dark
 }
 
+/** Opens a link from a message, first asking about one that isn't going where its words say. */
+function useLinks(): [(href: string, words: string) => void, ReactNode] {
+  const [asking, setAsking] = useState<Question | null>(null)
+  const follow = useCallback((href: string, words: string): void => {
+    const odd = oddLink(href, words)
+    if (!odd) return void window.mail.openLink(href)
+    setAsking({
+      title: `Go to ${odd.host}?`, note: `It shows ${odd.shown}.`, action: 'Open', danger: true,
+      answer: (yes) => {
+        setAsking(null)
+        if (yes) void window.mail.openLink(href)
+      }
+    })
+  }, [])
+  return [follow, asking && <Confirm question={asking} />]
+}
+
 /** Three dots that bring back what a reply quoted. */
 function QuoteToggle(props: { open: boolean; toggle(): void }): ReactNode {
   return (
@@ -153,6 +185,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const watcher = useRef<ResizeObserver | null>(null)
   /** The frame's page that's been sized, darkened and wired, so each is done once. */
   const wired = useRef<Document | null>(null)
+  const [follow, asking] = useLinks()
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
@@ -244,7 +277,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.addEventListener('click', (event) => {
       const link = linkAt(event.target)
       event.preventDefault()
-      if (link) void window.mail.openLink(link.href)
+      if (link) follow(link.href, link.textContent ?? '')
     })
     // A click inside moves the keyboard into the frame, and its keys still belong to the app.
     doc.addEventListener('keydown', (event) => {
@@ -316,13 +349,14 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
         onLoad={loaded}
       />
       {hasQuote && <QuoteToggle open={quoteOpen} toggle={() => setQuoteOpen(!quoteOpen)} />}
+      {asking}
     </>
   )
 }
 
 const LINK = /(https?:\/\/[^\s<>"']+)/g
 
-function Linked({ text }: { text: string }): ReactNode {
+function Linked({ text, follow }: { text: string; follow(href: string, words: string): void }): ReactNode {
   const parts = text.split(LINK)
   return parts.map((part, i) => {
     if (i % 2 === 0) return part
@@ -330,7 +364,7 @@ function Linked({ text }: { text: string }): ReactNode {
     while (end > 0 && '.,;:!?)]'.includes(part[end - 1] ?? '')) end--
     const url = part.slice(0, end)
     return [
-      <a key={i} href={url} onClick={(e) => { e.preventDefault(); void window.mail.openLink(url) }}>
+      <a key={i} href={url} onClick={(e) => { e.preventDefault(); follow(url, url) }}>
         {url}
       </a>,
       part.slice(url.length)
@@ -341,11 +375,13 @@ function Linked({ text }: { text: string }): ReactNode {
 function TextBody({ text, keepQuoted }: { text: string; keepQuoted?: boolean }): ReactNode {
   const [open, setOpen] = useState(false)
   const { fresh, quoted } = useMemo(() => (keepQuoted ? { fresh: text, quoted: '' } : splitQuoted(text)), [text, keepQuoted])
+  const [follow, asking] = useLinks()
   return (
     <>
-      <div className="body-text"><Linked text={fresh} /></div>
+      <div className="body-text"><Linked text={fresh} follow={follow} /></div>
       {quoted && <QuoteToggle open={open} toggle={() => setOpen(!open)} />}
-      {quoted && open && <div className="body-text quoted"><Linked text={quoted} /></div>}
+      {quoted && open && <div className="body-text quoted"><Linked text={quoted} follow={follow} /></div>}
+      {asking}
     </>
   )
 }

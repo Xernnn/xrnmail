@@ -182,6 +182,8 @@ export interface Settings {
   later: LaterTimes
   /** Senders whose pictures load without being asked for. */
   imagesFrom: string[]
+  /** Faces are looked up: Gravatar photos, company logos and site icons. Off, everyone has initials. */
+  faces: boolean
 }
 
 /** A picture for an address: a person's photo, or a company's logo, as a data: address. */
@@ -237,7 +239,7 @@ export type Facts =
 export type AssistantSection = 'packages' | 'travel' | 'money' | 'events'
 
 /** Why a sender may not be who they say. Words for each are in the page; a server's are never shown. */
-export type SenderWarning = 'forged' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere'
+export type SenderWarning = 'forged' | 'self' | 'unverified' | 'name-mismatch' | 'lookalike' | 'replies-elsewhere' | 'hidden'
 
 export interface Subscription {
   account: string
@@ -438,7 +440,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 export type ProfilePatch = Partial<Pick<Settings,
   'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
-  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder'>> & {
+  'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder' | 'faces'>> & {
   /** Only the times named. */
   later?: Partial<LaterTimes>
 }
@@ -532,7 +534,8 @@ export interface MailApi {
   /** The faces known for these addresses. With [lookUp], ones not known are looked up behind the
    *  scenes, and `onFaces` says when there are more. Only lists look up; opening a message doesn't. */
   faces(addresses: string[], lookUp: boolean): Promise<Record<string, Face | null>>
-  onFaces(listener: () => void): () => void
+  /** [again] says every face known so far is to be asked for again: Faces was turned off or on. */
+  onFaces(listener: (again: boolean) => void): () => void
   /** A photo for one of your accounts, from the system's file picker, kept on this laptop. Says
    *  whether one was chosen. */
   choosePhoto(account: string): Promise<boolean>

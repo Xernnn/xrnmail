@@ -1,6 +1,7 @@
 import { app, ipcMain, session, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { TRACKER } from '@shared/trackers'
 import { isSafeExternalUrl } from './safe-url'
 
 /**
@@ -72,7 +73,9 @@ export function lockDownNetwork(): void {
       const dev = devServerUrl()
       if (dev && details.url.startsWith(dev)) return callback({})
       const allowed = details.webContentsId !== undefined && imagesAllowed.has(details.webContentsId)
-      callback({ cancel: !(allowed && details.resourceType === 'image') })
+      // A known service's open-tracking address is refused even then, however the mail named it:
+      // CSS has more ways to ask for a picture than the page can find and take out.
+      callback({ cancel: !(allowed && details.resourceType === 'image') || TRACKER.test(details.url) })
     }
   )
   web.on('will-download', (event) => event.preventDefault())

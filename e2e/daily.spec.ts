@@ -1,8 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
+import { jar, pdf } from '../tests/files'
 import { launch, ME, signIn, type Running } from './app'
 
 const LONG = { timeout: 15_000 }
@@ -1286,19 +1287,57 @@ test('flags and labels reach Gmail', async () => {
 test('attachments: saved exactly, opened only when safe', async () => {
   run = await launch()
   const { page, gmail } = run
-  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: 'the real bytes' } }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: pdf() } }), { arrived: earlier(5) })
   gmail.add(rawMail({ subject: 'Trap', attachment: { name: 'totally-a-photo.desktop', type: 'application/x-desktop', body: '[Desktop Entry]\nExec=rm -rf ~' } }), { arrived: earlier(4) })
+  // A Java program named as a PDF: xdg-open goes by the bytes, and would run it with java -jar.
+  gmail.add(rawMail({ subject: 'Bill', attachment: { name: 'invoice.pdf', type: 'application/pdf', body: jar() } }), { arrived: earlier(3) })
   await signIn(run)
   await page.locator('.threads').getByText('Files').click()
   await page.getByRole('button', { name: 'Save report.pdf' }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
-  expect(readFileSync(run.savedTo, 'utf8')).toBe('the real bytes')
+  expect(readFileSync(run.savedTo).equals(pdf())).toBe(true)
   await page.getByRole('button', { name: /^report\.pdf/ }).click()
   await expect.poll(run.openedFiles).toHaveLength(1)
-  await page.locator('.threads').getByText('Trap').click()
-  await page.getByRole('button', { name: /^totally-a-photo/ }).click()
-  await expect(page.getByText('Save this kind of file first')).toBeVisible()
+  await page.locator('.threads').getByText('Bill', { exact: true }).click()
+  await page.getByRole('button', { name: /^invoice\.pdf/ }).click()
+  await expect(page.getByText('Save it to open')).toBeVisible()
   expect(await run.openedFiles()).toHaveLength(1)
+  // What can't be opened by its name isn't offered as Open: the file is saved instead.
+  await page.locator('.threads').getByText('Trap').click()
+  const trap = page.getByRole('button', { name: /^totally-a-photo/ })
+  await expect(trap).toHaveAttribute('title', 'Save')
+  await trap.click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  await expect.poll(() => readFileSync(run.savedTo, 'utf8')).toBe('[Desktop Entry]\nExec=rm -rf ~')
+  expect(await run.openedFiles()).toHaveLength(1)
+  // The name is a stranger's, in Downloads: a file already there of that name isn't written over
+  // unasked, as GTK's dialog does without being told to ask.
+  const dialogs = await run.app.evaluate(() => (globalThis as unknown as { saveDialogs: { properties?: string[] }[] }).saveDialogs)
+  expect(dialogs).toHaveLength(2)
+  for (const options of dialogs) expect(options.properties).toContain('showOverwriteConfirmation')
+})
+
+// Opened files waited in the temporary folder until a clean quit, and a crash left them for good.
+test('an attachment opened isn\'t left on disk by a crash: the next start takes it away', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: pdf() } }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Files').click()
+  await page.getByRole('button', { name: /^report\.pdf/ }).click()
+  await expect.poll(run.openedFiles).toHaveLength(1)
+  const [opened = ''] = await run.openedFiles()
+  expect(readFileSync(opened).equals(pdf())).toBe(true)
+  // Ended the way a crash ends it, with nothing let to tidy up.
+  const ended = new Promise((resolve) => run.app.process().once('exit', resolve))
+  run.app.process().kill('SIGKILL')
+  await ended
+  await gmail.stop()
+  await smtp.stop()
+  expect(existsSync(opened)).toBe(true)
+  run = await launch({ data: run.data })
+  await run.page.waitForLoadState()
+  expect(existsSync(dirname(opened))).toBe(false)
 })
 
 test('View original shows a message as the server has it, as text, and saves it as .eml', async () => {
@@ -1321,6 +1360,8 @@ test('View original shows a message as the server has it, as text, and saves it 
   await expect(page.locator('.threads').getByText('Plans: Friday')).toBeVisible()
   await sheet.getByRole('button', { name: 'Save as .eml' }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  const [dialog] = await run.app.evaluate(() => (globalThis as unknown as { saveDialogs: { properties?: string[] }[] }).saveDialogs)
+  expect(dialog?.properties).toContain('showOverwriteConfirmation')
   const saved = readFileSync(run.savedTo, 'utf8')
   expect(saved).toContain('X-Mailer: Made Up 1.0')
   expect(saved.replace(/\r\n/g, '\n')).toBe(gmail.mails[0]?.raw.toString().replace(/\r\n/g, '\n'))

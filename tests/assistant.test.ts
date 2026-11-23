@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { factsOf, sortMail } from '@main/assistant'
 import { inviteOf, replyIcs } from '@main/invite'
-import { parseMail, senderWarnings } from '@main/parse'
+import { checkedBy, parseMail, receiverOf, senderWarnings } from '@main/parse'
+import { authenticated } from '@shared/images'
+import { configFor, provider } from '@shared/providers'
 import { rawMail } from './fake-gmail'
 
 const OWN = ['me@example.com']
@@ -144,7 +146,16 @@ describe('warnings about a sender', () => {
   it('catches failed checks', async () => {
     expect(await warned({ headers: ['Authentication-Results: mx; dmarc=fail'] })).toEqual(['forged'])
     expect(await warned({ headers: ['Authentication-Results: mx; dkim=fail; spf=fail'] })).toEqual(['forged'])
-    expect(await warned({ headers: ['Authentication-Results: mx; dkim=pass; spf=fail'] })).toEqual([])
+    expect(await warned({ headers: ['Authentication-Results: mx; dkim=pass header.d=example.com; spf=fail'] })).toEqual([])
+  })
+
+  // SPF failed and nothing else spoke for the From line's domain, which has no DMARC of its own to
+  // fail: a spoof like that went without a word.
+  it('says when the server couldn\'t tie the mail to its sender\'s domain', async () => {
+    expect(await warned({ headers: ['Authentication-Results: mx; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'] })).toEqual(['unverified'])
+    expect(await warned({ headers: ['Authentication-Results: mx; spf=fail; dkim=pass header.d=other.example'] })).toEqual(['unverified'])
+    expect(await warned({ headers: ['Authentication-Results: mx; spf=softfail; dkim=none; dmarc=pass header.from=example.com'] })).toEqual([])
+    expect(await warned({ headers: ['Authentication-Results: mx; spf=none; dkim=none'] })).toEqual([]) // nothing failed
   })
 
   it('trusts only the receiving server\'s line, which is on top', async () => {
@@ -174,11 +185,100 @@ describe('warnings about a sender', () => {
   it('catches replies going elsewhere, but not from lists or within a domain', async () => {
     expect(await warned({ from: 'Ada <ada@example.com>', headers: ['Reply-To: x@evil.example'] })).toEqual(['replies-elsewhere'])
     expect(await warned({ from: 'Ada <ada@example.com>', headers: ['Reply-To: x@help.example.com'] })).toEqual([])
-    expect(await warned({ from: 'Ada <ada@example.com>', headers: ['Reply-To: x@evil.example', 'List-Id: <a.example>'] })).toEqual([])
+    const proved = 'Authentication-Results: mx; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=b@example.com; dmarc=pass header.from=example.com'
+    expect(await warned({ from: 'Ada <ada@example.com>', headers: ['Reply-To: x@evil.example', 'List-Id: <a.example>', proved] })).toEqual([])
+  })
+
+  // bank.com.au and evil.com.au were both "com.au", so a reply going to the other went unnoticed.
+  it('tells companies apart under shared endings such as .com.au', async () => {
+    expect(await warned({ from: 'Bank <alerts@bank.com.au>', headers: ['Reply-To: help@evil.com.au'] })).toEqual(['replies-elsewhere'])
+    expect(await warned({ from: 'Shop <news@shop.co.uk>', headers: ['Reply-To: help@other.co.uk'] })).toEqual(['replies-elsewhere'])
+    expect(await warned({ from: 'Shop <news@mail.shop.com.vn>', headers: ['Reply-To: help@shop.com.vn'] })).toEqual([])
+  })
+
+  // List-Id, Precedence and Auto-Submitted are the sender's own words, and switched the warning off.
+  it('lets list headers excuse replies going elsewhere only on mail proved to be the sender\'s', async () => {
+    for (const bulk of ['List-Id: <a.example>', 'Precedence: bulk', 'Auto-Submitted: auto-generated']) {
+      expect(await warned({ from: 'Bank <x@bank.example>', headers: ['Reply-To: x@evil.example', bulk] }), bulk).toEqual(['replies-elsewhere'])
+    }
+  })
+
+  // U+202E shows the rest of a line backwards: this name read as "security@paypal.com", in bold, and
+  // the check for a name showing another address saw only the reversed text, so it said nothing.
+  it('catches a name turned around by hidden characters, and shows it without them', async () => {
+    const parsed = await mail({
+      from: '=?UTF-8?Q?=E2=80=AEmoc=2Elapyap=40ytiruces?= <attacker@evil.example>',
+      subject: '=?UTF-8?Q?Invoice_=E2=80=AEfdp=2Eexe?=',
+      text: 'Keep ‏this‮ as sent',
+      attachment: { name: 'photo‮gpj.exe', type: 'application/octet-stream', body: 'MZ' }
+    })
+    expect(parsed.warnings).toEqual(['hidden'])
+    expect(parsed.from).toEqual({ name: 'moc.lapyap@ytiruces', address: 'attacker@evil.example' })
+    expect(parsed.subject).toBe('Invoice fdp.exe')
+    expect(parsed.attachments[0]?.name).toBe('photogpj.exe')
+    expect(parsed.text).toContain('Keep ‏this‮ as sent') // the body is the sender's, as sent
+    for (const invisible of ['⁦', '⁩', '‎', '؜', '​', '﻿']) {
+      expect((await mail({ from: `"Mai${invisible} Tran" <mai@example.com>` })).from.name, escape(invisible)).toBe('Mai Tran')
+    }
+    expect(await warned({ from: '"Mai⁧ Tran" <mai@example.com>' })).toEqual(['hidden'])
+    expect(await warned({ from: '"Mai‏ Tran" <mai@example.com>' })).toEqual([]) // a mark, as right-to-left names carry
   })
 
   it('is a pure reading of what it was given', () => {
+    expect(senderWarnings({ from: { name: '', address: '' }, replyTo: [], authentication: [], bulk: false })).toEqual([])
     expect(senderWarnings({ from: { name: '', address: '' }, replyTo: [], authentication: '', bulk: false })).toEqual([])
+  })
+})
+
+describe('whose Authentication-Results count', () => {
+  const gmail = receiverOf({ ...configFor('me@example.com', provider('gmail')) }, ['me@example.com', 'me@alias.example'])
+  const outlook = receiverOf(configFor('me@outlook.com', provider('outlook')))
+  const own = receiverOf({ ...configFor('me@example.org', provider('other')), imap: { host: 'imap.example.org', port: 993, security: 'tls' } })
+  const read = async (receiver: ReturnType<typeof receiverOf>, headers: string[], from = 'Shop <news@shop.example>'): Promise<{ warnings: string[]; proved: boolean; by: string }> => {
+    const parsed = await mail({ from, headers })
+    const { warnings, details } = checkedBy(parsed, receiver)
+    return { warnings, proved: authenticated(details, parsed.from.address), by: details.checks?.by ?? '' }
+  }
+  const PASS = 'dkim=pass header.d=shop.example; spf=pass smtp.mailfrom=b@shop.example; dmarc=pass header.from=shop.example'
+
+  // On a server that adds none of its own, the top line was the sender's, and a pass written there
+  // loaded a trusted sender's pictures and hid the forged warning.
+  it('takes a pass only from the account\'s own server', async () => {
+    expect(await read(gmail, [`Authentication-Results: mx.google.com; ${PASS}`])).toEqual({ warnings: [], proved: true, by: 'mx.google.com' })
+    expect(await read(gmail, [`Authentication-Results: mx.evil.example; ${PASS}`])).toEqual({ warnings: [], proved: false, by: '' })
+    expect(await read(outlook, [`Authentication-Results: ${PASS}`])).toMatchObject({ proved: true, by: '' })
+    expect(await read(outlook, [`Authentication-Results: mx.google.com; ${PASS}`])).toMatchObject({ proved: false })
+    expect(await read(own, [`Authentication-Results: mx2.example.org; ${PASS}`])).toMatchObject({ proved: true, by: 'mx2.example.org' })
+    expect(await read(own, [`Authentication-Results: example.org.evil.example; ${PASS}`])).toMatchObject({ proved: false })
+  })
+
+  it('reads the server\'s lines on top and none a sender added under them, even in its name', async () => {
+    const softfail = 'Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none'
+    expect(await read(gmail, [softfail, `Authentication-Results: mx.google.com; ${PASS}`])).toEqual({ warnings: ['unverified'], proved: false, by: 'mx.google.com' })
+    // iCloud writes a line for each check, each under its own name.
+    const icloud = receiverOf(configFor('me@icloud.com', provider('icloud')))
+    expect(await read(icloud, [
+      'Authentication-Results: bimi.icloud.com; bimi=skipped reason="insufficient dmarc"',
+      'Authentication-Results: dmarc.icloud.com; dmarc=pass header.from=shop.example',
+      'Authentication-Results: dkim-verifier.icloud.com; dkim=pass header.d=shop.example'
+    ])).toMatchObject({ proved: true, by: 'dmarc.icloud.com' })
+  })
+
+  it('still takes a failure from the top line, which only harms the one who wrote it', async () => {
+    expect((await read(gmail, ['Authentication-Results: mx; dmarc=fail'])).warnings).toEqual(['forged'])
+  })
+
+  // A stranger could write one of your own addresses on the From line of mail from a domain with no
+  // DMARC, and it showed your own photo with no word of warning.
+  it('warns when mail says it\'s from you and the server couldn\'t confirm it', async () => {
+    const unproved = 'Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=x@cheap.example; dkim=none; dmarc=none'
+    expect((await read(gmail, [unproved], 'Me <me@example.com>')).warnings).toEqual(['self'])
+    expect((await read(gmail, [unproved], 'Me <ME@alias.example>')).warnings).toEqual(['self'])
+    expect((await read(gmail, ['Authentication-Results: mx.google.com; spf=none; dkim=none'], 'Me <me@example.com>')).warnings).toEqual(['self'])
+    expect((await read(gmail, ['Authentication-Results: mx.google.com; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=me@example.com; dmarc=pass header.from=example.com'], 'Me <me@example.com>')).warnings).toEqual([])
+    expect((await read(gmail, ['Authentication-Results: mx.google.com; spf=pass smtp.mailfrom=me@example.com; dkim=none'], 'Me <me@example.com>')).warnings).toEqual([])
+    // What you sent was never received from outside, so it has no such line, and nothing to say.
+    expect((await read(gmail, [], 'Me <me@example.com>')).warnings).toEqual([])
   })
 })
 

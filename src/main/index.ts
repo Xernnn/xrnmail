@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
   Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
@@ -20,9 +20,10 @@ import { watchNetwork } from './network'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
-import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
+import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
-import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
+import { openAttachment, xdgFiletype } from './opening'
+import { isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
@@ -138,8 +139,11 @@ function testSources(spec: string): PictureSources {
 
 /** PNG and JPEG are drawn again here, by Chromium's own decoder: smaller, and with nothing in them
  *  but pixels. One it can't read is no picture. The other kinds are left for the page's <img>. */
-function redraw(picture: Picture, side = 128, square = false): Picture | null {
+function redraw(picture: Picture, side = 128, square = false, most = MOST_LOOKED_UP): Picture | null {
   if (picture.type !== 'image/png' && picture.type !== 'image/jpeg') return picture
+  // Measured first: a stranger's picture is drawn only if its header says a size worth drawing.
+  const measured = pictureSize(picture.bytes)
+  if (!measured || measured.width === 0 || measured.height === 0 || measured.width * measured.height > most) return null
   let image = nativeImage.createFromBuffer(picture.bytes)
   if (image.isEmpty()) return null
   const { width, height } = image.getSize()
@@ -154,9 +158,14 @@ function redraw(picture: Picture, side = 128, square = false): Picture | null {
 
 /** A chosen photo can be large, but not this large. */
 const MOST_CHOSEN = 10 * 1024 * 1024
+/** The most pixels a picture may have to be drawn: one looked up is a face, 96 pixels asked for;
+ *  one chosen can be a phone camera's. */
+const MOST_LOOKED_UP = 2048 * 2048
+const MOST_CHOSEN_PIXELS = 12_000 * 9_000
 
-const tellFaces = (): void => {
-  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces')
+/** Something new was found; with [again], Faces was turned off or on, and every face is asked anew. */
+const tellFaces = (again = false): void => {
+  for (const shown of [window, ...solos.values()]) if (shown && !shown.isDestroyed()) shown.webContents.send('faces', again)
 }
 
 function bringForward(shown: BrowserWindow | null): void {
@@ -370,7 +379,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -400,13 +409,33 @@ function rsvp(value: unknown): Rsvp {
   return answer
 }
 
-let openedFiles: string | null = null
+/** The name a save suggests is a stranger's, in Downloads, and GTK's dialog writes over a file of that
+ *  name there without asking unless it's told to. */
+const SAVING: ('showOverwriteConfirmation' | 'createDirectory')[] = ['showOverwriteConfirmation', 'createDirectory']
 
-/** A private folder for attachments being looked at, gone when the app quits. */
+let openedFiles: string | null = null
+/** Where the profile notes the folder, so one a crash left behind is found at the next start. */
+const OPENED_KEY = 'openedFolder'
+let noteOpened: ((path: string) => void) | null = null
+
+/** A private folder for attachments being looked at, gone when the app quits. Its name can't be
+ *  guessed, so nothing else can make it first, and the profile keeps it. */
 function openedFolder(): string {
-  openedFiles ??= join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+  if (!openedFiles) {
+    openedFiles = join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+    noteOpened?.(openedFiles)
+  }
   mkdirSync(openedFiles, { recursive: true, mode: 0o700 })
   return openedFiles
+}
+
+/** Takes away the folder of opened attachments the last run left, if it didn't quit: only one this
+ *  profile noted, and named as this app names them. */
+function clearOpened(store: Store): void {
+  const left = store.meta(OPENED_KEY)
+  if (left && /^xrnmail-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(basename(left))) rmSync(left, { recursive: true, force: true })
+  store.deleteMeta(OPENED_KEY)
+  noteOpened = (path) => store.setMeta(OPENED_KEY, path)
 }
 
 function register(service: MailService, avatars: Avatars): void {
@@ -466,7 +495,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveAttachment', async (message: unknown, index: unknown) => {
     const found = await service.attachment(number(message), number(index))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)) }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.content, { mode: 0o600 })
@@ -474,12 +503,7 @@ function register(service: MailService, avatars: Avatars): void {
   })
   handle('openAttachment', async (message: unknown, index: unknown) => {
     const found = await service.attachment(number(message), number(index))
-    const name = safeFileName(found.name)
-    if (!canOpenDirectly(name)) throw new Error('Save this kind of file first, then open it yourself.')
-    const path = join(openedFolder(), `${randomUUID().slice(0, 8)}-${name}`)
-    writeFileSync(path, found.content, { mode: 0o600 })
-    const failure = await shell.openPath(path)
-    if (failure) throw new Error('Nothing on this laptop opens that kind of file.')
+    await openAttachment(safeFileName(found.name), found.content, { folder: openedFolder, filetype: xdgFiletype, openPath: (path) => shell.openPath(path) })
   })
   // A message's source is a stranger's bytes: the page gets it as text to show in a <pre>, no more
   // than a few megabytes of it, and saving writes it as it came.
@@ -491,7 +515,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveOriginal', async (message: unknown) => {
     const found = await service.original(number(message))
     const parent = dialogParent()
-    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }] }
+    const options = { defaultPath: join(app.getPath('downloads'), safeFileName(found.name)), filters: [{ name: 'Mail message', extensions: ['eml'] }], properties: SAVING }
     const choice = await (parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options))
     if (choice.canceled || !choice.filePath) return false
     writeFileSync(choice.filePath, found.bytes, { mode: 0o600 })
@@ -523,7 +547,7 @@ function register(service: MailService, avatars: Avatars): void {
     if (statSync(path).size > MOST_CHOSEN) throw new Error('Pick a picture under 10 MB.')
     const bytes = readFileSync(path)
     const type = sniff(bytes)
-    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true) : null
+    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true, MOST_CHOSEN_PIXELS) : null
     if (!drawn) throw new Error("That picture couldn't be read. Pick a PNG or JPEG.")
     avatars.choose(email, drawn)
     tellFaces()
@@ -584,6 +608,7 @@ function register(service: MailService, avatars: Avatars): void {
     const clean = profile(patch)
     service.saveProfile(clean)
     if (clean.startAtLogin !== undefined) setStartAtLogin(clean.startAtLogin)
+    if (clean.faces !== undefined) tellFaces(true)
   })
   handle('version', () => app.getVersion())
   handle('openInGmail', (email: unknown, thread: unknown) => shell.openExternal(service.threadUrl(text(email, 320), text(thread, 64))))
@@ -738,6 +763,7 @@ app.on('window-all-closed', () => { if (quitting || !tray) app.quit() })
 void app.whenReady().then(() => {
   lockDownNetwork()
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
+  clearOpened(store)
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
   // The UI tests look nothing up unless they hand over pictures of their own.
   const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt, addressesOf)
@@ -745,9 +771,11 @@ void app.whenReady().then(() => {
     dir: join(app.getPath('userData'), 'faces'),
     sources,
     now: () => Date.now(),
-    found: tellFaces,
+    found: () => tellFaces(),
     redraw: (picture) => redraw(picture),
-    ownerOf: (address) => mail?.ownerOf(address) ?? null
+    ownerOf: (address) => mail?.ownerOf(address) ?? null,
+    on: () => mail?.settings().faces ?? true,
+    vouched: (addresses) => store.passedDmarc(addresses)
   })
   const parser = new Parser(() => readMail({}))
   const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
@@ -760,11 +788,11 @@ void app.whenReady().then(() => {
     openSender: (account, login) => new SmtpSender(smtpConfig(account, login)),
     openWatcher: (account, login) => new ImapWatcher(imapConfig(account, login)),
     records: test['XRNMAIL_IMAP'] ? undefined : domainRecords,
+    addresses: addressesOf,
     files: new DraftFiles(join(app.getPath('userData'), 'drafts')),
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),
     changed: tellPage,
-    noticed: (addresses) => avatars.want(addresses),
     // A notice for one message opens it; one for several brings the window up.
     landed: test['XRNMAIL_DATA'] ? undefined : (count, preview) => notify(count, preview, () => {
       showWindow()
