@@ -415,7 +415,8 @@ Writing and acting on mail gave strangers new things to aim at, so:
   if it didn't get to. Saving asks before writing over a file. File names are cleaned before they're
   suggested, so `../../.ssh/authorized_keys` can't climb out.
 - **Unsubscribing makes one fixed request.** The address comes from a stranger's header, so the app sends
-  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name, and
+  only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name that
+  resolves to no address of this laptop, its network or the tailnet (as faces' lookups check), and
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft
   to read, never a message sent behind your back.
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.

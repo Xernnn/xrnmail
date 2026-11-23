@@ -773,6 +773,7 @@ void app.whenReady().then(() => {
     openSender: (account, login) => new SmtpSender(smtpConfig(account, login)),
     openWatcher: (account, login) => new ImapWatcher(imapConfig(account, login)),
     records: test['XRNMAIL_IMAP'] ? undefined : domainRecords,
+    addresses: addressesOf,
     files: new DraftFiles(join(app.getPath('userData'), 'drafts')),
     // Read through Date each time, so the UI tests can move the main process's clock on.
     now: () => Date.now(),

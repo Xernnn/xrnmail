@@ -41,6 +41,8 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     ...over,
     store, secrets, changed, landed, summarized,
     post: post as unknown as typeof fetch,
+    // No test asks real DNS: every name is a public address unless a test says otherwise.
+    addresses: over.addresses ?? (async () => ['203.0.113.7']),
     now: () => clock,
     files: new DraftFiles(folder),
     openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
@@ -1523,6 +1525,22 @@ describe('unsubscribing', () => {
     const id = await arrived(['List-Unsubscribe: <https://127.0.0.1/admin>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
     expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://127.0.0.1/admin' })
     expect(post).not.toHaveBeenCalled()
+  })
+
+  // The check was on the name alone: a public-looking name that resolves to this laptop, the home
+  // network or the tailnet got the POST, with no click on anything but Unsubscribe.
+  it('will not post to a name that leads to this machine, its network or the tailnet', async () => {
+    const id = await arrived(['List-Unsubscribe: <https://list.example/u/1>', 'List-Unsubscribe-Post: List-Unsubscribe=One-Click'])
+    for (const found of [['127.0.0.1'], ['192.168.1.1'], ['10.0.0.8'], ['100.101.102.103'], ['169.254.169.254'], ['203.0.113.7', '::1'],
+      ['fd7a:115c:a1e0::1'], ['fe80::1'], ['ff02::1'], ['::ffff:192.168.0.1'], ['224.0.0.1'], []]) {
+      service = make({ addresses: async () => found })
+      expect(await service.unsubscribe(id), found.join()).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    }
+    service = make({ addresses: async () => { throw new Error('ENOTFOUND') } })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'opened', url: 'https://list.example/u/1' })
+    expect(post).not.toHaveBeenCalled()
+    service = make({ addresses: async (host) => (host === 'list.example' ? ['2001:db8::5', '198.51.100.4'] : []) })
+    expect(await service.unsubscribe(id)).toEqual({ kind: 'done' })
   })
 
   it('without one-click it opens the sender page', async () => {

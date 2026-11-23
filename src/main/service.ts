@@ -19,7 +19,7 @@ import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type Dev
 import { NO_DETAILS } from './details'
 import { attachmentsOf, detailsOf, makeSnippet, parseDraft, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
-import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
+import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
@@ -152,6 +152,8 @@ export interface ServiceDeps {
   /** New mail came from these senders, so their faces are worth looking up now, not when it's read. */
   noticed?(addresses: string[]): void
   post?: typeof fetch
+  /** Every address a name resolves to, for a request a stranger's header aims (unsubscribing). */
+  addresses?: (host: string) => Promise<string[]>
   records?: DomainRecords
   /** How synced mail is read, when not on this thread. */
   parse?: (source: Buffer) => Promise<ParsedMail>
@@ -1127,7 +1129,7 @@ export class MailService {
     const message = this.store.message(id, this.deps.now())
     const to = message?.unsubscribeTo
     if (!message || !to) throw new Error('This sender gives no way to unsubscribe.')
-    if (to.oneClick && to.web && isPublicHttps(to.web)) {
+    if (to.oneClick && to.web && isPublicHttps(to.web) && (await this.leadsOut(new URL(to.web).hostname))) {
       try {
         const response = await this.post(to.web, {
           method: 'POST',
@@ -1148,6 +1150,18 @@ export class MailService {
     const start = parseMailto(to.mail ?? '')
     const draft = await this.startDraft({ ...start, account: message.account, subject: start.subject || 'Unsubscribe' })
     return { kind: 'draft', draft }
+  }
+
+  /** Whether a public-looking name resolves only to public addresses: one leading to this laptop, its
+   *  network or the tailnet gets no request from here. One that can't be resolved, or with nothing to
+   *  resolve it with, gets none either. */
+  private async leadsOut(host: string): Promise<boolean> {
+    try {
+      const found = (await this.deps.addresses?.(host)) ?? []
+      return found.length > 0 && !found.some(isPrivateAddress)
+    } catch {
+      return false
+    }
   }
 
   private leftBehind(address: string): void {
