@@ -315,6 +315,33 @@ their addresses every 5 seconds (one system call) and, when they've changed and 
 does what waking does: every watch starts again, the quick tries start over, and every account
 syncs. The loopback isn't counted, nor the order the system lists them in.
 
+### Mail from before the window
+
+Only the keeping window is read, so a search would never find anything older. It asks the servers as
+well (`server-search.ts`), on read-only connections through `MailSource` like a sync. The search box
+shows what's kept here at once, and 500 ms after the text last changed every account is asked about
+mail from before the window: Gmail with `X-GM-RAW` over All Mail, in Gmail's own language and mostly
+as typed (`gmailQuery`), anything else with IMAP SEARCH in each folder but Trash and Junk
+(`imapPlan`), where a term without a SEARCH key is tried on the headers that come back. Both ask
+only about mail from before the window starts (to the next day, since a server's days are its own),
+so held mail stays out, and what's kept here already is left out of the answer.
+
+- Only the newest 200 found on each account are read, and only their headers (`HEADER.FIELDS`, with
+  `BODY.PEEK`), which is all a row needs. Their rows go below what's kept here, once that's all shown.
+- A new search, or leaving search, drops the connections of the one before at once, mid-command,
+  rather than waiting for a slow server to answer what nobody's asking any more.
+- A server that can't be reached, or won't search, adds nothing and says nothing: the search is what's
+  kept here, as it was before servers were asked.
+- Opening a row it found, or acting on one, fetches its thread first (`reach`, before `thread` and `act`
+  in the main process): on Gmail everything with its X-GM-THRID in All Mail, elsewhere whatever in a
+  folder sync reads names its first Message-ID (`Message-ID`, `References` or `In-Reply-To`), kept only
+  if it works out to the same thread. They're stored as ordinary rows, so the reader, Reply, every
+  action, attachments and Save as .eml work on them by folder and UID as on any, and listed in
+  `outside` with when they were last opened. No list, count, contact or subscription reads them but
+  their own thread, Pinned and Recently Seen. The keeping step at the end of a pass lets them go a
+  week after they were last opened, unless their thread is pinned, and once the window has grown to
+  take them in they're ordinary mail. What's in the window of such a thread is left for a sync.
+
 ## Staying open
 
 Closing the window hides it while the tray exists and "Keep running in the tray" is on, so

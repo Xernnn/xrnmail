@@ -73,7 +73,7 @@ const UNREADABLE: ParsedMail = {
   details: NO_DETAILS
 }
 
-async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
+export async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boolean, options: SyncOptions, holdFrom: number): Promise<StoredMail> {
   let mail = UNREADABLE
   try {
     mail = await (options.parse ?? parseMail)(remote.source)
@@ -195,7 +195,7 @@ export async function syncAccount(source: MailSource, store: Store, options: Syn
   }
   goOn(options)
   store.keepBoxes(options.account, boxes.map((box) => box.id))
-  store.dropOlderThan(options.account, options.now - options.backfillDays * DAY_MS - EDGE_MS)
+  store.dropOlderThan(options.account, options.now - options.backfillDays * DAY_MS - EDGE_MS, options.now)
   store.saveHoldFrom(options.account, holdFrom)
   return total
 }

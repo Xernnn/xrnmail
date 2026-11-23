@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { canOpenDirectly, isPublicHttps, safeFileName } from '@main/safe-url'
 import { MIGRATIONS, searchParts, Store } from '@main/store'
 import { forwardSubject, parseMailto, parseRecipients, quoteOf, replySubject, replyTargets } from '@main/compose'
-import type { MessageDetail } from '@main/store'
+import type { MessageDetail, StoredMail } from '@main/store'
 import { secondVersionProfile } from './old-profile'
 
 /** The file the first version of the app wrote, before versioning. */
@@ -296,9 +296,101 @@ describe('search', () => {
   })
 
   it('never lets what is typed become search syntax', () => {
-    expect(searchParts('a" OR "b').match).toBe('"a"* "OR"* "b"*')
+    // OR is read as Gmail reads it, and every word still goes to FTS5 in quotes.
+    expect(searchParts('a" OR "b')).toEqual({ match: '', filters: ['(id IN (SELECT rowid FROM search WHERE search MATCH ?) OR id IN (SELECT rowid FROM search WHERE search MATCH ?))'], params: ['"a"*', '"b"'] })
     expect(searchParts('NEAR(x y)').match).toBe('"NEAR(x"* "y)"*')
     expect(searchParts('from:"').match).toBe('')
+    expect(searchParts('"x" AND y" -"z').match).toBe('"x" "y"*')
+  })
+
+  it('takes twelve terms, a phrase or an OR of them counted as its own, and each word once', () => {
+    const words = Array.from({ length: 30 }, (_, i) => `w${i}`)
+    expect(searchParts(words.join(' ')).match).toBe(words.slice(0, 12).map((word) => `"${word}"*`).join(' '))
+    expect(searchParts(`"a b c d e f g h" ${words.join(' ')}`).match).toBe(['"a b c d e f g h"', ...words.slice(0, 11).map((word) => `"${word}"*`)].join(' '))
+    expect(searchParts('w w w w x').match).toBe('"w"* "x"*') // the same word again costs a pass and adds nothing
+    expect(searchParts(`${words.slice(0, 11).join(' ')} a OR b`)).toEqual({ match: words.slice(0, 11).map((word) => `"${word}"*`).join(' '), filters: [], params: [] })
+  })
+
+  describe('as Gmail reads one', () => {
+    const NOW = new Date(2026, 10, 20, 12).getTime()
+    const DAY = 86_400_000
+    let next = 1
+    const mail = (over: Partial<StoredMail>): StoredMail => ({
+      account: 'me@example.com', box: '@all', uid: next++, thread: `t${next}`, gmailId: '', messageId: `<${next}@example.com>`,
+      subject: 'Hello', from: { name: 'Ada', address: 'ada@example.com' }, to: [{ name: '', address: 'me@example.com' }], cc: [], replyTo: [],
+      references: '', unsubscribe: null, arrived: NOW - DAY, snippet: '', text: 'Hi', html: null, attachments: [], labels: ['\\Inbox'],
+      seen: true, flagged: false, truncated: false, size: 2_000, releaseAt: 0, summary: false, focused: true, facts: null, warnings: [], ...over
+    })
+    const found = (store: Store, text: string): string[] => store.list({ kind: 'search', text }, NOW).map((row) => row.subject).sort()
+    const filled = (): Store => {
+      const store = new Store(':memory:')
+      store.addMail(mail({ subject: 'Lịch thi cuối kỳ', text: 'Phòng 204' }))
+      store.addMail(mail({ subject: 'Thi lịch sử', text: 'History exam' }))
+      store.addMail(mail({ subject: 'Trip photos', labels: ['\\Inbox', 'Family trips'], arrived: NOW - 3 * DAY, size: 6 * 1024 * 1024,
+        attachments: [{ name: 'beach.jpg', type: 'image/jpeg', size: 6_000_000 }] }))
+      store.addMail(mail({ subject: 'Quarterly report', labels: ['Work/Reports'], arrived: NOW - 40 * DAY, size: 150 * 1024,
+        attachments: [{ name: 'Report Q3.pdf', type: 'application/pdf', size: 150_000 }] }))
+      store.addMail(mail({ subject: 'Lunch plans', from: { name: 'Mai Tran', address: 'mai@example.com' }, arrived: Date.parse('2026-11-02'), seen: false }))
+      store.addMail(mail({ subject: 'Old invoice', arrived: NOW - 400 * DAY, flagged: true }))
+      return store
+    }
+
+    it('quoted phrases match as written, words as the start of one', () => {
+      const store = filled()
+      expect(found(store, 'lich thi')).toEqual(['Lịch thi cuối kỳ', 'Thi lịch sử'])
+      expect(found(store, '"lich thi"')).toEqual(['Lịch thi cuối kỳ'])
+      expect(found(store, 'subject:"thi lich"')).toEqual(['Thi lịch sử'])
+      expect(found(store, '"lic"')).toEqual([]) // a phrase isn't a prefix
+      store.close()
+    })
+
+    it('OR joins the terms either side of it; -word and NOT word leave mail out', () => {
+      const store = filled()
+      expect(found(store, 'lunch OR trip')).toEqual(['Lunch plans', 'Trip photos'])
+      expect(found(store, 'lunch OR trip is:unread')).toEqual(['Lunch plans'])
+      expect(found(store, 'thi -history')).toEqual(['Lịch thi cuối kỳ'])
+      expect(found(store, 'thi NOT history')).toEqual(['Lịch thi cuối kỳ'])
+      expect(found(store, '-from:ada')).toEqual(['Lunch plans'])
+      store.close()
+    })
+
+    it('in: and label: name a label or folder as written, in quotes, or with dashes', () => {
+      const store = filled()
+      expect(found(store, 'label:"Family trips"')).toEqual(['Trip photos'])
+      expect(found(store, 'label:family-trips')).toEqual(['Trip photos'])
+      expect(found(store, 'in:work/reports')).toEqual(['Quarterly report'])
+      expect(found(store, 'in:inbox photos')).toEqual(['Trip photos'])
+      expect(found(store, 'in:archive')).toEqual(['Quarterly report'])
+      store.close()
+    })
+
+    it('reads ages, days with dashes or slashes, sizes and file names', () => {
+      const store = filled()
+      expect(found(store, 'newer_than:2d')).toEqual(['Lịch thi cuối kỳ', 'Thi lịch sử'])
+      expect(found(store, 'newer_than:1w -thi')).toEqual(['Trip photos'])
+      expect(found(store, 'older_than:1m')).toEqual(['Old invoice', 'Quarterly report'])
+      expect(found(store, 'older_than:1y')).toEqual(['Old invoice'])
+      expect(found(store, 'after:2026/11/01 before:2026-11-03')).toEqual(['Lunch plans'])
+      expect(found(store, 'larger:5M')).toEqual(['Trip photos'])
+      expect(found(store, 'smaller:200K larger:100k')).toEqual(['Quarterly report'])
+      expect(found(store, 'filename:"report q3"')).toEqual(['Quarterly report'])
+      expect(found(store, 'has:attachment -filename:pdf')).toEqual(['Trip photos'])
+      store.close()
+    })
+
+    it('is:snoozed and is:pinned are this laptop\'s own', () => {
+      const store = filled()
+      const ref = (subject: string): { account: string; thread: string } => {
+        const row = store.list({ kind: 'search', text: `subject:"${subject}"` }, NOW)[0]
+        return { account: row?.account ?? '', thread: row?.thread ?? '' }
+      }
+      store.snooze(ref('Lunch plans'), NOW - 1000, NOW + DAY)
+      store.pin(ref('Old invoice'), NOW)
+      expect(found(store, 'is:snoozed')).toEqual(['Lunch plans'])
+      expect(found(store, 'is:pinned OR is:flagged')).toEqual(['Old invoice'])
+      expect(found(store, 'invoice -is:pinned')).toEqual([])
+      store.close()
+    })
   })
 })
 

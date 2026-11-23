@@ -223,6 +223,8 @@ export interface ThreadRow {
   summaryAt: number | null
   /** Its newest message has a sender warning, so it's shown with initials whatever pictures there are. */
   warned: boolean
+  /** Found on the server by a search, from before the mail kept here. */
+  older?: boolean
 }
 
 /** What the Assistant found in a message, on this laptop, from what's in the message alone. */

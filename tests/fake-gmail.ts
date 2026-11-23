@@ -284,6 +284,7 @@ export class FakeGmail {
     socket.write('* OK Gimap ready\r\n')
     let pending = ''
     let held = '' // a command so far, while its literal is on the way
+    let spelled = '' // the same, with each literal written into it as a quoted string, for SEARCH
     let literal = 0
     let body: string | null = null
     socket.on('data', (chunk) => {
@@ -294,6 +295,7 @@ export class FakeGmail {
           body = pending.slice(0, literal)
           pending = pending.slice(literal)
           literal = 0
+          spelled += `"${Buffer.from(body, 'latin1').toString('utf8').replace(/[\\"]/g, (c) => `\\${c}`)}"`
         }
         const at = pending.indexOf('\r\n')
         if (at < 0) return
@@ -301,18 +303,21 @@ export class FakeGmail {
         pending = pending.slice(at + 2)
         const wants = /\{(\d+)(\+?)\}$/.exec(line)
         if (wants) {
-          held = line.slice(0, wants.index)
+          held += line.slice(0, wants.index)
+          spelled += line.slice(0, wants.index)
           literal = Number(wants[1])
           if (!wants[2]) socket.write('+ go ahead\r\n')
           continue
         }
         const whole = `${held}${line}`
+        const inline = `${spelled}${line}`
         held = ''
+        spelled = ''
         if (whole.length > (this.options.maxLine ?? Infinity)) {
           socket.write(`${whole.slice(0, whole.indexOf(' '))} BAD Command line too long\r\n`)
           continue
         }
-        this.line(socket, whole, body)
+        this.line(socket, whole, body, inline)
         body = null
       }
     })
@@ -324,7 +329,7 @@ export class FakeGmail {
     for (const held of this.holding.splice(0)) held()
   }
 
-  private line(socket: Socket, line: string, literal: string | null): void {
+  private line(socket: Socket, line: string, literal: string | null, inline = line): void {
     if (this.idlers.has(socket)) {
       if (line.trim().toUpperCase() === 'DONE') {
         this.idlers.delete(socket)
@@ -338,7 +343,7 @@ export class FakeGmail {
     const words = rest.split(' ')
     const verb = (words[0] ?? '').toUpperCase()
     const full = verb === 'UID' ? `UID ${(words[1] ?? '').toUpperCase()}` : verb
-    if (this.hold?.test(full)) return void this.holding.push(() => this.line(socket, line, literal))
+    if (this.hold?.test(full)) return void this.holding.push(() => this.line(socket, line, literal, inline))
     this.commands.push(verb === 'LOGIN' ? 'LOGIN' : `${full} ${rest.slice(full.length + 1)}`.trim())
     if (this.stall?.test(full)) return
     const ok = (text = 'OK'): void => void socket.write(`${tag} OK ${text}\r\n`)
@@ -430,7 +435,7 @@ export class FakeGmail {
       }
       case 'SEARCH':
       case 'UID SEARCH':
-        return this.search(socket, tag, rest)
+        return this.search(socket, tag, inline.slice(inline.indexOf(' ') + 1), full === 'UID SEARCH')
       case 'FETCH':
       case 'UID FETCH':
         return this.fetch(socket, tag, rest, full === 'UID FETCH')
@@ -524,19 +529,24 @@ export class FakeGmail {
     socket.write(`${tag} OK ${code}done\r\n`)
   }
 
-  private search(socket: Socket, tag: string, rest: string): void {
+  /** As a real server reads SEARCH: the standard keys, nested with OR, NOT and parentheses, and on
+   *  Gmail X-GM-THRID and X-GM-RAW, whose query is matched by [matchesGmail]. */
+  private search(socket: Socket, tag: string, rest: string, byUid: boolean): void {
     if (this.refuseSearch.has(this.selected(socket).path)) return void socket.write(`${tag} NO [UNAVAILABLE] Temporary System Error\r\n`)
-    const since = /SINCE (\S+)/i.exec(rest)
-    const from = since?.[1] ? parseSearchDate(since[1].replace(/"/g, '')) : null
-    const wanted = /HEADER "?MESSAGE-ID"? "?([^"]+)"?/i.exec(rest)?.[1]
     const box = this.selected(socket)
-    const uids = /\bUID (\S+)/i.exec(rest.replace(/^UID SEARCH /i, ''))?.[1]
+    let keys: SearchKey[]
+    try {
+      const words = searchWords(rest.replace(/^(UID )?SEARCH\s*/i, '').replace(/^CHARSET \S+\s*/i, ''))
+      keys = []
+      while (words.length > 0) keys.push(searchKey(words, !this.options.plain))
+    } catch {
+      return void socket.write(`${tag} BAD Could not parse command\r\n`)
+    }
     const top = box.mails.at(-1)?.uid ?? 0
     const hits = box.mails
-      .filter((m) => !from || m.arrived >= from)
-      .filter((m) => !wanted || m.raw.toString('latin1').includes(wanted))
-      .filter((m) => !uids || inRange(m.uid, uids, top))
-      .map((m) => m.uid)
+      .map((mail, index) => ({ mail, seq: index + 1 }))
+      .filter(({ mail, seq }) => keys.every((key) => key({ mail, seq, top, count: box.mails.length })))
+      .map(({ mail, seq }) => (byUid ? mail.uid : seq))
     socket.write(`* SEARCH ${hits.join(' ')}\r\n${tag} OK SEARCH done\r\n`)
   }
 
@@ -548,6 +558,7 @@ export class FakeGmail {
     const top = box.mails.at(-1)?.uid ?? 0
     const peek = /BODY\.PEEK\[\](?:<(\d+)\.(\d+)>)?/i.exec(items)
     const header = /BODY\.PEEK\[HEADER\]/i.test(items)
+    const fields = /BODY\.PEEK\[HEADER\.FIELDS \(([^)]*)\)\]/i.exec(items)?.[1]
     const silent = /\bBODY\[/i.test(items.replace(/BODY\.PEEK/gi, ''))
     if (silent) this.commands.push('TOUCHED-SEEN')
     const gmail = !this.options.plain
@@ -563,7 +574,15 @@ export class FakeGmail {
       if (gmail && /X-GM-THRID/i.test(items)) bits.push(`X-GM-THRID ${mail.thread}`)
       if (gmail && /X-GM-LABELS/i.test(items)) bits.push(`X-GM-LABELS (${mail.labels.map(this.bareLabels ? bare : quoted).join(' ')})`)
       const head = `* ${index + 1} FETCH (${bits.join(' ')}`
-      if (header) {
+      if (fields !== undefined) {
+        const names = new Set(fields.toLowerCase().split(' ').map((name) => name.replace(/"/g, '')))
+        const end = mail.raw.indexOf('\r\n\r\n')
+        const lines = mail.raw.subarray(0, end < 0 ? mail.raw.length : end).toString('latin1').split(/\r\n(?![ \t])/)
+        const kept = Buffer.from(`${lines.filter((line) => names.has(line.slice(0, line.indexOf(':')).trim().toLowerCase())).map((line) => `${line}\r\n`).join('')}\r\n`, 'latin1')
+        socket.write(`${head} BODY[HEADER.FIELDS (${fields})] {${kept.length}}\r\n`)
+        socket.write(kept)
+        socket.write(')\r\n')
+      } else if (header) {
         const end = mail.raw.indexOf('\r\n\r\n')
         const top = mail.raw.subarray(0, end < 0 ? mail.raw.length : end + 4)
         socket.write(`${head} BODY[HEADER] {${top.length}}\r\n`)
@@ -581,6 +600,206 @@ export class FakeGmail {
     })
     socket.write(`${tag} OK FETCH done\r\n`)
   }
+}
+
+interface Searched {
+  mail: FakeMail
+  seq: number
+  top: number
+  count: number
+}
+
+type SearchKey = (found: Searched) => boolean
+
+/** A SEARCH command's arguments: atoms, quoted strings and parentheses. */
+function searchWords(text: string): string[] {
+  const words: string[] = []
+  let at = 0
+  while (at < text.length) {
+    const c = text[at] ?? ''
+    if (c === ' ') at++
+    else if (c === '(' || c === ')') {
+      words.push(c)
+      at++
+    } else if (c === '"') {
+      let value = ''
+      at++
+      while (at < text.length && text[at] !== '"') {
+        if (text[at] === '\\') at++
+        value += text[at++] ?? ''
+      }
+      at++
+      words.push(`"${value}`) // marked as a string, so it's never read as a key
+    } else {
+      let atom = ''
+      while (at < text.length && !' ()'.includes(text[at] ?? '')) atom += text[at++]
+      words.push(atom)
+    }
+  }
+  return words
+}
+
+const valueOf = (word: string | undefined): string => {
+  if (word === undefined || word === '(' || word === ')') throw new Error('missing value')
+  return word.startsWith('"') ? word.slice(1) : word
+}
+
+/** A message's headers, unfolded and lowercased by name, and its text. */
+function readable(mail: FakeMail): { header(name: string): string; body: string; all: string } {
+  const all = mail.raw.toString('utf8')
+  const end = all.indexOf('\r\n\r\n')
+  const head = end < 0 ? all : all.slice(0, end)
+  const headers = new Map<string, string>()
+  for (const line of head.replace(/\r\n[ \t]+/g, ' ').split('\r\n')) {
+    const colon = line.indexOf(':')
+    if (colon < 0) continue
+    const name = line.slice(0, colon).trim().toLowerCase()
+    headers.set(name, [headers.get(name), line.slice(colon + 1).trim()].filter(Boolean).join(', '))
+  }
+  return { header: (name) => headers.get(name.toLowerCase()) ?? '', body: end < 0 ? '' : all.slice(end + 4), all }
+}
+
+const has = (haystack: string, needle: string): boolean => haystack.toLowerCase().includes(needle.toLowerCase())
+
+/** One search key, and what follows it, taken off the front of [words]. */
+function searchKey(words: string[], gmail: boolean): SearchKey {
+  const word = words.shift() ?? ''
+  if (word === '(') {
+    const inside: SearchKey[] = []
+    while (words[0] !== ')') {
+      if (words.length === 0) throw new Error('unclosed')
+      inside.push(searchKey(words, gmail))
+    }
+    words.shift()
+    return (found) => inside.every((key) => key(found))
+  }
+  if (word.startsWith('"') || word === ')') throw new Error('not a key')
+  const header = (name: string): SearchKey => {
+    const value = valueOf(words.shift())
+    return ({ mail }) => has(readable(mail).header(name), value)
+  }
+  const date = (test: (arrived: Date, day: Date) => boolean): SearchKey => {
+    const day = parseSearchDate(valueOf(words.shift()))
+    return ({ mail }) => test(mail.arrived, day)
+  }
+  const flag = (name: string, on: boolean): SearchKey => ({ mail }) => mail.flags.includes(name) === on
+  switch (word.toUpperCase()) {
+    case 'ALL': return () => true
+    case 'SEEN': return flag('\\Seen', true)
+    case 'UNSEEN': return flag('\\Seen', false)
+    case 'FLAGGED': return flag('\\Flagged', true)
+    case 'UNFLAGGED': return flag('\\Flagged', false)
+    case 'DELETED': return flag('\\Deleted', true)
+    case 'UNDELETED': return flag('\\Deleted', false)
+    case 'DRAFT': return flag('\\Draft', true)
+    case 'UNDRAFT': return flag('\\Draft', false)
+    case 'FROM': return header('from')
+    case 'TO': return header('to')
+    case 'CC': return header('cc')
+    case 'BCC': return header('bcc')
+    case 'SUBJECT': return header('subject')
+    case 'HEADER': {
+      const name = valueOf(words.shift())
+      const value = valueOf(words.shift())
+      return ({ mail }) => {
+        const found = readable(mail).header(name)
+        return value === '' ? found !== '' : has(found, value)
+      }
+    }
+    case 'TEXT': {
+      const value = valueOf(words.shift())
+      return ({ mail }) => has(readable(mail).all, value)
+    }
+    case 'BODY': {
+      const value = valueOf(words.shift())
+      return ({ mail }) => has(readable(mail).body, value)
+    }
+    case 'SINCE': return date((arrived, day) => arrived >= day)
+    case 'BEFORE': return date((arrived, day) => arrived < day)
+    case 'ON': return date((arrived, day) => arrived >= day && arrived.getTime() < day.getTime() + 86_400_000)
+    case 'LARGER': {
+      const size = Number(valueOf(words.shift()))
+      return ({ mail }) => mail.raw.length > size
+    }
+    case 'SMALLER': {
+      const size = Number(valueOf(words.shift()))
+      return ({ mail }) => mail.raw.length < size
+    }
+    case 'UID': {
+      const range = valueOf(words.shift())
+      return ({ mail, top }) => inRange(mail.uid, range, top)
+    }
+    case 'NOT': {
+      const key = searchKey(words, gmail)
+      return (found) => !key(found)
+    }
+    case 'OR': {
+      const a = searchKey(words, gmail)
+      const b = searchKey(words, gmail)
+      return (found) => a(found) || b(found)
+    }
+    case 'X-GM-THRID': {
+      if (!gmail) throw new Error('not Gmail')
+      const thread = BigInt(valueOf(words.shift()))
+      return ({ mail }) => mail.thread === thread
+    }
+    case 'X-GM-MSGID': {
+      if (!gmail) throw new Error('not Gmail')
+      const id = BigInt(valueOf(words.shift()))
+      return ({ mail }) => mail.gmailId === id
+    }
+    case 'X-GM-RAW': {
+      if (!gmail) throw new Error('not Gmail')
+      const query = valueOf(words.shift())
+      return ({ mail }) => matchesGmail(mail, query)
+    }
+    default:
+      if (/^[\d*:,]+$/.test(word)) return ({ seq, count }) => inRange(seq, word, count)
+      throw new Error(`unknown key ${word}`)
+  }
+}
+
+/** A day in Gmail's search, 2026/11/01, or seconds since 1970, at midnight here. */
+function gmailDay(value: string): Date | null {
+  if (/^\d{9,}$/.test(value)) return new Date(Number(value) * 1000)
+  const parts = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(value)
+  return parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])) : null
+}
+
+/** Enough of Gmail's search for the tests: words and "phrases" anywhere in the message, from:, to:,
+ *  subject:, before:, after:, label:, in:inbox, is:unread, is:read, is:starred, has:attachment, -
+ *  for not, and OR between two terms. Parentheses only group. Anything else is a word. */
+export function matchesGmail(mail: FakeMail, query: string): boolean {
+  const text = readable(mail)
+  const pieces = query.replace(/[()]/g, ' ').match(/-?(?:[a-z_]+:)?(?:"[^"]*"|\S+)/gi) ?? []
+  const test = (piece: string): boolean => {
+    const not = piece.startsWith('-') && piece.length > 1
+    const bare = not ? piece.slice(1) : piece
+    const scoped = /^([a-z_]+):(.*)$/i.exec(bare)
+    const op = scoped?.[1]?.toLowerCase() ?? ''
+    const value = (scoped ? scoped[2] ?? '' : bare).replace(/"/g, '')
+    const day = gmailDay(value)
+    let found: boolean
+    if (op === 'from' || op === 'to' || op === 'subject') found = has(text.header(op), value)
+    else if (op === 'before' && day) found = mail.arrived < day
+    else if (op === 'after' && day) found = mail.arrived >= day
+    else if (op === 'label') found = mail.labels.some((label) => label.toLowerCase() === value.toLowerCase())
+    else if (op === 'in' && value.toLowerCase() === 'inbox') found = mail.labels.includes('\\Inbox')
+    else if (op === 'is' && value === 'unread') found = !mail.flags.includes('\\Seen')
+    else if (op === 'is' && value === 'read') found = mail.flags.includes('\\Seen')
+    else if (op === 'is' && value === 'starred') found = mail.flags.includes('\\Flagged')
+    else if (op === 'has' && value === 'attachment') found = /Content-Disposition: attachment/i.test(text.all)
+    else found = has(`${text.header('subject')} ${text.header('from')} ${text.header('to')} ${text.body}`, scoped ? bare : value)
+    return not ? !found : found
+  }
+  // OR binds the terms either side of it, before the rest are taken together.
+  const groups: string[][] = []
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i] ?? ''
+    if (piece === 'OR' && groups.length > 0 && i + 1 < pieces.length) groups.at(-1)?.push(pieces[++i] ?? '')
+    else groups.push([piece])
+  }
+  return groups.every((group) => group.some(test))
 }
 
 /** A plain email as it would arrive. */

@@ -1,4 +1,4 @@
-import { ImapFlow, type ListResponse } from 'imapflow'
+import { ImapFlow, type ListResponse, type SearchObject } from 'imapflow'
 import { createHash } from 'node:crypto'
 import type { TcpNetConnectOpts } from 'node:net'
 import type { ConnectionOptions } from 'node:tls'
@@ -24,6 +24,14 @@ export interface RemoteMail extends RemoteHeader {
   arrived: number
   size: number
   source: Buffer
+}
+
+/** What a row of the list needs about a message, without its body. */
+export interface RemoteHeaders extends RemoteHeader {
+  thread: string
+  arrived: number
+  size: number
+  header: Buffer
 }
 
 export interface MailboxInfo {
@@ -104,8 +112,14 @@ export interface MailSource {
   whole(uid: number, maxBytes: number): Promise<Buffer | null>
   /** One message's header alone, for its details. */
   header(uid: number): Promise<Buffer | null>
+  /** The UIDs a search finds in the folder open now. Throws if the server won't say. */
+  search(query: SearchObject): Promise<number[]>
+  /** The headers of these messages, read with BODY.PEEK so nothing is marked read. */
+  headers(uids: number[]): AsyncIterable<RemoteHeaders>
   done(): void
   close(): Promise<void>
+  /** Lets go of the connection at once, whatever it's waiting for: a search nobody wants any more. */
+  drop(): void
 }
 
 /** `none` exists only for the fake servers in tests: no account can be set up to use it. */
@@ -237,6 +251,13 @@ export function threadOf(references: string, inReplyTo: string, messageId: strin
 
 const labelsOf = (labels: Set<string> | undefined): string[] => [...(labels ?? [])]
 
+/** What a row of the list is made from, and what finds the rest of a thread on a server without
+ *  threads. Authentication-Results and Reply-To say whether the sender gets a warning. */
+const HEADERS_FOR_ROWS = [
+  'from', 'to', 'cc', 'reply-to', 'subject', 'date', 'message-id', 'in-reply-to', 'references', 'content-type',
+  'authentication-results', 'list-id', 'list-unsubscribe', 'precedence', 'auto-submitted'
+]
+
 /** The server said NO or BAD to a search. It carries the status imapflow's own refusals do, so an
  *  ordinary folder that won't be searched is skipped like one that won't open. */
 class SearchRefused extends Error {
@@ -367,6 +388,30 @@ export class ImapSource implements MailSource {
     return found ? (found.headers ?? null) : null
   }
 
+  async search(query: SearchObject): Promise<number[]> {
+    const found = await this.client.search(query, { uid: true })
+    if (found === false) throw new SearchRefused()
+    if (!Array.isArray(found)) throw new Error('The connection went during a search.')
+    return found
+  }
+
+  async *headers(uids: number[]): AsyncIterable<RemoteHeaders> {
+    if (uids.length === 0) return
+    const query = { uid: true, flags: true, internalDate: true, size: true, threadId: true, labels: true, headers: HEADERS_FOR_ROWS }
+    for await (const m of this.client.fetch(uids.join(','), query, { uid: true })) {
+      yield {
+        uid: m.uid,
+        labels: labelsOf(m.labels),
+        seen: m.flags?.has('\\Seen') ?? false,
+        flagged: m.flags?.has('\\Flagged') ?? false,
+        thread: m.threadId ?? '',
+        arrived: new Date(m.internalDate ?? Date.now()).getTime(),
+        size: m.size ?? 0,
+        header: m.headers ?? Buffer.alloc(0)
+      }
+    }
+  }
+
   done(): void {
     this.lock?.release()
     this.lock = null
@@ -379,5 +424,10 @@ export class ImapSource implements MailSource {
     } catch {
       this.client.close()
     }
+  }
+
+  drop(): void {
+    this.done()
+    this.client.close()
   }
 }

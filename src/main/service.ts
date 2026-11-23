@@ -17,11 +17,12 @@ import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
 import { NO_DETAILS } from './details'
-import { attachmentsOf, detailsOf, makeSnippet, parseDraft, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
+import { attachmentsOf, detailsOf, makeSnippet, parseDraft, parseMail, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
 import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
+import { OldMail, SEARCH_SETTLE_MS } from './server-search'
 import { cleanSecret, TooBig, type MailSource, type MailWatcher } from './source'
 import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
@@ -165,6 +166,8 @@ export interface ServiceDeps {
   /** A connection failed: for the log of failures, which keeps its codes and never its words. */
   failed?(failure: Failure): void
   earlyWaitSeconds?: number
+  /** How long a search waits for typing to stop before asking the servers about older mail. */
+  searchSettleMs?: number
 }
 
 /** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
@@ -332,11 +335,35 @@ export class MailService {
   private discarding = new Map<number, { at: number; was: Draft }>()
   /** Drafts on the server too big to bring here, so they aren't fetched again each pass. */
   private tooBig = new Set<string>()
+  /** Searches of the servers, for mail from before the keeping window. */
+  private readonly old: OldMail
 
   constructor(private deps: ServiceDeps) {
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
+    this.old = new OldMail({
+      store: deps.store,
+      accounts: () => this.emails(),
+      open: (email) => this.openSource(email),
+      keepFrom: () => this.deps.now() - this.settings().backfillDays * DAY_MS,
+      now: () => this.deps.now(),
+      changed: () => this.deps.changed(),
+      parse: (source) => (this.deps.parse ?? parseMail)(source),
+      settleMs: deps.searchSettleMs ?? SEARCH_SETTLE_MS
+    })
+  }
+
+  /** A read-only connection to an account, signed in, or nothing left open. */
+  private async openSource(email: string): Promise<MailSource> {
+    const source = this.deps.openSource(this.config(email), await this.login(email))
+    try {
+      await source.connect()
+    } catch (e) {
+      await source.close().catch(() => undefined)
+      throw e
+    }
+    return source
   }
 
   private inLane<T>(email: string, work: () => Promise<T>): Promise<T> {
@@ -1125,8 +1152,21 @@ export class MailService {
     return this.store.nextRelease(now) ?? nextBatchAfter(now, batch.times)
   }
 
-  list(query: ListQuery, limit?: number): ThreadRow[] {
-    return this.store.list(query, this.deps.now(), limit)
+  /** A search shows what's kept here first, and below it what the servers find from before the
+   *  keeping window, once they've answered. Leaving the search lets go of what they found. */
+  list(query: ListQuery, limit = 200): ThreadRow[] {
+    const found = this.store.list(query, this.deps.now(), limit)
+    if (query.kind !== 'search') {
+      this.old.leave()
+      return found
+    }
+    return [...found, ...this.old.rows(query.text, found, found.length < limit)]
+  }
+
+  /** Threads a search found on the server, from before the keeping window, are fetched before
+   *  they're opened or acted on. Anything else is here already, and this does nothing. */
+  reach(targets: ThreadRef[]): Promise<void> {
+    return this.old.bring(targets)
   }
 
   /** Opening a thread reads it, here and on the server, unless [read] is false (Settings can ask for a
@@ -1136,6 +1176,7 @@ export class MailService {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
+    if (messages.length > 0) this.store.useOutside({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
     const cut = this.store.filesCut(messages.map((m) => m.id))
     if (cut.length > 0) background(this.listFiles(cut))

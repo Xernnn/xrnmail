@@ -124,9 +124,17 @@ kept on the laptop.
 - **Windows of their own:** the last button over a thread opens it in its own window, and the
   composer's does the same for what you're writing. A thread's window follows it into Trash and back,
   and what's typed in a composer is kept when its window is closed.
-- **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi". Also `from:`,
-  `subject:`, `to:`, `after:2026-01-31`, `before:`, `has:attachment`, `is:unread`, `is:read`, `is:flagged` and `in:inbox`.
-  The empty box offers the last eight searches (finished with Enter, or a result opened from them),
+- **Search:** finds Vietnamese without its marks, so `lich thi` finds "Lịch thi", and reads a search
+  as Gmail does: `"quoted phrases"`, `OR`, `-word` or `NOT word`, `from:`, `to:`, `subject:`,
+  `filename:`, `in:` or `label:` (`label:"Family trips"`, `in:inbox`, `in:sent`, `in:archive`),
+  `is:unread`, `is:read`, `is:flagged`, `is:important`, `is:snoozed`, `is:pinned`, `has:attachment`,
+  `after:` and `before:` (`2026/11/01` or `2026-11-01`), `newer_than:` and `older_than:` (`7d`, `2w`,
+  `3m`, `1y`), and `larger:` and `smaller:` (`5M`, `200K`), twelve terms at most. The last word typed
+  is offered the operators it could be the start of. What's kept here shows at once; a moment later each account's server is asked about older mail
+  too, and what it finds is listed below, under Older. Gmail is asked in its own search language over
+  All Mail, any other service with IMAP SEARCH in each folder but Trash and Junk, the newest 200 from
+  each. Opening one fetches its whole thread, which then reads, replies and moves like any other, and
+  stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
 - **Faces:** a sender's photo, or their company's logo where their mail passed DMARC, and coloured
@@ -416,7 +424,8 @@ Done differently:
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
   will miss things: a wrong entry is worse than a missing one.
-- Search covers the mail kept on this laptop (90 days by default, up to three years in Settings).
+- Older mail (past the 90 days, or up to three years, that Settings keep) is found only by searching:
+  it isn't listed, and doesn't count, anywhere else but Pinned and Recently Seen once it's been opened.
 - A scheduled message goes out when the app is running at or after its time. Closing the window keeps
   it running; Quit doesn't, though anything only waiting out Undo goes before it closes.
 - Draft sync has been checked on a real Gmail account between two copies of xrnmail, not yet with

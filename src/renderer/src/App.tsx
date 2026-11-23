@@ -17,6 +17,7 @@ import { SettingsDialog, type Tab } from './Settings'
 import { hintFor, keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
+import { COMPLETIONS } from '@shared/query'
 import { Welcome } from './Setup'
 import { landedWords, LatestSummary, ScheduleDialog, SummaryBar, SummaryNotice } from './Summary'
 import { NewFolderDialog } from './Labels'
@@ -304,6 +305,8 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (!open) return setMessages([])
+    // A thread a search found on the server is fetched first: the one before doesn't stay on show meanwhile.
+    if (messages[0]?.thread !== open.thread && rows?.some((row) => row.older && row.account === open.account && row.thread === open.thread)) setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
       const read = readAfter === 0
@@ -999,6 +1002,14 @@ export function App(): ReactNode {
   const below = profile?.layout === 'below'
   const lines = profile?.previewLines ?? 2
   const showRecent = searchFocus && !searching && searches.length > 0
+  // The search's operators, offered as the last word typed could finish: is: offers is:unread and the rest.
+  const typing = /(?:^|\s)-?(\S{2,})$/.exec(search)?.[1] ?? ''
+  const completions = searchFocus && typing ? COMPLETIONS.filter((op) => op.toLowerCase().startsWith(typing.toLowerCase()) && op.length > typing.length) : []
+  const showCompletions = completions.length > 0
+  const complete = (op: string): void => {
+    setSearch(`${search.slice(0, search.length - typing.length)}${op}${op.endsWith(':') ? '' : ' '}`)
+    setSearchPick(-1)
+  }
   // What the bar under a selection's ⋮ works on: labels and folders are one account's own.
   const pickedRows = list.filter((r) => picked.has(keyOf(r)))
   const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
@@ -1114,19 +1125,21 @@ export function App(): ReactNode {
           <div className="search">
             <SearchIcon size={16} aria-hidden="true" />
             <input ref={searchBox} type="search" placeholder="Search all mail" aria-label="Search" value={search} spellCheck={false}
-              role="combobox" aria-expanded={showRecent} aria-controls="recent-searches" aria-autocomplete="list"
-              aria-activedescendant={showRecent && searchPick >= 0 ? `recent-search-${searchPick}` : undefined}
+              role="combobox" aria-expanded={showRecent || showCompletions} aria-controls={showCompletions ? 'search-completions' : 'recent-searches'} aria-autocomplete="list"
+              aria-activedescendant={(showRecent || showCompletions) && searchPick >= 0 ? `${showCompletions ? 'search-completion' : 'recent-search'}-${searchPick}` : undefined}
               onFocus={() => { setSearchFocus(true); setSearchPick(-1) }}
               onBlur={() => setSearchFocus(false)}
               onChange={(e) => { setSearch(e.target.value); setSearchPick(-1) }}
               onKeyDown={(e) => {
-                if (showRecent && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                if ((showRecent || showCompletions) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                   e.preventDefault()
-                  const count = searches.length
+                  const count = showCompletions ? completions.length : searches.length
                   setSearchPick((at) => (e.key === 'ArrowDown' ? (at + 1) % count : at <= 0 ? count - 1 : at - 1))
                 } else if (e.key === 'Enter') {
                   const picked = showRecent ? searches[searchPick] : undefined
-                  if (picked !== undefined) pickSearch(picked)
+                  const op = showCompletions ? completions[searchPick] : undefined
+                  if (op !== undefined) complete(op)
+                  else if (picked !== undefined) pickSearch(picked)
                   else keepSearch(search)
                 }
               }} />
@@ -1146,6 +1159,19 @@ export function App(): ReactNode {
                       <button className="icon small" tabIndex={-1} aria-label={`Remove ${text}`} onClick={(e) => { e.stopPropagation(); forgetSearch(text) }}>
                         <X size={13} aria-hidden="true" />
                       </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {showCompletions && (
+              <div className="recent-searches" onMouseDown={(e) => e.preventDefault()}>
+                <ul role="listbox" id="search-completions" aria-label="Search operators">
+                  {completions.map((op, i) => (
+                    <li key={op} id={`search-completion-${i}`} role="option" aria-selected={i === searchPick} className={i === searchPick ? 'on' : ''}
+                      onClick={() => complete(op)}>
+                      <SearchIcon size={14} aria-hidden="true" />
+                      <span className="grow">{op}</span>
                     </li>
                   ))}
                 </ul>
@@ -1216,6 +1242,7 @@ export function App(): ReactNode {
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
                 <Fragment key={keyOf(row)}>
                 {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
+                {row.older && !list[index - 1]?.older && <div className="summary-head older-head"><strong>Older</strong></div>}
                 <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'} snoozed={active.kind === 'snoozed'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
