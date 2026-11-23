@@ -192,8 +192,7 @@ function Summary(props: { summary: SummarySettings; save(summary: Partial<Summar
   const { summary, save } = props
   const senders = summary.senders.length
   const off = async (): Promise<void> => {
-    const note = `${senders === 1 ? 'Its sender goes' : `Its ${senders} senders go`} back to the deliveries, with what's waiting for it.`
-    if (await props.ask({ title: 'Turn off Summary?', note, action: 'Turn off', danger: true })) save({ senders: [], chosen: false })
+    if (await props.ask({ title: 'Turn off Summary?', action: 'Turn off', danger: true })) save({ senders: [], chosen: false })
   }
   return (
     <section>
@@ -258,7 +257,7 @@ function Batches(props: { batch: Settings['batch']; change: Change }): ReactNode
           </div>
           <label>
             Straight through
-            <textarea rows={3} placeholder="boss@work.com&#10;@school.edu" value={vip}
+            <textarea rows={3} value={vip}
               onChange={(e) => setVip(e.target.value)}
               onBlur={() => change(() => ({ batch: { vip: vip.split(/\s+/).filter(Boolean) } }))} />
           </label>
@@ -410,7 +409,7 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
           </div>
         ))}
         <form className="line" onSubmit={(e) => { e.preventDefault(); add() }}>
-          <input className="grow" aria-label="Sender to mute" placeholder="someone@example.com or @example.com" value={adding} onChange={(e) => setAdding(e.target.value)} />
+          <input className="grow" aria-label="Sender to mute" placeholder="Address or @domain" value={adding} onChange={(e) => setAdding(e.target.value)} />
           <button type="submit" className="quiet" disabled={!adding.trim()}>Mute</button>
         </form>
       </section>
@@ -460,14 +459,14 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
       </section>
       {accounts.map((a) => (
         <section key={a.id} className="identity">
-          <h3>{accounts.length > 1 ? a.email : 'Who you write as'}</h3>
+          <h3>{a.email}</h3>
           <label>
             Your name
             <input value={ids.who(a.email).name} onChange={(e) => ids.edit(a.email, { name: e.target.value })} onBlur={() => ids.flush(a.email)} />
           </label>
           <label>
             Also sends as
-            <input placeholder="other@example.com" value={ids.who(a.email).aliases.join(', ')}
+            <input value={ids.who(a.email).aliases.join(', ')}
               onChange={(e) => ids.edit(a.email, { aliases: e.target.value.split(/[\s,]+/) })}
               onBlur={() => ids.set(a.email, { aliases: ids.who(a.email).aliases.filter(Boolean) })} />
           </label>
@@ -565,7 +564,6 @@ function Signatures(props: { accounts: AccountView[]; ids: Identities }): ReactN
   const many = props.accounts.length > 1
   return (
     <section>
-      <h3>{many ? 'One for each account' : 'Under what you write'}</h3>
       {props.accounts.map((a) => (
         <label key={a.id}>
           {many ? `Signature for ${a.email}` : 'Signature'}
@@ -586,7 +584,6 @@ function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
   }
   return (
     <section>
-      <h3>Their new mail goes straight to Trash</h3>
       {props.blocked.length === 0 && <p className="muted note">None</p>}
       {props.blocked.map((who) => (
         <div className="line" key={who}>
@@ -595,7 +592,7 @@ function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
         </div>
       ))}
       <form className="line" onSubmit={(e) => { e.preventDefault(); add() }}>
-        <input className="grow" aria-label="Sender to block" placeholder="someone@example.com or @example.com" value={adding} onChange={(e) => setAdding(e.target.value)} />
+        <input className="grow" aria-label="Sender to block" placeholder="Address or @domain" value={adding} onChange={(e) => setAdding(e.target.value)} />
         <button type="submit" className="quiet" disabled={!adding.trim()}>Block</button>
       </form>
     </section>
@@ -608,7 +605,6 @@ function Templates(props: { templates: Template[]; save(edit: (templates: Templa
   const [text, setText] = useState('')
   return (
     <section>
-      <h3>Ready-made text for the composer</h3>
       {templates.map((t) => (
         <div className="line" key={t.name}>
           <span className="grow">{t.name}</span>
@@ -650,7 +646,6 @@ function Hub(props: { settings: Settings }): ReactNode {
 
   return (
     <section>
-      <h3>Counts for your day's page</h3>
       {hub.connected ? (
         <div className="line">
           <span className="grow">{hub.url}</span>

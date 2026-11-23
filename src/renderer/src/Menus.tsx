@@ -18,7 +18,13 @@ export function Popover(props: { close(): void; up?: boolean; right?: boolean; c
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const away = (event: MouseEvent): void => {
-      if (!box.current?.contains(event.target as Node)) props.close()
+      const target = event.target as Node
+      if (box.current?.contains(target)) return
+      // Pressing the button it hangs from is left to that button, which closes it: closed here
+      // first, the click that follows would only open it again.
+      const anchor = box.current?.parentElement
+      if (anchor?.classList.contains('anchor') && anchor.contains(target)) return
+      props.close()
     }
     const escape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return

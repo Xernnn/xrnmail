@@ -21,6 +21,17 @@ export function shortTime(at: number, now = Date.now()): string {
   return then.toLocaleDateString([], { day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' })
 }
 
+/** When a snoozed thread comes back: a clock today, the day and a clock within the week, a date and
+ *  a clock beyond. */
+export function comesBack(at: number, now = Date.now()): string {
+  const days = daysBetween(now, at)
+  if (days <= 0) return clock(at)
+  const day = days < 7
+    ? new Date(at).toLocaleDateString([], { weekday: 'short' })
+    : new Date(at).toLocaleDateString([], { day: 'numeric', month: 'short', year: new Date(at).getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric' })
+  return `${day} ${clock(at)}`
+}
+
 const startOfDay = (at: number): number => {
   const day = new Date(at)
   return new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()

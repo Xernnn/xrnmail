@@ -6,7 +6,7 @@ import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
 import { parseUnsubscribe } from '@main/parse'
-import { cleanBatch, describeFailure, MailService, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
+import { cleanBatch, describeFailure, MailService, SEND_FAILED, UNDO_MS, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import type { Draft } from '@shared/types'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
@@ -740,6 +740,29 @@ describe('changing mail', () => {
     expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
   })
 
+  // "Labelled Receipts", "Marked as read" and "Moved to Inbox" offered Undo for changes that went to
+  // Gmail at once, and only a change still waiting can be called back: Undo put the mail back here,
+  // the server kept it as changed, and the next sync changed it here again.
+  it('a change offered with Undo waits for it, whatever it is, and Undo calls it back before Gmail hears', async () => {
+    const labelled = service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    const read = service.act([ref('Two')], { kind: 'read' }, true)
+    await later(1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    service.undo(labelled)
+    service.undo(read)
+    await later(UNDO_MS)
+    await service.syncAll()
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    expect(fakeMail('Two').flags).not.toContain('\\Seen')
+    expect(service.list({ kind: 'inbox' }).find((r) => r.subject === 'Two')?.unread).toBe(1)
+    expect(gmail.writes().filter((c) => c.includes('STORE'))).toEqual([])
+    service.act([ref('One')], { kind: 'label', label: 'Receipts', add: true }, true)
+    await later(UNDO_MS - 1000)
+    expect(fakeMail('One').labels).not.toContain('Receipts')
+    await later(1000)
+    await eventually(() => expect(fakeMail('One').labels).toContain('Receipts'))
+  })
+
   // Undo pressed while the change was already on its way put the mail back here, and the server
   // made the change anyway: the inbox showed it until a later sync took it out again.
   it('undo once the change is on its way to Gmail leaves the mail where Gmail will have it', async () => {
@@ -1002,6 +1025,25 @@ describe('blocking', () => {
   })
 })
 
+// Block sender and Let straight through over a thread left out only the account's own address, so
+// mail from one of its aliases offered to block it, and blocking it sent your own mail to Trash.
+describe('your own addresses', () => {
+  beforeEach(signedIn)
+
+  it('can be neither blocked nor let straight through, alias or not', () => {
+    service.saveProfile({ identities: { [ME]: { name: 'Me', signature: '', aliases: ['me+shop@example.com'], color: '', notify: true } } })
+    for (const address of [ME, 'Me+Shop@example.com']) {
+      expect(() => service.block(address)).toThrow('your own')
+      expect(() => service.editSenders('vip', [address], true)).toThrow('your own')
+    }
+    expect(service.settings().blocked).toEqual([])
+    expect(service.settings().batch.vip).toEqual([])
+    service.editSenders('vip', [ME], false) // taking one off is fine
+    service.block('ada@example.com')
+    expect(service.settings().blocked).toEqual(['ada@example.com'])
+  })
+})
+
 describe('attachments', () => {
   beforeEach(signedIn)
 
@@ -1161,6 +1203,31 @@ describe('sending', () => {
     await later(120_000)
     expect(smtp.received).toBe(1)
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'This may not have been sent. Check Sent before trying again.' })
+  })
+
+  // A send that failed marked its draft and said nothing else: no word beside the account, so with
+  // the composer gone the only sign was a count by Drafts.
+  it('a send that fails says so beside the account until its draft is sent or thrown away', async () => {
+    const draft = await write()
+    smtp.dropAfterData = true
+    service.send(draft.id)
+    await later(10_000)
+    expect(service.drafts()[0]).toMatchObject({ id: draft.id, state: 'failed' })
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    smtp.dropAfterData = false
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent).toHaveLength(1)
+    expect(service.accounts()[0]?.error).toBeNull()
+
+    const other = await write({ subject: 'Plan' })
+    service.addFileBytes(other.id, 'plan.txt', 'text/plain', Buffer.from('the plan'))
+    rmSync(join(folder, String(other.id)), { recursive: true, force: true })
+    service.send(other.id)
+    await later(11_000)
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED)
+    service.discardDraft(other.id)
+    expect(service.accounts()[0]?.error).toBeNull()
   })
 
   it('sends nothing called back, changed or thrown away while another message was going', async () => {
@@ -1380,6 +1447,57 @@ describe('drafts on the server', () => {
     service = make() // and a restart meanwhile
     await later(61_000)
     expect(onServer()).toEqual([])
+  })
+
+  // Discard draft took a draft and its copy on the server away at once, with no Undo and no word.
+  it('a draft thrown away with Undo leaves Drafts at once, its copy only once Undo has had its time, and Undo gives it back', async () => {
+    const id = await write()
+    await later(5000)
+    expect(onServer()).toEqual(['Plans'])
+    service.discardDraft(id, true)
+    expect(service.drafts()).toEqual([])
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    service.undiscardDraft(id)
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+    await later(UNDO_MS + 5000)
+    expect(onServer()).toEqual(['Plans'])
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+
+    service.discardDraft(id, true)
+    await later(UNDO_MS - 1000)
+    expect(onServer()).toEqual(['Plans'])
+    await later(1000)
+    await eventually(() => expect(onServer()).toEqual([]))
+    expect(service.drafts()).toEqual([])
+    expect(() => service.undiscardDraft(id)).toThrow('Too late')
+  })
+
+  it('a message waiting to go that is thrown away never goes, and Undo has it wait again', async () => {
+    const id = await write()
+    const when = service.send(id)
+    service.discardDraft(id, true)
+    await later(UNDO_MS + 5000)
+    expect(smtp.sent).toEqual([])
+    expect(service.drafts()).toEqual([])
+
+    const other = await write({ subject: 'Later' })
+    const at = service.send(other, clock + 3_600_000)
+    service.discardDraft(other, true)
+    await later(1000)
+    service.undiscardDraft(other)
+    expect(service.drafts()[0]).toMatchObject({ id: other, state: 'queued', sendAt: at })
+    expect(when).toBeLessThan(at)
+  })
+
+  it('a draft thrown away while Undo lasts goes for good when the app closes', async () => {
+    const id = await write()
+    await later(5000)
+    service.discardDraft(id, true)
+    await service.finishUp()
+    expect(onServer()).toEqual([])
+    service = make()
+    expect(service.drafts()).toEqual([])
   })
 
   it('works offline, and catches up once the server can be reached', async () => {

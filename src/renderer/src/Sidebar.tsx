@@ -110,6 +110,8 @@ export function Sidebar(props: {
   edited(choice: SidebarChoice | null): void
   /** Edit Menu's New Label… or New Folder…, for an account. */
   newFolder(account: string): void
+  /** The key for a new message in the set in use, beside the menu's own. */
+  composeKey?: string
 }): ReactNode {
   const { accounts, overview, view, go, drafts } = props
   const many = accounts.length > 1
@@ -352,7 +354,7 @@ export function Sidebar(props: {
         props.menu(null, e.clientX, e.clientY)
       }}>
       <div className="sidebar-top">
-        <button className="compose" title="New message (c)" onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
+        <button className="compose" title={`New message (${props.composeKey ?? 'Ctrl+N'})`} onClick={props.compose}><Pencil size={15} aria-hidden="true" /> Compose</button>
         <span className="grow" />
         <button className="icon" aria-label={syncing ? 'Syncing' : 'Sync'} title="Check for mail (F5)" onClick={() => void window.mail.syncNow()}>
           <RotateCw className={syncing ? 'spin' : ''} size={17} aria-hidden="true" />

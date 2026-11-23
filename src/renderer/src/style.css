@@ -336,6 +336,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .bulk .icon { color: var(--on-primary); }
 .bulk .icon:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); color: var(--on-primary); }
 .bulk .popover { color: var(--text); }
+/* A menu from the bar opens over the whole bar, clear of its count, Select All and Cancel. */
+.bulk-tools .anchor { position: static; }
 .bulk :focus-visible { outline-color: var(--on-primary); }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12.5px; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
 .pill:hover { background: var(--hover-solid); border-color: var(--outline); }
@@ -372,6 +374,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .count { flex: none; font-size: 15px; }
 .thread.unread .count { font-weight: 700; }
 .thread time { flex: none; margin-left: auto; padding-left: 10px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.thread time.back { display: inline-flex; align-items: center; gap: 4px; }
 .thread-mid { display: flex; align-items: center; gap: 6px; min-width: 0; height: 22px; }
 .subject { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .thread.unread .subject { font-weight: 700; }
@@ -477,6 +480,7 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .icon.on { color: var(--star); }
 .icon.on svg { fill: currentColor; }
 .anchor { position: relative; }
+.row-snooze { position: fixed; z-index: 20; width: 0; height: 0; }
 .back { display: none; }
 .messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px calc(28px + var(--details-room, 0px)); overflow-y: auto; }
 .thread-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }

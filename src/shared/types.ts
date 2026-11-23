@@ -497,8 +497,9 @@ export interface MailApi {
   finishEarly(): Promise<number>
   /** Lets remote images load, for the message on screen only. */
   allowRemoteImages(allow: boolean): Promise<void>
-  /** Applies at once here and reaches Gmail shortly after. Returns what undoes it. */
-  act(targets: ThreadRef[], action: MailAction): Promise<number>
+  /** Applies at once here and reaches Gmail shortly after: with [undoable], once Undo has had its
+   *  time, as what takes mail away always does. Returns what undoes it. */
+  act(targets: ThreadRef[], action: MailAction, undoable?: boolean): Promise<number>
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
@@ -558,7 +559,10 @@ export interface MailApi {
   /** A composer has this draft open, or has let it go. While one has, what the server says about the
    *  draft leaves it as it is here. */
   holdDraft(id: number, on: boolean): Promise<void>
-  discardDraft(id: number): Promise<void>
+  /** With [undoable], it waits out Undo before it goes for good, out of Drafts meanwhile. */
+  discardDraft(id: number, undoable?: boolean): Promise<void>
+  /** Undo for a draft thrown away. */
+  undiscardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
   addFile(id: number, name: string, type: string, bytes: ArrayBuffer): Promise<Draft>

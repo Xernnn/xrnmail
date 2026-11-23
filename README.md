@@ -44,15 +44,18 @@ kept on the laptop.
   the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
   it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
   not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
-  leaves no draft behind.
+  leaves no draft behind. Starting another closes the one open the same way, so what was written in
+  it is in Drafts.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
-  up here to carry on with. Sending or throwing it away takes it off there too. Offline it waits and
+  up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away
+  has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
-  General say: what takes mail away waits that long here before the server hears of it). It keeps
+  General say: what takes mail away, and anything else offered with Undo, waits that long here before
+  the server hears of it). It keeps
   working offline and catches up. On Gmail, threads it thinks matter carry its importance marker, and
   can be marked important or not from the ⋮ over a thread or under a selection. Once the open thread
   is archived or deleted, the next one opens, or the one before, or the list comes back, as Settings,
@@ -104,7 +107,9 @@ kept on the laptop.
 - **Snooze:** a thread comes back when you say, or when someone replies. Later today, This evening,
   Tomorrow, the weekend and Next week mean what Settings, General say (3 hours on, 18:00, and 9:00 on
   the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
-  today is offered only while it's still today, and This evening only before it comes.
+  today is offered only while it's still today, and This evening only before it comes. Snoozed shows
+  when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
+  it back now.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.

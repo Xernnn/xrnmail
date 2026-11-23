@@ -53,6 +53,8 @@ const DAY_MS = 86_400_000
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
 const NOTE_MS = 10 * 60_000
+/** Beside the account when a message didn't go. What went wrong is on the draft, in Drafts. */
+export const SEND_FAILED = 'Sending failed. See Drafts.'
 
 const DEFAULT_SETTINGS: Settings = {
   batch: { live: false, times: ['09:00', '13:00', '17:00'], vip: [], earlyPerDay: 1 },
@@ -326,6 +328,8 @@ export class MailService {
   private draftsRetryAt = new Map<string, number>()
   /** How often each copy that has to go has been refused. */
   private copyRefusals = new Map<number, number>()
+  /** Drafts thrown away while Undo lasts: when each goes for good, and how it was. */
+  private discarding = new Map<number, { at: number; was: Draft }>()
   /** Drafts on the server too big to bring here, so they aren't fetched again each pass. */
   private tooBig = new Set<string>()
 
@@ -915,6 +919,7 @@ export class MailService {
       this.deps.changed()
     }
     if (batch > 0) await this.report('batch', batch)
+    this.discardThrown()
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email)))
@@ -934,11 +939,13 @@ export class MailService {
   }
 
   /** Done here at once, then sent to the server: straight away, or after Undo's had its chance for
-   *  the ones that take mail out of sight. It survives a restart, and waits out being offline. */
-  act(targets: ThreadRef[], action: MailAction): number {
+   *  the ones that take mail out of sight and any other the page offers Undo for ([undoable]). A
+   *  change already sent can't be called back, so an Undo offered for one that went at once would do
+   *  nothing. It survives a restart, and waits out being offline. */
+  act(targets: ThreadRef[], action: MailAction, undoable = false): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
+    const wait = takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
@@ -1348,7 +1355,7 @@ export class MailService {
   }
 
   drafts(): Draft[] {
-    return this.store.drafts()
+    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id))
   }
 
   async startDraft(start: DraftStart): Promise<Draft> {
@@ -1436,14 +1443,41 @@ export class MailService {
     else this.holds.delete(id)
   }
 
-  discardDraft(id: number): void {
+  /** Thrown away. With Undo on offer ([undoable]) it leaves Drafts at once and goes for good, its
+   *  copy on the server too, once Undo has had its time; until then nothing of it changes anywhere,
+   *  and a message waiting to go waits as a draft instead, so it can't leave meanwhile. */
+  discardDraft(id: number, undoable = false): void {
     const draft = this.store.draft(id)
     if (draft?.state === 'sending') throw new Error('This is already on its way.')
+    if (undoable && draft) {
+      if (draft.state === 'queued') this.store.saveDraft({ ...draft, state: 'draft', sendAt: null })
+      this.discarding.set(id, { at: this.deps.now() + this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS, was: draft })
+      this.deps.changed()
+      return
+    }
+    this.discarding.delete(id)
     this.letCopyGo(id)
     this.store.deleteDraft(id)
     this.deps.files.clear(id)
     this.dirtySince.delete(id)
+    if (draft) this.sendFailureDealt(draft.account)
     this.deps.changed()
+  }
+
+  /** Undo for a draft thrown away: it's back as it was, waiting to go again if it was. */
+  undiscardDraft(id: number): void {
+    const thrown = this.discarding.get(id)
+    if (!thrown) throw new Error('Too late: that draft has gone.')
+    this.discarding.delete(id)
+    const draft = this.store.draft(id)
+    if (draft && thrown.was.state === 'queued') this.store.saveDraft({ ...draft, state: 'queued', sendAt: thrown.was.sendAt })
+    this.deps.changed()
+  }
+
+  /** Drafts thrown away whose Undo has run out, or all of them when the app is closing. */
+  private discardThrown(all = false): void {
+    const now = this.deps.now()
+    for (const [id, { at }] of this.discarding) if (all || at <= now) this.discardDraft(id)
   }
 
   /** The draft's copy on the server is to go, now or as soon as the server can be reached, and the
@@ -1460,7 +1494,7 @@ export class MailService {
    *  for a moment or changing for a while. All of them when the app is closing. */
   private dueDrafts(email: string, all = false): DraftLink[] {
     const now = this.deps.now()
-    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed &&
+    return this.store.draftLinks(email).filter((d) => d.state === 'draft' && d.updated > d.pushed && !this.discarding.has(d.id) &&
       (all || now - d.updated >= DRAFT_QUIET_MS || now - (this.dirtySince.get(d.id) ?? d.updated) >= DRAFT_MOST_MS))
   }
 
@@ -1718,6 +1752,7 @@ export class MailService {
       this.store.saveDraft({ ...draft, sendAt: now })
     }
     this.store.hurryActions(now)
+    this.discardThrown(true)
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))
@@ -1781,6 +1816,7 @@ export class MailService {
       this.store.saveDraft(gone
         ? { ...draft, state: 'failed', sendAt: null, error: describeFailure(e) }
         : { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: waiting })
+      if (gone) this.note(draft.account, SEND_FAILED)
       this.deps.changed()
       return null
     }
@@ -1815,6 +1851,7 @@ export class MailService {
       const copy = await sender.send(this.outgoingFrom(draft))
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
+      this.sendFailureDealt(draft.account)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
       return draft.account
     } catch (e) {
@@ -1824,14 +1861,22 @@ export class MailService {
       } else if (e instanceof Unmade) {
         // Nothing was handed over, so it's said plainly, not as "check Sent".
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: "One of its attachments can't be read on this laptop any more, so nothing was sent. Remove it and send again." })
+        this.note(draft.account, SEND_FAILED)
       } else {
         this.store.saveDraft({ ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+        this.note(draft.account, SEND_FAILED)
       }
       return null
     } finally {
       sender.close()
       this.deps.changed()
     }
+  }
+
+  /** "Sending failed" stays beside the account while one of its drafts is still failed. */
+  private sendFailureDealt(email: string): void {
+    if (this.notes.get(email)?.text !== SEND_FAILED) return
+    if (!this.store.drafts().some((d) => d.account === email && d.state === 'failed')) this.notes.delete(email)
   }
 
   /** The message has gone by now, so a failure here can only cost the copy, never send it again. */
@@ -1982,6 +2027,8 @@ export class MailService {
    *  from what it last read lost one of two senders added in quick succession. */
   editSenders(list: SenderList, addresses: string[], on: boolean): void {
     if (!addresses.some((a) => a.trim())) return
+    // Your own mail blocked would go to Trash, and let through it never waits anyway.
+    if (on && (list === 'blocked' || list === 'vip') && addresses.some((a) => this.ownerOf(a))) throw new Error("That's one of your own addresses.")
     const settings = this.settings()
     const edited = (from: string[]): string[] => editedSenders(from, addresses, on)
     if (list === 'vip') return this.saveBatch({ vip: edited(settings.batch.vip) })

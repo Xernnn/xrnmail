@@ -91,6 +91,8 @@ function Recipients(props: { label: string; value: string; focus?: boolean; chan
           else if (hit && e.key === 'ArrowDown') { e.preventDefault(); setAt((at + 1) % hits.length) }
           else if (hit && e.key === 'ArrowUp') { e.preventDefault(); setAt((at - 1 + hits.length) % hits.length) }
           else if (hit && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); accept(hit) }
+          // The suggestions go, and the composer stays: it's the next Esc that closes it.
+          else if (hit && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setHits([]) }
           else if (e.key === 'Enter' && typing.trim()) { e.preventDefault(); commit() }
           else if (e.key === ' ' && readRecipient(typing.trim()).valid) { e.preventDefault(); commit() }
         }} />
@@ -126,8 +128,12 @@ export function Composer(props: {
   moveOut(id: number): void
   /** Filled in while it's open with what to do before its window closes. */
   leaving: { current: (() => Promise<void>) | null }
+  /** Filled in while it's open with its own Close, for when another composer takes its place. */
+  closing?: { current: { id: number; close(): Promise<void> } | null }
   /** Just started here, by Reply, Forward or a new message: closed as it started, it goes. */
   fresh?: boolean
+  /** Thrown away with something in it, which Undo can bring back. */
+  discarded?: (id: number) => void
 }): ReactNode {
   const { draft } = props
   const [account, setAccount] = useState(draft.account)
@@ -241,6 +247,14 @@ export function Composer(props: {
     props.close(true)
   }
 
+  useEffect(() => {
+    const { closing } = props
+    if (!closing) return undefined
+    const mine = { id: draft.id, close: closeUp }
+    closing.current = mine
+    return () => { if (closing.current === mine) closing.current = null }
+  })
+
   // An Esc pressed while this was on its way counts as pressed here.
   useLayoutEffect(() => {
     if (props.starting?.off) void closeUp()
@@ -257,10 +271,15 @@ export function Composer(props: {
     }
   }
 
+  /** Thrown away with Undo, as other things are, unless there's nothing in it to want back. */
   const discard = async (): Promise<void> => {
+    const edit = collect()
+    const worth = !isEmpty(edit) && !untouched(edit)
+    if (worth) await save() // what was typed just now is what Undo brings back
     gone.current = true
-    await window.mail.discardDraft(draft.id)
+    await window.mail.discardDraft(draft.id, worth)
     props.close(false)
+    if (worth) props.discarded?.(draft.id)
   }
 
   const send = async (at?: number): Promise<void> => {

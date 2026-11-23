@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
-  ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
-  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
+  AlarmClockOff, ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
+  Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
   ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
 import { imagesLoad } from '@shared/images'
+import { hintFor, type KeyCommand } from '@shared/keys'
 import { plainName } from '@shared/names'
 import { canOpenDirectly } from '@shared/openable'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
@@ -128,8 +129,6 @@ function Message(props: {
   open: boolean
   /** The one that offers Unsubscribe, when a thread has several that could. */
   leaving: boolean
-  /** The one that offers to block its sender, where there's nothing to unsubscribe from. */
-  blocking: boolean
   /** It's in Trash or Spam. */
   bins: boolean
   own: string[]
@@ -145,7 +144,6 @@ function Message(props: {
   rsvp(message: number, answer: Rsvp): void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
-  block(address: string): void
   trust(address: string): void
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
@@ -199,7 +197,6 @@ function Message(props: {
           ? <IconButton icon={ReplyAll} label="Reply all to this" click={() => props.reply('replyAll', m.id)} />
           : <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />)}
         {leaving && <button className="pill soft" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>}
-        {props.blocking && !leaving && <button className="pill soft" onClick={() => props.block(m.from.address)}>Block</button>}
         {!bins && (
           <div className="anchor">
             <IconButton icon={MoreVertical} label="Message actions" click={() => setMenu(!menu)} />
@@ -221,7 +218,7 @@ function Message(props: {
         {source && <Original message={m.id} subject={m.subject} close={() => setSource(false)} />}
         {details && (
           <Details message={m} account={props.account} own={own} actions={props.actions} close={closeDetails}
-            cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={() => props.unsubscribe(m.id)} />
+            cautions={m.warnings.map((w) => CAUTIONS[w](m))} unsubscribe={bins ? undefined : () => props.unsubscribe(m.id)} />
         )}
       </div>
       <div className="message-body">
@@ -286,6 +283,8 @@ export function Reader(props: {
   popOut?: () => void
   act(action: MailAction, label?: string): void
   snooze(at: number): void
+  /** It's snoozed, and can be brought back now. */
+  unsnooze?: () => void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
   block(address: string): void
@@ -335,11 +334,15 @@ export function Reader(props: {
     })
 
   const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
+  // Opened, a thread is read at once unless Settings say to wait or to leave it to you; then it can
+  // be marked read from here.
+  const unread = (settings?.readAfter ?? 0) !== 0 && messages.some((m) => !m.seen)
   const starred = messages.some((m) => m.flagged)
   const pinned = messages.some((m) => m.pinned)
   const important = messages.some((m) => m.labels.includes(IMPORTANT))
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
-  const person = messages.find((m) => m.from.address && m.from.address !== last.account)
+  // Someone other than you, on any of your addresses: there's no blocking or letting through yourself.
+  const person = messages.find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
   const sender = person?.from.address
   const gmail = account?.labels ?? false
   const folded = !unfolded && messages.length > LONG_THREAD
@@ -349,8 +352,8 @@ export function Reader(props: {
   const newestFirst = settings?.threadOrder === 'newest'
   const ordered = newestFirst ? [...shown].reverse() : shown
   const foldAt = newestFirst ? ordered.length - 1 : 1
-  const leaving = [...messages].reverse().find((m) => m.unsubscribe)
-  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()) && !SYSTEM_SENDER.test(m.from.address))
+  // Not from Trash or Spam: a spammer's link confirms the address is read, and that's all it does.
+  const leaving = bins ? undefined : [...messages].reverse().find((m) => m.unsubscribe)
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
   const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
@@ -372,6 +375,11 @@ export function Reader(props: {
     say: props.say
   }
 
+  // Tooltips name the keys of the set in use, as changed in Settings.
+  const keySet = settings?.keys ?? 'edison'
+  const hint = (...commands: KeyCommand[]): string | undefined => hintFor(keySet, settings?.keyChanges[keySet], ...commands)
+  const titled = (label: string, key: string | undefined): string => (key ? `${label} (${key})` : label)
+
   const moreItem = (Icon: LucideIcon, label: string, run: () => void): ReactNode => (
     <button type="button" className="menu-item" onClick={() => { setPanel(null); run() }}>
       <Icon size={15} aria-hidden="true" /> {label}
@@ -391,27 +399,30 @@ export function Reader(props: {
         {bins ? (
           <>
             <IconButton icon={Undo2} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />
-            <IconButton icon={Trash2} label="Delete forever" hint="#" click={props.forever} />
+            <IconButton icon={Trash2} label="Delete forever" hint={hint('trash')} click={props.forever} />
           </>
         ) : (
           <>
             {inInbox
-              ? <IconButton icon={Check} label="Archive" hint="e" click={() => act({ kind: 'archive' }, 'Archived')} />
+              ? <IconButton icon={Check} label="Archive" hint={hint('archive', 'removeFromView')} click={() => act({ kind: 'archive' }, 'Archived')} />
               : <IconButton icon={Inbox} label="Move to Inbox" click={() => act({ kind: 'inbox' }, 'Moved to Inbox')} />}
-            <IconButton icon={Trash2} label="Delete" hint="#" click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
-            <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint="s" on={starred}
+            <IconButton icon={Trash2} label="Delete" hint={hint('trash')} click={() => act({ kind: 'trash' }, 'Moved to Trash')} />
+            <IconButton icon={Flag} label={starred ? 'Remove flag' : 'Flag'} hint={hint('flag')} on={starred}
               click={() => act({ kind: starred ? 'unstar' : 'star' })} />
-            <IconButton icon={Mail} label="Mark unread" hint="Shift+U" click={() => act({ kind: 'unread' })} />
+            {unread
+              ? <IconButton icon={MailOpen} label="Mark read" hint={hint('read', 'toggleRead')} click={() => act({ kind: 'read' })} />
+              : <IconButton icon={Mail} label="Mark unread" hint={hint('unread', 'toggleRead')} click={() => act({ kind: 'unread' })} />}
             <div className="anchor">
-              <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint="l" click={() => setPanel(panel === 'labels' ? null : 'labels')} />
+              <IconButton icon={gmail ? Tag : FolderInput} label={gmail ? 'Labels' : 'Move to'} hint={hint('labels')} click={() => setPanel(panel === 'labels' ? null : 'labels')} />
               {panel === 'labels' && (gmail
                 ? <LabelMenu labels={labels} active={active} right set={(label, add) => act({ kind: 'label', label, add })} close={() => setPanel(null)} />
                 : <FolderMenu folders={account?.folders ?? []} right close={() => setPanel(null)} pick={(to) => { setPanel(null); act({ kind: 'move', to }, `Moved to ${to}`) }} />)}
             </div>
             <div className="anchor">
-              <IconButton icon={Clock} label="Snooze" hint="b" click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
+              <IconButton icon={Clock} label="Snooze" hint={hint('snooze')} click={() => setPanel(panel === 'snooze' ? null : 'snooze')} />
               {panel === 'snooze' && <TimeMenu title="Snooze until" right pick={props.snooze} close={() => setPanel(null)} />}
             </div>
+            {props.unsnooze && <IconButton icon={AlarmClockOff} label="Unsnooze" click={props.unsnooze} />}
           </>
         )}
         <div className="anchor">
@@ -437,7 +448,7 @@ export function Reader(props: {
               {bulkSender && !bins && (summarized
                 ? moreItem(Newspaper, 'Remove sender from Summary', () => props.summarize(bulkSender, false))
                 : moreItem(Newspaper, 'Add sender to Summary', () => props.summarize(bulkSender, true)))}
-              {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
+              {sender && !bins && !SYSTEM_SENDER.test(sender) && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
             </Popover>
@@ -465,20 +476,20 @@ export function Reader(props: {
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>
             )}
-            <Message message={m} open={open.has(m.id)} leaving={m === leaving} blocking={!bins && !leaving && m === blockable} bins={bins} own={own}
+            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own}
               settings={settings} account={account} actions={actions} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
-              unsubscribe={props.unsubscribe} block={props.block} trust={props.trust} />
+              unsubscribe={props.unsubscribe} trust={props.trust} />
           </div>
         ))}
       </div>
       {!bins && (
         <div className="reply-bar">
-          <button type="button" title="Reply (r)" onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
+          <button type="button" title={titled('Reply', hint('reply'))} onClick={() => props.reply('reply', last.id)}><Reply size={17} aria-hidden="true" /> Reply</button>
           {several && (
-            <button type="button" title="Reply all (a)" onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={17} aria-hidden="true" /> Reply All</button>
+            <button type="button" title={titled('Reply all', hint('replyAll'))} onClick={() => props.reply('replyAll', last.id)}><ReplyAll size={17} aria-hidden="true" /> Reply All</button>
           )}
-          <button type="button" title="Forward (f)" onClick={() => props.reply('forward', last.id)}><Forward size={17} aria-hidden="true" /> Forward</button>
+          <button type="button" title={titled('Forward', hint('forward'))} onClick={() => props.reply('forward', last.id)}><Forward size={17} aria-hidden="true" /> Forward</button>
         </div>
       )}
       {peek && <div className="peek">{peek}</div>}

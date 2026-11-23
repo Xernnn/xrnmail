@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
+  AlarmClockOff, Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
   SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
 import {
@@ -14,7 +14,7 @@ import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type S
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
 import { CantShow, Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
-import { keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
+import { hintFor, keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { Welcome } from './Setup'
@@ -30,6 +30,8 @@ interface Toast {
   undo?: () => unknown
   /** How long it stays, when Undo lasts longer than usual. */
   ms?: number
+  /** It's about a message on its way, which says how that went once it knows. */
+  sending?: boolean
 }
 
 const TOAST_MS = 5000
@@ -47,7 +49,7 @@ interface Span { key: string; low: number; high: number; start: number }
 /** How wide the list is beside the reader, and how tall over it, as last dragged. */
 const LIST_WIDTHS: Span = { key: 'xrnmail.list', low: 320, high: 580, start: 410 }
 const LIST_HEIGHTS: Span = { key: 'xrnmail.listHeight', low: 140, high: 900, start: 300 }
-/** More than Trash is ever likely to hold on this laptop. */
+/** More than Trash is ever likely to hold on this laptop, and as many as the main process takes in one go. */
 const WHOLE_LIST = 20_000
 
 const savedSpan = (span: Span): number => {
@@ -131,6 +133,8 @@ export function App(): ReactNode {
   const [help, setHelp] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
   const [bulkSnooze, setBulkSnooze] = useState(false)
+  /** Snooze's times beside a row, for it or for the selection it's in. */
+  const [rowSnooze, setRowSnooze] = useState<{ refs: ThreadRef[]; x: number; y: number; up: boolean } | null>(null)
   /** The bar under a selection's ⋮, and the labels or folders it leads to. */
   const [bulkMenu, setBulkMenu] = useState<'more' | 'file' | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -160,8 +164,21 @@ export function App(): ReactNode {
   const anchor = useRef<number | null>(null)
   /** A draft on its way to the composer, which Esc can still call off. */
   const starting = useRef<{ off: boolean } | null>(null)
+  /** Messages sent from here and not yet gone, by draft. */
+  const going = useRef(new Set<number>())
+  /** The open composer's draft, and its Close. */
+  const closing = useRef<{ id: number; close(): Promise<void> } | null>(null)
 
   const bump = useCallback(() => setVersion((v) => v + 1), [])
+  /** One composer at a time. The one open is closed first, as its own Close would close it, so what's
+   *  written there is kept in Drafts and a reply nobody wrote in goes. The same draft stays as it is. */
+  const showComposer = useCallback(async (draft: Draft, fresh = false): Promise<void> => {
+    const shown = closing.current
+    if (shown?.id === draft.id) return
+    if (shown) await shown.close().catch(() => undefined)
+    if (fresh) setStarted(draft)
+    setComposing(draft)
+  }, [])
   const say = useCallback((text: string): void => setToast({ text }), [])
 
   /** "Are you sure", answered in the app's own dialog. */
@@ -175,7 +192,7 @@ export function App(): ReactNode {
   useEffect(() => {
     if (!SOLO) void window.mail.searches().then(setSearches).catch(() => undefined)
   }, [])
-  useEffect(() => window.mail.onCompose(setComposing), [])
+  useEffect(() => window.mail.onCompose((draft) => void showComposer(draft)), [])
   // The notice for a new message leads to it, in the inbox it came to.
   useEffect(() => window.mail.onOpenThread((ref) => {
     setView({ kind: 'inbox' })
@@ -370,9 +387,19 @@ export function App(): ReactNode {
     [list, open, afterRemove]
   )
 
+  // A selection is of the list on screen: a thread that has left it, for a search that doesn't find
+  // it say, leaves the selection too.
+  useEffect(() => {
+    if (rows === null) return
+    const listed = new Set(rows.map(keyOf))
+    setPicked((now) => ([...now].every((key) => listed.has(key)) ? now : new Set([...now].filter((key) => listed.has(key)))))
+  }, [rows])
+
+  /** What's ticked, or with nothing ticked the open thread. Never the open thread while something
+   *  is ticked: that would act on a thread nobody chose. */
   const targets = useCallback((): ThreadRef[] => {
     const chosen = list.filter((r) => picked.has(keyOf(r))).map((r) => ({ account: r.account, thread: r.thread }))
-    return chosen.length > 0 ? chosen : open ? [open] : []
+    return picked.size > 0 ? chosen : open ? [open] : []
   }, [list, picked, open])
 
   const run = useCallback(
@@ -384,7 +411,8 @@ export function App(): ReactNode {
       try {
         if (leaves && !SOLO) leave(refs)
         if (closes && !SOLO) setOpen(null)
-        const token = await window.mail.act(refs, action)
+        // What's offered with Undo waits for it before the server hears, or Undo would have nothing to call back.
+        const token = await window.mail.act(refs, action, label !== undefined)
         // Reading it again would only mark it read again, so a window of its own goes with it.
         if (SOLO && action.kind === 'unread') return window.close()
         setPicked(new Set())
@@ -413,6 +441,7 @@ export function App(): ReactNode {
     async (refs: ThreadRef[], at: number) => {
       setPanel(null)
       setBulkSnooze(false)
+      setRowSnooze(null)
       try {
         if (!SOLO) leave(refs)
         await window.mail.snooze(refs, at)
@@ -425,20 +454,41 @@ export function App(): ReactNode {
     [leave, say]
   )
 
+  /** Back from snooze now. Undo snoozes each again until its own time, if that's still to come. */
+  const unsnooze = useCallback(
+    async (refs: ThreadRef[]) => {
+      const until = new Map(refs.map((ref) => [keyOf(ref), list.find((r) => keyOf(r) === keyOf(ref))?.snoozedUntil ?? null]))
+      try {
+        if (!SOLO && active.kind === 'snoozed') leave(refs)
+        await window.mail.unsnooze(refs)
+        setPicked(new Set())
+        setToast({
+          text: refs.length > 1 ? `Unsnoozed: ${refs.length} threads` : 'Unsnoozed',
+          undo: async () => {
+            const times = new Set([...until.values()].filter((at): at is number => at !== null && at > Date.now()))
+            for (const at of times) await window.mail.snooze(refs.filter((ref) => until.get(keyOf(ref)) === at), at)
+          }
+        })
+      } catch (e) {
+        say(problem(e))
+      }
+    },
+    [leave, say, list, active.kind]
+  )
+
   const compose = useCallback(
     async (start: DraftStart) => {
       const attempt = { off: false }
       starting.current = attempt
       try {
         const draft = await window.mail.startDraft(start)
-        setStarted(draft)
-        setComposing(draft)
+        await showComposer(draft, true)
       } catch (e) {
         if (starting.current === attempt) starting.current = null
         say(problem(e))
       }
     },
-    [say]
+    [say, showComposer]
   )
 
   // Once the composer is on screen it hears its own keys.
@@ -476,26 +526,57 @@ export function App(): ReactNode {
       // Being written in a window of its own: that window comes forward, and there's still one editor.
       if (draft.state !== 'queued' && await window.mail.showDraftWindow(draft.id)) return
       if (draft.state === 'queued') await window.mail.unsend(draft.id)
-      setComposing({ ...draft, state: 'draft', sendAt: null })
+      await showComposer({ ...draft, state: 'draft', sendAt: null })
     } catch (e) {
       say(problem(e))
     }
   }
 
+  // A message on its way is "Sent" once it has gone from Drafts, and a failure says so; what went
+  // wrong is on the draft, which stays. An Undo on offer for something else meanwhile stays.
+  useEffect(() => {
+    for (const id of going.current) {
+      const draft = drafts.find((d) => d.id === id)
+      if (draft && draft.state !== 'failed') continue
+      going.current.delete(id)
+      const text = draft ? 'Sending failed' : 'Sent'
+      setToast((now) => (now?.undo && !now.sending ? now : { text }))
+    }
+  }, [drafts])
+
   /** "Sending", with Undo bringing the message back to the composer. */
   const announce = (id: number, when: number, scheduled: boolean): void => {
     const undo = async (): Promise<void> => {
+      going.current.delete(id)
       try {
         await window.mail.unsend(id)
         const draft = (await window.mail.drafts()).find((d) => d.id === id)
-        if (draft) setComposing(draft)
+        if (draft) await showComposer(draft)
       } catch (e) {
         say(problem(e))
       }
     }
     if (scheduled) return setToast({ text: `Sends ${longTime(when)}`, undo })
     const left = when - Date.now()
-    setToast(left > 0 ? { text: 'Sending', undo, ms: left } : { text: 'Sent' })
+    going.current.add(id)
+    setToast(left > 0 ? { text: 'Sending', undo, ms: left, sending: true } : { text: 'Sending', sending: true })
+  }
+
+  /** "Draft discarded", with Undo bringing it back to Drafts, and to the composer if it was thrown
+   *  away from there. */
+  const discarded = (id: number, reopen: boolean): void => {
+    setToast({
+      text: 'Draft discarded',
+      undo: async () => {
+        try {
+          await window.mail.undiscardDraft(id)
+          const draft = reopen ? (await window.mail.drafts()).find((d) => d.id === id) : undefined
+          if (draft) await showComposer(draft)
+        } catch (e) {
+          say(problem(e))
+        }
+      }
+    })
   }
 
   const sent = (id: number, when: number, scheduled: boolean): void => {
@@ -520,7 +601,7 @@ export function App(): ReactNode {
   const unsubscribe = async (message: number): Promise<void> => {
     try {
       const result = await window.mail.unsubscribe(message)
-      if (result.kind === 'draft') setComposing(result.draft)
+      if (result.kind === 'draft') await showComposer(result.draft)
       else say(result.kind === 'done' ? 'Unsubscribed' : 'Opened their page in your browser')
       bump()
     } catch (e) {
@@ -539,10 +620,15 @@ export function App(): ReactNode {
     }
   }
 
-  const block = async (address: string): Promise<void> => {
+  /** Blocked from a thread, it's that thread that goes to Trash, whatever else is ticked in the list. */
+  const block = async (address: string, refs: ThreadRef[]): Promise<void> => {
     if (!await ask({ title: `Block ${address}?`, note: 'New mail from them goes straight to Trash.', action: 'Block', danger: true })) return
-    await window.mail.block(address)
-    await run(targets(), { kind: 'trash' }, `Blocked ${address}`)
+    try {
+      await window.mail.block(address)
+    } catch (e) {
+      return say(problem(e))
+    }
+    await run(refs, { kind: 'trash' }, `Blocked ${address}`)
   }
 
   const clearSender = async (item: Subscription): Promise<void> => {
@@ -666,6 +752,19 @@ export function App(): ReactNode {
     }
   }
 
+  /** Every thread in the list, not only the ones read in so far: the rest are read in to be picked. */
+  const selectAll = async (): Promise<void> => {
+    if (list.length < limit) return setPicked(new Set(list.map(keyOf)))
+    try {
+      const all = await window.mail.list(query as ListQuery, WHOLE_LIST)
+      setLimit(Math.max(limit, all.length + PAGE))
+      setRows(all)
+      setPicked(new Set(all.map(keyOf)))
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
   const togglePick = (row: ThreadRow, index: number, range: boolean): void => {
     const from = anchor.current // read now: the update below runs later, after this has moved
     anchor.current = index
@@ -683,10 +782,14 @@ export function App(): ReactNode {
     })
   }
 
-  /** Snoozing one row asks "until when" where a selection would. */
-  const snoozeRow = (row: ThreadRow): void => {
-    setPicked(new Set([keyOf(row)]))
-    setBulkSnooze(true)
+  /** Snoozing from a row asks "until when" beside that row: under it, or over it near the foot. */
+  const snoozeRow = (row: ThreadRow, refs: ThreadRef[] = [{ account: row.account, thread: row.thread }]): void => {
+    const shown = [...document.querySelectorAll<HTMLElement>('.threads .thread')]
+      .find((element) => element.dataset['account'] === row.account && element.dataset['thread'] === row.thread)
+    const box = shown?.getBoundingClientRect()
+    if (!box) return
+    const up = box.bottom > window.innerHeight / 2
+    setRowSnooze({ refs, x: box.right - 8, y: up ? box.top : box.bottom, up })
   }
 
   const swiped = (row: ThreadRow, action: SwipeAction): void => {
@@ -737,7 +840,8 @@ export function App(): ReactNode {
         : { label: 'Pin', icon: Pin, run: () => void pin(refs, true) },
       'gap',
       { label: 'Archive', icon: Check, run: () => void run(refs, { kind: 'archive' }, 'Archived') },
-      { label: 'Snooze', icon: Clock, run: () => { setPicked(new Set(refs.map(keyOf))); setBulkSnooze(true) } },
+      { label: 'Snooze', icon: Clock, run: () => snoozeRow(row, refs) },
+      ...(active.kind === 'snoozed' ? [{ label: 'Unsnooze', icon: AlarmClockOff, run: () => void unsnooze(refs) }] : []),
       { label: 'Report spam', icon: OctagonAlert, run: () => void run(refs, { kind: 'spam' }, 'Reported as spam') },
       { label: 'Delete', icon: Trash2, danger: true, run: () => void run(refs, { kind: 'trash' }, 'Moved to Trash') },
       'gap',
@@ -751,7 +855,10 @@ export function App(): ReactNode {
       // A ticked checkbox keeps the focus, and that shouldn't cost the keyboard. Keys forwarded from
       // a message's frame have the window as their target, which isn't an element at all.
       const typing = element.matches?.('input:not([type=checkbox]), textarea, select') || element.isContentEditable
-      if (typing || settings || help || composing || question) {
+      // The composer sits docked over the reader, so the list and the thread go on hearing keys
+      // beside it; only what's pressed inside it is its own. A composer of its own is all its window has.
+      const writing = Boolean(element.closest?.('.composer')) || SOLO?.kind === 'draft'
+      if (typing || settings || help || writing || question || scheduling || newFolder) {
         if (event.key === 'Escape' && event.target === searchBox.current) {
           setSearch('')
           searchBox.current?.blur()
@@ -804,8 +911,9 @@ export function App(): ReactNode {
           const row = list[index]
           if (row) togglePick(row, index, false)
         },
-        selectAll: () => setPicked(new Set(list.map(keyOf))),
-        undo: () => toast?.undo?.(),
+        selectAll: () => void selectAll(),
+        // As the toast's own Undo: the toast goes with it, and a window of its own waits for it.
+        undo: () => { if (toast?.undo) undoNow(toast.undo) },
         help: () => setHelp(true)
       }
       const set = profile?.keys ?? 'edison'
@@ -896,6 +1004,7 @@ export function App(): ReactNode {
   const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
   const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
   const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  const allFlagged = pickedRows.length > 0 && pickedRows.every((r) => r.starred)
   // Importance is Gmail's, so it's offered only for threads that are all on Gmail.
   const pickedGmail = pickedRows.length > 0 && pickedRows.every((r) => accounts.find((a) => a.email === r.account)?.labels)
   const onOther = active.kind === 'inbox' && active.focus === 'other'
@@ -911,6 +1020,8 @@ export function App(): ReactNode {
   // Live, nothing waits for a delivery, so there's nobody to let straight through.
   const batching = profile ? !profile.batch.live && profile.batch.times.length > 0 : false
 
+  // Snoozed lists what's away; elsewhere a snoozed thread is one a reply has woken.
+  const openSnoozed = active.kind === 'snoozed' && open !== null && list.some((r) => keyOf(r) === keyOf(open))
   const popOut = (): void => {
     if (!open) return
     // It's read there from now on. Left open here as well, this window would mark it read again
@@ -931,7 +1042,8 @@ export function App(): ReactNode {
       labels={openAccount ? labelsOf(openAccount, overview) : []}
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
-      reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address)} say={say}
+      unsnooze={openSnoozed ? () => void unsnooze(open ? [open] : []) : undefined}
+      reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address, open ? [open] : [])} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
       forever={() => forever(open ? [open] : [])} pin={(on) => void pin(open ? [open] : [], on)} mute={(address, on) => void mute(address, on)}
@@ -948,7 +1060,8 @@ export function App(): ReactNode {
     <>
       {composing && (
         <Composer key={composing.id} draft={composing} accounts={accounts} settings={profile} sent={sent} starting={starting.current}
-          solo={SOLO?.kind === 'draft'} leaving={leaving} fresh={composing === started}
+          solo={SOLO?.kind === 'draft'} leaving={leaving} closing={closing} fresh={composing === started}
+          discarded={(id) => discarded(id, true)}
           moveOut={(id) => {
             setComposing(null)
             void window.mail.openDraftWindow(id).catch((e: unknown) => say(problem(e)))
@@ -986,6 +1099,7 @@ export function App(): ReactNode {
     <div className={appClass} style={{ '--list': `${listWidth}px`, '--list-height': `${listHeight}px`, '--preview-lines': lines } as CSSProperties}>
       <Sidebar accounts={accounts} overview={overview} view={view} drafts={drafts} go={go}
         compose={() => void compose({ kind: 'new' })} settings={() => setSettings('general')} drop={dropOn}
+        composeKey={profile ? hintFor(profile.keys, profile.keyChanges[profile.keys], 'compose') : 'c'}
         menu={(target, x, y) => setSideMenu({ x, y, target })} newFolder={setNewFolder}
         choice={profile?.sidebar ?? NO_CHOICE} editing={editingMenu}
         edited={(choice) => {
@@ -1088,7 +1202,7 @@ export function App(): ReactNode {
             }}>
               {showDrafts && shownDrafts.map((draft) => (
                 <DraftRow key={draft.id} draft={draft} account={many ? accounts.find((a) => a.email === draft.account) : undefined} open={() => void reopen(draft)}
-                  discard={() => void window.mail.discardDraft(draft.id).catch((e) => say(problem(e)))} />
+                  discard={() => void window.mail.discardDraft(draft.id, true).then(() => discarded(draft.id, false), (e: unknown) => say(problem(e)))} />
               ))}
               {showSubscriptions && (
                 <Subscriptions version={version} side={subscriptionSide} accounts={accounts} unsubscribe={(message) => void unsubscribe(message)} clear={(item) => void clearSender(item)}
@@ -1102,7 +1216,7 @@ export function App(): ReactNode {
               {!showDrafts && !showSubscriptions && list.map((row, index) => (
                 <Fragment key={keyOf(row)}>
                 {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
-                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'}
+                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'} snoozed={active.kind === 'snoozed'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
                   swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true} importance={profile?.importanceMarks ?? true}
@@ -1128,7 +1242,7 @@ export function App(): ReactNode {
               <div className="bulk" role="toolbar" aria-label="Selected threads">
                 <div className="bulk-top">
                   <strong className="grow">{picked.size} selected</strong>
-                  <button className="bulk-pill" onClick={() => setPicked(new Set(list.map(keyOf)))}>Select All ({list.length})</button>
+                  <button className="bulk-pill" onClick={() => void selectAll()}>Select All ({list.length >= limit ? `${list.length}+` : list.length})</button>
                   <button className="bulk-pill" onClick={() => setPicked(new Set())}>Cancel</button>
                 </div>
                 <div className="bulk-tools">
@@ -1142,11 +1256,14 @@ export function App(): ReactNode {
                       <IconButton icon={Check} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
                       <IconButton icon={OctagonAlert} label="Report selected as spam" click={() => void run(refs, { kind: 'spam' }, 'Reported as spam')} />
                       <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
-                      <IconButton icon={Flag} label="Flag selected" click={() => void run(refs, { kind: 'star' })} />
+                      {/* As Gmail's: with every one flagged it takes the flags off, otherwise it flags them all. */}
+                      <IconButton icon={Flag} label={allFlagged ? 'Remove flag from selected' : 'Flag selected'} on={allFlagged}
+                        click={() => void run(refs, { kind: allFlagged ? 'unstar' : 'star' })} />
                     </>
                   )}
                   <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
                   <IconButton icon={Mail} label="Mark selected unread" click={() => void run(refs, { kind: 'unread' })} />
+                  {active.kind === 'snoozed' && <IconButton icon={AlarmClockOff} label="Unsnooze selected" click={() => void unsnooze(refs)} />}
                   {!bins && (
                     <div className="anchor">
                       <IconButton icon={Clock} label="Snooze selected" click={() => setBulkSnooze(!bulkSnooze)} />
@@ -1205,6 +1322,11 @@ export function App(): ReactNode {
         </div>
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuFor(menu.row)} close={() => setMenu(null)} />}
+      {rowSnooze && (
+        <div className="anchor row-snooze" style={{ left: rowSnooze.x, top: rowSnooze.y }}>
+          <TimeMenu title="Snooze until" right up={rowSnooze.up} pick={(at) => void snooze(rowSnooze.refs, at)} close={() => setRowSnooze(null)} />
+        </div>
+      )}
       {sideMenu && (
         <ContextMenu x={sideMenu.x} y={sideMenu.y} close={() => setSideMenu(null)}
           items={[

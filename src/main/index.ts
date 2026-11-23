@@ -14,7 +14,7 @@ import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { watchNetwork } from './network'
 import { passwordStoreSwitch } from './password-store'
@@ -81,7 +81,14 @@ function tellPage(): void {
   }, 150)
 }
 
-const tellCommand = (command: AppCommand): void => window?.webContents.send('command', command)
+/** A command from the menu goes to the window it was given in when that window does it for itself;
+ *  the rest is the main window's, which comes forward for it if it was asked from another. */
+const tellCommand = (command: AppCommand, from?: Electron.BaseWindow): void => {
+  const solo = [...solos.values()].find((shown) => shown === from && !shown.isDestroyed())
+  if (solo && ownCommand(command)) return solo.webContents.send('command', command)
+  if (solo) showWindow()
+  window?.webContents.send('command', command)
+}
 
 /** Where a connection goes. The tests point every account at their fakes, in the clear. */
 function connection(server: Server, fake: string | undefined, account: AccountConfig, login: Login): ImapConfig {
@@ -279,8 +286,12 @@ function mailAction(value: unknown): MailAction {
   throw new Error('Bad request')
 }
 
+/** As many threads as the page acts on at once: Mark all as read, Empty Trash and Select All take a
+ *  whole list, which it reads up to 20,000 threads of. */
+const MOST_THREADS = 20_000
+
 function targets(value: unknown): ThreadRef[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error('Bad request')
+  if (!Array.isArray(value) || value.length > MOST_THREADS) throw new Error('Bad request')
   return value.map((item) => {
     const t = (item ?? {}) as Record<string, unknown>
     return { account: text(t['account'], 320), thread: text(t['thread'], 64) }
@@ -474,7 +485,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
   handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
-  handle('act', (refs: unknown, action: unknown) => service.act(targets(refs), mailAction(action)))
+  handle('act', (refs: unknown, action: unknown, undoable: unknown) => service.act(targets(refs), mailAction(action), undoable === true))
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
@@ -588,7 +599,8 @@ function register(service: MailService, avatars: Avatars): void {
     else return
     service.holdDraft(draft, on === true)
   })
-  handle('discardDraft', (id: unknown) => service.discardDraft(number(id)))
+  handle('discardDraft', (id: unknown, undoable: unknown) => service.discardDraft(number(id), undoable === true))
+  handle('undiscardDraft', (id: unknown) => service.undiscardDraft(number(id)))
   handle('pickFiles', async (id: unknown) => {
     const options = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] }
     const parent = dialogParent()

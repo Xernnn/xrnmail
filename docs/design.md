@@ -59,9 +59,11 @@ something the person did. imapflow answers `false` rather than throwing when a c
 ## Changes
 
 An action applies to `store.ts` at once, so the app never waits on the network, and joins the `pending`
-table. That's what lets it survive being offline or a restart. Anything that takes mail out of view waits
-out Undo (5 seconds, or up to 30 as Settings, General say) and one second more before setting off;
-everything else goes straight away.
+table. That's what lets it survive being offline or a restart. Anything that takes mail out of view,
+and any other change the page offers Undo for (Move to Inbox, a label added from a selection, Mark
+all as read), waits out Undo (5 seconds, or up to 30 as Settings, General say) and one second more
+before setting off, since a change already sent can't be called back; everything else goes straight
+away.
 
 - Only mail that can be seen is touched. A held reply in the same thread is left alone.
 - `MailService.inLane` runs one thing at a time per account. A sync reading the server while a change is
@@ -77,6 +79,9 @@ everything else goes straight away.
   then the message is put back as it was and the sidebar says so.
 - Moves use `UID MOVE` where the server has it, and copy then delete where it doesn't. A service with no
   Archive or Trash folder gets one the first time it's needed.
+- On Gmail, mail brought back from Trash or Spam is moved to All Mail and labelled Inbox there, rather
+  than moved to `INBOX`: All Mail is read and the server names the new UIDs there, so the row follows
+  it and the thread is in the inbox at once, not only after the next sync.
 - Delete and spam change the row's `bin` at once, which is what makes Undo possible. `hidden` is only for
   mail being deleted for good, and Gmail's own unsent drafts. Every read leaves out hidden rows, as it
   does held ones.
@@ -116,6 +121,9 @@ is all Undo and "send later" are. `tick()` sends what's due.
   signed in, before the message is handed over, so a crash comes back the same way instead of as a
   retry. Until then it's still `queued`: a quit during a slow connect, which finishing up gives up on
   after eight seconds, leaves it to go next time rather than to be checked for.
+- A draft that ends in `failed` stays in Drafts with what went wrong, and the account says "Sending
+  failed" in the sidebar until it's sent or thrown away. The page says "Sent" only once the draft has
+  gone, never when it's queued.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
   changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
@@ -147,6 +155,10 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
 - **A copy that has to go** (the draft was sent, thrown away, moved to another account or emptied)
   is noted in `draft_copies` and goes as soon as the server can be reached, like the pending queue:
   offline, or after a restart, nothing is lost. Refused three times, it's let go of and said.
+- **Thrown away** from the composer or Drafts, a draft with something in it leaves Drafts at once and
+  goes for good, with its copy, once Undo has had its time, or when the app closes; until then
+  nothing about it changes on the server, and one that was waiting to go waits as a draft, so it
+  can't leave meanwhile. Undo gives it back as it was. A crash meanwhile keeps it.
 - **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
   draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
   or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
