@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode, type RefObject } from 'react'
 import {
-  Bold, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Strikethrough, Trash2,
+  Bold, Check, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Signature, Strikethrough, Trash2,
   SquareArrowOutUpRight, Underline, Upload, X
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { INLINE_PICTURES, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings } from '@shared/types'
+import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings } from '@shared/types'
 import { Avatar } from './Common'
 import { fileSize, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
@@ -20,7 +20,7 @@ const cleanQuote = (quote: Quote | null): Quote | null =>
 /** What the editor may hold: what's typed, and pictures that are the draft's own. [keep] says what an
  *  <img> shows instead of its src, or null for one that isn't the draft's, which goes: no picture
  *  from anywhere else is ever fetched here. */
-function ownMarkup(html: string, keep: (src: string) => string | null): string {
+export function ownMarkup(html: string, keep: (src: string) => string | null): string {
   const clean = sanitize(html)
   if (!/<img\b/i.test(clean)) return clean
   const box = document.createElement('template')
@@ -36,7 +36,7 @@ function ownMarkup(html: string, keep: (src: string) => string | null): string {
 /** What's typed, as text, with "[image: name]" where a picture is, as the text part of a message
  *  with pictures says it. A copy of the words is measured off screen, without its pictures, since
  *  only words that are laid out have lines. */
-function textOf(editor: HTMLElement | null): string {
+export function textOf(editor: HTMLElement | null): string {
   if (!editor) return ''
   if (!editor.querySelector('img')) return editor.innerText
   const box = document.createElement('template')
@@ -53,14 +53,78 @@ function textOf(editor: HTMLElement | null): string {
   }
 }
 
-const asDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+/** A picture written into a signature, which is all a signature may show. */
+const DATA_PICTURE = /^data:image\/(?:png|jpeg|gif|webp);base64,/i
+export const signatureMarkup = (html: string): string => ownMarkup(html, (src) => (DATA_PICTURE.test(src) ? src : null))
+
+export const asDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader()
   reader.onload = () => resolve(String(reader.result))
   reader.onerror = () => reject(reader.error ?? new Error("That picture couldn't be read."))
   reader.readAsDataURL(blob)
 })
 
-const escapeAttribute = (text: string): string => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+export const escapeAttribute = (text: string): string => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** Bold, italic, links, lists and the rest, for an editor of the app's own: a message's words, and a
+ *  signature in Settings. [changed] is told after each. */
+export function FormatBar(props: { editor: RefObject<HTMLDivElement | null>; changed(): void }): ReactNode {
+  const [linking, setLinking] = useState<string | null>(null)
+  const selection = useRef<Range | null>(null)
+
+  const format = (command: string, value?: string): void => {
+    props.editor.current?.focus()
+    document.execCommand(command, false, value)
+    props.changed()
+  }
+
+  const startLink = (): void => {
+    const picked = window.getSelection()
+    selection.current = picked && picked.rangeCount > 0 ? picked.getRangeAt(0).cloneRange() : null
+    setLinking('https://')
+  }
+
+  const finishLink = (): void => {
+    const url = (linking ?? '').trim()
+    setLinking(null)
+    if (!/^(https?:\/\/|mailto:)/i.test(url)) return
+    const range = selection.current
+    props.editor.current?.focus()
+    if (range) {
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+    }
+    if (range?.collapsed) document.execCommand('insertText', false, url)
+    format('createLink', url)
+  }
+
+  return (
+    <>
+      {linking !== null && (
+        <div className="menu-row link-row">
+          <input aria-label="Link address" autoFocus value={linking} onChange={(e) => setLinking(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); finishLink() }
+              else if (e.key === 'Escape') { e.stopPropagation(); setLinking(null) }
+            }} />
+          <button type="button" className="quiet" onClick={finishLink}>Link</button>
+        </div>
+      )}
+      <div className="format" role="toolbar" aria-label="Formatting" onMouseDown={(e) => e.preventDefault()}>
+        <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
+        <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
+        <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
+        <IconButton icon={Strikethrough} label="Strikethrough" click={() => format('strikeThrough')} />
+        <IconButton icon={RemoveFormatting} label="Clear formatting" click={() => format('removeFormat')} />
+        <span className="tool-gap" />
+        <IconButton icon={Link} label="Add link" click={startLink} />
+        <IconButton icon={QuoteIcon} label="Quote" click={() => format('formatBlock', 'blockquote')} />
+        <IconButton icon={ListOrdered} label="Numbered list" click={() => format('insertOrderedList')} />
+        <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
+      </div>
+    </>
+  )
+}
 
 const asRecipient = (who: Address): string => {
   if (!who.name) return who.address
@@ -192,8 +256,9 @@ export function Composer(props: {
   const [error, setError] = useState(draft.error ?? '')
   const [quoteOpen, setQuoteOpen] = useState(false)
   const [later, setLater] = useState(false)
-  const [linking, setLinking] = useState<string | null>(null)
   const [templates, setTemplates] = useState(false)
+  const [signature, setSignature] = useState(draft.signature)
+  const [signing, setSigning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -205,7 +270,6 @@ export function Composer(props: {
   const startText = useRef('')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gone = useRef(false)
-  const selection = useRef<Range | null>(null)
   const ownDrag = useRef(false)
   /** The draft's pictures the editor shows, by the data: address each is shown with. */
   const shown = useRef(new Map<string, string>())
@@ -224,8 +288,9 @@ export function Composer(props: {
   const collect = useCallback((): DraftEdit => ({
     account, from, to, cc, bcc, subject, quote,
     html: written(),
-    text: textOf(editor.current)
-  }), [account, from, to, cc, bcc, subject, quote])
+    text: textOf(editor.current),
+    signature
+  }), [account, from, to, cc, bcc, subject, quote, signature])
 
   const latest = useRef(collect)
   latest.current = collect
@@ -269,7 +334,7 @@ export function Composer(props: {
     }
   }, [draft.id])
 
-  useEffect(soon, [account, from, to, cc, bcc, subject])
+  useEffect(soon, [account, from, to, cc, bcc, subject, signature])
 
   // While it's open here, what the server says about the draft leaves it as it is.
   useEffect(() => {
@@ -288,7 +353,8 @@ export function Composer(props: {
    *  empty; but as it started, nothing was written and there's nothing to keep. */
   const untouched = (edit: DraftEdit): boolean =>
     Boolean(props.fresh) && edit.account === draft.account && edit.from === draft.from && edit.to === draft.to && edit.cc === draft.cc &&
-    edit.bcc === draft.bcc && edit.subject === draft.subject && edit.text === startText.current && files.length === draft.files.length
+    edit.bcc === draft.bcc && edit.subject === draft.subject && edit.text === startText.current && files.length === draft.files.length &&
+    edit.signature === draft.signature
 
   // A window of its own can be closed around its composer. The app is asked first, and through this
   // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
@@ -363,32 +429,6 @@ export function Composer(props: {
       setError(problem(e))
       setBusy(false)
     }
-  }
-
-  const format = (command: string, value?: string): void => {
-    editor.current?.focus()
-    document.execCommand(command, false, value)
-    soon()
-  }
-
-  const startLink = (): void => {
-    const picked = window.getSelection()
-    selection.current = picked && picked.rangeCount > 0 ? picked.getRangeAt(0).cloneRange() : null
-    setLinking('https://')
-  }
-
-  const finishLink = (): void => {
-    const url = (linking ?? '').trim()
-    setLinking(null)
-    if (!/^(https?:\/\/|mailto:)/i.test(url)) return
-    const range = selection.current
-    editor.current?.focus()
-    if (range) {
-      window.getSelection()?.removeAllRanges()
-      window.getSelection()?.addRange(range)
-    }
-    if (range?.collapsed) document.execCommand('insertText', false, url)
-    format('createLink', url)
   }
 
   const useTemplate = (text: string): void => {
@@ -492,7 +532,9 @@ export function Composer(props: {
     document.execCommand('insertText', false, text)
   }
 
-  const signature = props.settings?.identities[account]?.signature.trim()
+  const signatures = props.settings?.signatures ?? []
+  // The one chosen for this message, or the one its From address has.
+  const signedWith = !props.settings ? null : signature !== undefined ? signatures.find((s) => s.id === signature) ?? null : signatureFor(props.settings, account, from)
   const senders = props.accounts.flatMap((a) => [a.email, ...(props.settings?.identities[a.email]?.aliases ?? [])].map((address) => [a.email, address] as const))
   const templateList = props.settings?.templates ?? []
 
@@ -524,6 +566,8 @@ export function Composer(props: {
           const [nextAccount = account, nextFrom = ''] = JSON.parse(e.target.value) as string[]
           setAccount(nextAccount)
           setFrom(nextFrom === nextAccount ? '' : nextFrom)
+          // Another address signs with its own, whatever was picked for the one before.
+          setSignature(undefined)
         }}>
           {senders.map(([owner, address]) => <option key={address} value={JSON.stringify([owner, address])}>{address}</option>)}
         </select>
@@ -536,7 +580,7 @@ export function Composer(props: {
         <div ref={editor} className="editor" role="textbox" aria-multiline="true" aria-label="Message" contentEditable
           suppressContentEditableWarning onInput={soon} onPaste={paste} onDrop={dropText}
           onDragStart={() => (ownDrag.current = true)} onDragEnd={() => (ownDrag.current = false)} />
-        {signature && <p className="signature muted">-- <br />{signature}</p>}
+        {signedWith && <div className="signature muted" dangerouslySetInnerHTML={{ __html: `-- <br>${signatureMarkup(signedWith.html)}` }} />}
         {quote && (
           <div className="quote">
             <button type="button" className="quiet" aria-expanded={quoteOpen} onClick={() => setQuoteOpen(!quoteOpen)}>
@@ -561,28 +605,7 @@ export function Composer(props: {
         </ul>
       )}
       {error && <p className="error compose-error">{error}</p>}
-      {linking !== null && (
-        <div className="menu-row link-row">
-          <input aria-label="Link address" autoFocus value={linking} onChange={(e) => setLinking(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); finishLink() }
-              else if (e.key === 'Escape') { e.stopPropagation(); setLinking(null) }
-            }} />
-          <button type="button" className="quiet" onClick={finishLink}>Link</button>
-        </div>
-      )}
-      <div className="format" role="toolbar" aria-label="Formatting" onMouseDown={(e) => e.preventDefault()}>
-        <IconButton icon={Bold} label="Bold" click={() => format('bold')} />
-        <IconButton icon={Italic} label="Italic" click={() => format('italic')} />
-        <IconButton icon={Underline} label="Underline" click={() => format('underline')} />
-        <IconButton icon={Strikethrough} label="Strikethrough" click={() => format('strikeThrough')} />
-        <IconButton icon={RemoveFormatting} label="Clear formatting" click={() => format('removeFormat')} />
-        <span className="tool-gap" />
-        <IconButton icon={Link} label="Add link" click={startLink} />
-        <IconButton icon={QuoteIcon} label="Quote" click={() => format('formatBlock', 'blockquote')} />
-        <IconButton icon={ListOrdered} label="Numbered list" click={() => format('insertOrderedList')} />
-        <IconButton icon={List} label="List" click={() => format('insertUnorderedList')} />
-      </div>
+      <FormatBar editor={editor} changed={soon} />
       <footer>
         <button type="button" className="send" disabled={busy} onClick={() => void send()}><SendHorizontal size={18} aria-hidden="true" /> Send</button>
         <div className="anchor">
@@ -598,6 +621,22 @@ export function Composer(props: {
               <Popover up close={() => setTemplates(false)}>
                 {templateList.map((t) => (
                   <button type="button" key={t.name} className="menu-item" onClick={() => useTemplate(t.text)}>{t.name}</button>
+                ))}
+              </Popover>
+            )}
+          </div>
+        )}
+        {signatures.length > 0 && (
+          <div className="anchor">
+            <IconButton icon={Signature} label="Signature" on={signing} click={() => setSigning(!signing)} />
+            {signing && (
+              <Popover up close={() => setSigning(false)}>
+                {[{ id: '', name: 'None' }, ...signatures].map((each) => (
+                  <button type="button" key={each.id} className="menu-item" aria-pressed={(signedWith?.id ?? '') === each.id}
+                    onClick={() => { setSigning(false); setSignature(each.id) }}>
+                    <span className="grow">{each.name}</span>
+                    {(signedWith?.id ?? '') === each.id && <Check size={15} aria-hidden="true" />}
+                  </button>
                 ))}
               </Popover>
             )}

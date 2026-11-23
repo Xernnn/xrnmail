@@ -114,7 +114,11 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: `${folder}/${colorScheme}-selection-more.png` })
     await page.keyboard.press('Escape')
     await page.keyboard.press('Escape')
-    await page.evaluate(() => window.mail.saveProfile({ identities: { 'me@example.com': { name: 'Me', signature: 'Me\nSomewhere', aliases: [], color: '', notify: true } }, templates: [{ name: 'Thanks', text: 'Thanks!' }] }))
+    await page.evaluate(() => window.mail.saveProfile({
+      identities: { 'me@example.com': { name: 'Me', signature: '', aliases: [], color: '', notify: true } },
+      signatures: [{ id: 'me', name: 'Signature', html: 'Me<br>Somewhere', text: 'Me\nSomewhere' }], signatureFor: { 'me@example.com': 'me' },
+      templates: [{ name: 'Thanks', text: 'Thanks!' }]
+    }))
     await page.getByRole('button', { name: 'Reply', exact: true }).click()
     await page.getByRole('region', { name: 'Compose' }).getByLabel('Message').fill('Count me in. I will bring snacks.')
     await page.getByRole('region', { name: 'Compose' }).getByRole('button', { name: 'Quoted message' }).click()

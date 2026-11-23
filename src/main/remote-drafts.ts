@@ -27,7 +27,7 @@ export function isBlank(draft: Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject' | 'te
 /** Whether saving [edit] would change anything. A composer saves when it's closed, changed or not,
  *  and an unchanged draft needn't go up again. */
 export function changes(draft: Draft, edit: DraftEdit): boolean {
-  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'subject', 'html', 'text']
+  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'subject', 'html', 'text', 'signature']
   return keys.some((key) => draft[key] !== edit[key]) || JSON.stringify(draft.quote) !== JSON.stringify(edit.quote)
 }
 
@@ -97,14 +97,18 @@ function wordsWithPictures(words: string, pictures: ParsedDraft['pictures']): { 
  *  page. What it quotes is kept apart, as a reply's quote is, and goes out as it was quoted. The
  *  account's signature, which this laptop puts under what's typed, comes off the end of the words,
  *  so a draft that went up from here and came back isn't signed twice. */
-export function importedDraft(parsed: ParsedDraft, account: string, own: string[], signature: string):
+export function importedDraft(parsed: ParsedDraft, account: string, own: string[], signature: string | string[]):
   Omit<DraftEdit, 'account'> & Pick<Draft, 'inReplyTo' | 'references'> & { pictures: ParsedDraft['pictures'] } {
   const { fresh, quoted } = splitQuoted(parsed.text.replace(/\r\n/g, '\n'))
   // Lines compared without what trails them: a server making text of the HTML drops the space after "--".
   const lines = (text: string): string => text.split('\n').map((line) => line.trimEnd()).join('\n').trimEnd()
   let words = lines(fresh)
-  const tail = `--\n${lines(signature.trim())}`
-  if (signature.trim() && words.endsWith(tail)) words = words.slice(0, -tail.length)
+  for (const each of [signature].flat()) {
+    const tail = `--\n${lines(each.trim())}`
+    if (!each.trim() || !words.endsWith(tail)) continue
+    words = words.slice(0, -tail.length)
+    break
+  }
   words = words.trimEnd()
   const from = parsed.from.address.toLowerCase()
   const quote: Quote | null = quoted.trim()

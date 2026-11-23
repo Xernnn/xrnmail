@@ -169,8 +169,8 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
   on the server, as one older than the keeping window does: brought in without its files and changed
   here, it would go back up without them. Its words go into the composer as text: the copy's HTML is the server's, may hold a
   stranger's quoted HTML, and never reaches the page. What it quotes is kept apart, as a reply's quote
-  is, and goes out as it was quoted, not quoted again; the account's own signature comes off the end
-  of the words, so a draft that went up from here and came back isn't signed twice.
+  is, and goes out as it was quoted, not quoted again; whichever of the signatures is at the end of
+  the words comes off, so a draft that went up from here and came back isn't signed twice.
 - **Each draft here knows its copy**: the UID, the folder's UIDVALIDITY when it was had, its
   Message-ID, and which version of the draft it was made from (`pushed`). A renumbered folder finds
   its copies again by Message-ID instead of bringing them in twice.
@@ -673,8 +673,18 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
-- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
-  signature and the rest is held once for every page until the field is left.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name and
+  the rest is held once for every page until the field is left.
+- Signatures are a list in settings (`signatures`), each with its HTML, written in Settings with the
+  composer's own toolbar (`FormatBar`), and its text for the text part. A picture in one is a `data:`
+  image in that HTML, 512 KB at most since settings are read often, and goes as a part of the
+  message like a picture in the words; nothing of a signature is fetched or hosted anywhere.
+  `signatureFor` says which one each address signs with, an account's own or an alias, and an alias
+  with none chosen takes its account's. A draft keeps the one picked in the composer (`signature`,
+  `''` for none); a draft with none picked, and one whose From changes, takes its address's. It goes
+  under what's written and above the quote, as the one plain signature did. Settings saved before
+  there were several have each account's plain signature made into one of these with the same
+  words, its account's, once, the first time this version starts.
 
 Settings are saved as changes, never as a whole copy put back. Each save names only what it changes
 (`saveProfile`, `saveBatch` and `saveSummary` all take part of their settings, and an identity

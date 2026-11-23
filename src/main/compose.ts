@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import addressparser from 'nodemailer/lib/addressparser'
-import type { Address, Draft, DraftFile, DraftStart, Identity, Quote } from '@shared/types'
+import type { Address, Draft, DraftFile, DraftStart, Identity, Quote, Signature } from '@shared/types'
 import type { MessageDetail } from './store'
 
 /** Turning a message into a reply, and a draft into what's sent. Nothing here touches the outside. */
@@ -139,13 +139,18 @@ function quotedText(quote: Quote): string {
   return `\n\n${quote.intro}\n${quote.text.replace(/^/gm, '> ')}`
 }
 
-/** What leaves: the person's words, their signature, then what they're answering. */
-export function outgoing(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number): OutgoingMail {
+/** The signature under a message: one of Settings' signatures, or none. */
+export type SignedWith = Pick<Signature, 'html' | 'text'> | null
+
+/** What leaves: the person's words, their signature, then what they're answering. Without
+ *  [signature], it's the identity's plain one, as before there were several. */
+export function outgoing(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
+  signature?: SignedWith): OutgoingMail {
   const to = parseRecipients(draft.to)
   const cc = parseRecipients(draft.cc)
   const bcc = parseRecipients(draft.bcc)
   if (to.length + cc.length + bcc.length === 0) throw new Error('Add someone to send this to.')
-  return whole(draft, email, identity, paths, date, { to, cc, bcc })
+  return whole(draft, email, identity, paths, date, { to, cc, bcc }, signature)
 }
 
 /** What was typed into To, Cc or Bcc, as far as it's addresses yet: a draft is still being written. */
@@ -158,8 +163,9 @@ function typedRecipients(text: string): Address[] {
 
 /** A draft as its copy on the server has it: the whole message as it would go, so another device can
  *  carry on with it or send it as it is. Nobody has to be on it yet. */
-export function draftCopy(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number): OutgoingMail {
-  return whole(draft, email, identity, paths, date, { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc) })
+export function draftCopy(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
+  signature?: SignedWith): OutgoingMail {
+  return whole(draft, email, identity, paths, date, { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc) }, signature)
 }
 
 /** A picture an <img> names: one of the draft's own by its Content-ID, or one written into the
@@ -205,11 +211,14 @@ export function partsOf(mail: Pick<OutgoingMail, 'files' | 'pictures'>): { filen
 }
 
 function whole(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
-  people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc'>): OutgoingMail {
-  const signature = identity?.signature.trim() ?? ''
+  people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc'>, signed?: SignedWith): OutgoingMail {
+  const plain = identity?.signature.trim() ?? ''
+  // One with nothing in it, not even a picture, is no signature.
+  const blank = !signed || (!signed.text.trim() && !/<img\b/i.test(signed.html))
+  const signature = signed === undefined ? (plain ? { html: paragraphs(plain), text: plain } : null) : blank ? null : signed
   const { html, pictures } = placePictures([
     draft.html,
-    signature ? `<br><div>-- <br>${paragraphs(signature)}</div>` : '',
+    signature ? `<br><div>-- <br>${signature.html}</div>` : '',
     draft.quote ? quotedHtml(draft.quote) : ''
   ].join(''), draft.files, paths)
   return {
@@ -220,7 +229,7 @@ function whole(draft: Draft, email: string, identity: Identity | undefined, path
     html,
     text: [
       draft.text,
-      signature ? `\n\n-- \n${signature}` : '',
+      signature ? `\n\n-- \n${signature.text.trim()}` : '',
       draft.quote ? quotedText(draft.quote) : ''
     ].join(''),
     inReplyTo: draft.inReplyTo,

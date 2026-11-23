@@ -40,7 +40,11 @@ kept on the laptop.
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
-  that survive a restart, and addresses suggested from your mail. A picture (PNG, JPEG, GIF or WebP)
+  that survive a restart, and addresses suggested from your mail. Signatures are as many as you like,
+  written in Settings, Signatures with the composer's own toolbar, pictures and all (kept on this
+  laptop and sent with the message, never hosted anywhere). Each address, an account's own or an
+  alias, has its default; choosing another From in the composer brings its signature, and the
+  Signature button there picks another or none. A picture (PNG, JPEG, GIF or WebP)
   pasted or dropped goes into the words where the caret is, and is sent as a part of the message the
   words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
   pictures of what it quotes in its words the same way. Replying starts from the buttons at

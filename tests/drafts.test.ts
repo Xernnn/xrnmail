@@ -46,6 +46,14 @@ describe('a draft\'s copy on the server', () => {
     expect(again.text).toBe('Count me in.\n\n-- \nRegards,\nMe\n\nOn Mon, Ada wrote:\n> Coming on Friday?')
   })
 
+  it('comes back without whichever of the signatures it was signed with', async () => {
+    const signed = draftCopy(draft({ to: 'ada@example.com', subject: 'Hi', text: 'See you', html: 'See you' }), ME, identity, () => '', 0,
+      { html: '<b>Mai</b><br>The Shop', text: 'Mai\nThe Shop' })
+    const parsed = await parseDraft(await draftRaw(signed, '<draft-3@example.com>'))
+    expect(importedDraft(parsed, ME, [ME], ['Regards', 'Mai\nThe Shop']).text).toBe('See you')
+    expect(importedDraft(parsed, ME, [ME], ['Regards']).text).toContain('The Shop')
+  })
+
   it('keeps the words as text, so none of the HTML it came with reaches the composer', async () => {
     const raw = Buffer.from([
       `From: ${ME}`, 'To: ada@example.com', 'Subject: Pretty', 'Message-ID: <p@example.com>', 'MIME-Version: 1.0',

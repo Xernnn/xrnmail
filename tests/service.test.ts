@@ -1355,12 +1355,58 @@ describe('sending', () => {
   })
 
   it('signs with the account identity', async () => {
-    service.saveProfile({ identities: { [ME]: { name: 'Sơn', signature: 'Regards', aliases: [], color: '', notify: true } } })
+    service.saveProfile({
+      identities: { [ME]: { name: 'Sơn', signature: '', aliases: [], color: '', notify: true } },
+      signatures: [{ id: 'plain', name: 'Plain', html: 'Regards', text: 'Regards' }], signatureFor: { [ME]: 'plain' }
+    })
     const draft = await write()
     service.send(draft.id)
     await later(10_000)
     expect(smtp.sent[0]?.raw).toContain('Regards')
     expect(smtp.sent[0]?.raw).toMatch(/From: =\?UTF-8\?.*<me@example\.com>/)
+  })
+
+  it('signs with the one chosen for the message, or else its From address\'s, an alias taking its account\'s', async () => {
+    const logo = `data:image/png;base64,${png().toString('base64')}`
+    service.saveProfile({
+      identities: { [ME]: { name: 'Me', signature: '', aliases: ['shop@example.com', 'club@example.com'], color: '', notify: true } },
+      signatures: [
+        { id: 'work', name: 'Work', html: `<b>Mai</b> at Work<br><img src="${logo}" alt="logo">`, text: 'Mai at Work' },
+        { id: 'shop', name: 'Shop', html: 'The Shop', text: 'The Shop' }
+      ],
+      signatureFor: { [ME]: 'work', 'shop@example.com': 'shop' }
+    })
+    const sent = async (over: Partial<Draft>): Promise<string> => {
+      const draft = await write(over)
+      service.send(draft.id)
+      await later(10_000)
+      return (smtp.sent.at(-1)?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=')
+    }
+    const work = await sent({})
+    expect(work).toContain('<b>Mai</b> at Work')
+    expect(work).toContain('-- \r\nMai at Work') // the text part has the words
+    expect(work).toContain('multipart/related') // and the logo goes with the message, named by cid
+    expect(work).not.toContain('data:image')
+    expect(await sent({ from: 'shop@example.com' })).toContain('The Shop')
+    expect(await sent({ from: 'club@example.com' })).toContain('Mai at Work') // nothing chosen for it: the account's
+    const none = await sent({ signature: '' })
+    expect(none).not.toContain('Mai at Work')
+    expect(none).not.toContain('-- ')
+    expect(await sent({ signature: 'shop' })).toContain('The Shop')
+  })
+
+  it('makes each plain signature of before into one of the new kind, with the same words, once', async () => {
+    store.setMeta('settings', JSON.stringify({ identities: { [ME]: { name: 'Me', signature: 'Regards,\nMe', aliases: [], color: '', notify: true } } }))
+    service = make()
+    const { signatures, signatureFor: chosen, identities } = service.settings()
+    expect(signatures).toEqual([{ id: expect.any(String), name: 'Signature', html: 'Regards,<br>Me', text: 'Regards,\nMe' }])
+    expect(chosen).toEqual({ [ME]: signatures[0]?.id })
+    expect(identities[ME]?.signature).toBe('')
+    expect(JSON.parse(store.meta('settings') ?? '{}').signatures).toEqual(signatures) // kept, so it happens the once
+    const draft = await write()
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent[0]?.raw).toContain('Regards,')
   })
 
   it('refuses attachments over what Gmail would take', async () => {

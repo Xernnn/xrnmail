@@ -1,8 +1,8 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
-import { INLINE_PICTURES, QUICK_SLOTS } from '@shared/types'
+import { INLINE_PICTURES, QUICK_SLOTS, signatureFor } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
@@ -13,7 +13,7 @@ import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, to
 import { sortMail } from './assistant'
 import { sniff } from './avatars'
 import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
-import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, placePictures, quoteOf, replySubject, replyTargets } from './compose'
+import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, placePictures, quoteOf, replySubject, replyTargets, type SignedWith } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
@@ -68,6 +68,8 @@ const DEFAULT_SETTINGS: Settings = {
   backfillDays: 90,
   hub: { url: '', user: '', connected: false },
   identities: {},
+  signatures: [],
+  signatureFor: {},
   templates: [],
   blocked: [],
   muted: [],
@@ -195,6 +197,24 @@ const cleanSenders = (senders: string[]): string[] =>
 
 /** Text set as a new draft's body, in the form the editor keeps. */
 const escapeForEditor = (text: string): string => escapeHtml(text).replace(/\r?\n/g, '<br>')
+
+/** Settings saved before there were several signatures: each account's plain one becomes a signature
+ *  of its own with the same words, the one its mail is signed with, and the identity keeps none. */
+function migratedSignatures(identities: Record<string, Partial<Identity>>): Pick<Settings, 'signatures' | 'signatureFor'> & { identities: Record<string, Partial<Identity>> } {
+  const signatures: Signature[] = []
+  const signatureFor: Record<string, string> = {}
+  const accounts = Object.entries(identities)
+  const cleared = accounts.map(([email, who], i): [string, Partial<Identity>] => {
+    const text = (who.signature ?? '').trim()
+    if (text) {
+      const id = `signature-${i + 1}`
+      signatures.push({ id, name: accounts.length > 1 ? email : 'Signature', html: escapeForEditor(text), text })
+      signatureFor[email.toLowerCase()] = id
+    }
+    return [email, { ...who, signature: '' }]
+  })
+  return { signatures, signatureFor, identities: Object.fromEntries(cleared) }
+}
 
 export function cleanSummary(summary: Partial<SummarySettings>): SummarySettings {
   return {
@@ -353,6 +373,9 @@ export class MailService {
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
+    // Plain signatures become signatures of the new kind once, the first time this version runs.
+    const saved = deps.store.meta('settings')
+    if (saved && !('signatures' in (JSON.parse(saved) as object))) this.saveSettings(this.settings())
     this.old = new OldMail({
       store: deps.store,
       accounts: () => this.emails(),
@@ -1625,7 +1648,7 @@ export class MailService {
     const messageId = draftMessageId(sender)
     let raw: Buffer
     try {
-      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now()), messageId)
+      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now(), this.signedWith(draft)), messageId)
     } catch {
       // Something of it can't be read here, a file gone from the profile say: trying again won't
       // help, and it mustn't hold up the drafts after it.
@@ -1693,7 +1716,8 @@ export class MailService {
       const lost = new Map(this.store.draftLinks(email).filter((d) => !d.copy && d.messageId).map((d) => [d.messageId, d]))
       const unknown = recent.filter((uid) => !known.has(uid) && !this.tooBig.has(`${email}:${info.uidValidity}:${uid}`))
       const own = this.ownAddresses(email)
-      const { signature } = this.identity(email)
+      // Any of them may be at the end of words that went up from here.
+      const signature = this.settings().signatures.map((s) => s.text)
       for await (const remote of source.fetch(unknown, MAX_DRAFT_SOURCE)) {
         if (removed()) return
         const cut = remote.size > MAX_DRAFT_SOURCE
@@ -1723,7 +1747,7 @@ export class MailService {
   }
 
   private keepImported(email: string, parsed: Awaited<ReturnType<typeof parseDraft>>, copy: DraftCopy, saved: number,
-    own: string[], signature: string): void {
+    own: string[], signature: string[]): void {
     const { pictures, ...imported } = importedDraft(parsed, email, own, signature)
     const id = this.store.addDraft({ account: email, ...imported, files: [], updated: saved }, copy)
     const files = [
@@ -1788,7 +1812,14 @@ export class MailService {
   private outgoingFrom(draft: Draft): ReturnType<typeof outgoing> {
     const from = (draft.from || draft.account).toLowerCase()
     if (!this.ownAddresses(draft.account).includes(from)) throw new Error('That address isn\'t on this account.')
-    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now())
+    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now(), this.signedWith(draft))
+  }
+
+  /** The one chosen for it, or the one its From address has. */
+  private signedWith(draft: Draft): SignedWith {
+    const settings = this.settings()
+    const found = draft.signature !== undefined ? settings.signatures.find((s) => s.id === draft.signature) ?? null : signatureFor(settings, draft.account, draft.from)
+    return found ? { html: found.html, text: found.text } : null
   }
 
   /** A picture taken out of the words stays on the draft while it's written, so Undo in the editor
@@ -1993,7 +2024,8 @@ export class MailService {
       const batch = { ...DEFAULT_SETTINGS.batch, ...saved.batch }
       // Saved before there was a switch: no times meant mail came as it arrived, and still does.
       batch.live = saved.batch?.live === true || batch.times.length === 0
-      const merged = { ...DEFAULT_SETTINGS, ...saved, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
+      const signed = saved.signatures === undefined ? migratedSignatures(saved.identities ?? {}) : {}
+      const merged = { ...DEFAULT_SETTINGS, ...saved, ...signed, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
@@ -2059,6 +2091,8 @@ export class MailService {
     this.saveSettings({
       ...settings,
       identities,
+      signatures: (patch.signatures ?? settings.signatures).slice(0, 50),
+      signatureFor: patch.signatureFor ?? settings.signatureFor,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,

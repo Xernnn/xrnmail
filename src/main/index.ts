@@ -6,7 +6,7 @@ import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { basename, join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
+  Rsvp, SenderList, Server, Signature, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
@@ -322,7 +322,9 @@ function draftEdit(value: unknown): DraftEdit {
     subject: text(d['subject'], 2000),
     html: text(d['html'], MAX_BODY),
     text: text(d['text'], MAX_BODY),
-    quote: quote(d['quote'])
+    quote: quote(d['quote']),
+    // Not given, it's its From address's.
+    signature: d['signature'] === undefined || d['signature'] === null ? undefined : text(d['signature'], 64)
   }
 }
 
@@ -366,6 +368,17 @@ function identity(who: Partial<Identity> | undefined): Identity {
   }
 }
 
+/** A signature's words, with any picture in them, which is kept with it. */
+const MAX_SIGNATURE = 2 * 1024 * 1024
+const SIGNATURE_ID = /^[\w-]{1,64}$/
+
+function signature(value: unknown): Signature {
+  const s = (value ?? {}) as Record<string, unknown>
+  const id = text(s['id'], 64)
+  if (!SIGNATURE_ID.test(id)) throw new Error('Bad request')
+  return { id, name: text(s['name'], 200), html: text(s['html'], MAX_SIGNATURE), text: text(s['text'], 20_000) }
+}
+
 function profile(value: unknown): ProfilePatch {
   const p = (value ?? {}) as Record<string, unknown>
   const patch: ProfilePatch = {}
@@ -375,6 +388,11 @@ function profile(value: unknown): ProfilePatch {
         text(email, 320), identity(who)
       ])
     )
+  }
+  if (Array.isArray(p['signatures'])) patch.signatures = p['signatures'].slice(0, 50).map(signature)
+  if (p['signatureFor'] && typeof p['signatureFor'] === 'object') {
+    patch.signatureFor = Object.fromEntries(Object.entries(p['signatureFor'] as Record<string, unknown>).slice(0, 500)
+      .map(([address, id]) => [text(address, 320).toLowerCase(), text(id, 64)]))
   }
   if (Array.isArray(p['templates'])) {
     patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))

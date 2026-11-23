@@ -78,6 +78,8 @@ export interface BatchSettings {
 /** Who you are when writing from an account. */
 export interface Identity {
   name: string
+  /** The plain signature of versions before there were several. It becomes one of `signatures` the
+   *  first time settings are read, and is empty from then on. */
   signature: string
   /** Other addresses this account can send from. */
   aliases: string[]
@@ -89,6 +91,16 @@ export interface Identity {
 
 export interface Template {
   name: string
+  text: string
+}
+
+/** A signature, written with the composer's own toolbar. A picture in it is a data: image in its
+ *  HTML, sent as a part of the message of its own, never fetched from anywhere. */
+export interface Signature {
+  id: string
+  name: string
+  html: string
+  /** The same, as text, for the text part. */
   text: string
 }
 
@@ -109,6 +121,11 @@ export interface Settings {
   hub: { url: string; user: string; connected: boolean }
   /** By account email. */
   identities: Record<string, Identity>
+  /** Every signature, in the order Settings shows them. */
+  signatures: Signature[]
+  /** Which signature goes under mail from each of your addresses, an account's own or an alias, by
+   *  address: a signature's id, or '' for none. An alias with nothing chosen takes its account's. */
+  signatureFor: Record<string, string>
   templates: Template[]
   /** Addresses or @domains whose new mail goes straight to Trash. */
   blocked: string[]
@@ -367,6 +384,13 @@ export type ListQuery =
   /** A sender's page: their threads on one account. */
   | { kind: 'from'; account: string; address: string }
 
+/** The signature that goes under mail from [from], an address of [account]'s: the one chosen for it,
+ *  or for an alias with none chosen, the account's. */
+export function signatureFor(settings: Pick<Settings, 'signatures' | 'signatureFor'>, account: string, from: string): Signature | null {
+  const chosen = settings.signatureFor[(from || account).toLowerCase()] ?? settings.signatureFor[account.toLowerCase()] ?? ''
+  return settings.signatures.find((s) => s.id === chosen) ?? null
+}
+
 /** Gmail's label for mail it thinks matters, which its importance markers show. It's added and taken
  *  off as any label is. */
 export const IMPORTANT = '\\Important'
@@ -418,6 +442,8 @@ export interface Draft {
   inReplyTo: string
   references: string
   files: DraftFile[]
+  /** The signature under it: a signature's id, '' for none, or, not chosen, its From address's. */
+  signature?: string
   /** An answer to a calendar invitation, sent as one. */
   ical?: string
   state: DraftState
@@ -426,7 +452,7 @@ export interface Draft {
   updated: number
 }
 
-export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote'>
+export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote' | 'signature'>
 
 export type DraftStart =
   | { kind: 'new'; account?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string }
@@ -445,7 +471,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'signatures' | 'signatureFor' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder' | 'faces'>> & {
   /** Only the times named. */
