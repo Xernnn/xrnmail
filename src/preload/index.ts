@@ -57,6 +57,8 @@ const api: MailApi = {
   drafts: () => call('drafts'),
   openThreadWindow: (account, thread, bins) => call('openThreadWindow', account, thread, bins),
   openDraftWindow: (id) => call('openDraftWindow', id),
+  letter: (token) => call('letter', token),
+  replyToLetter: (token, kind) => call('replyToLetter', token, kind),
   showDraftWindow: (id) => call('showDraftWindow', id),
   createFolder: (account, name) => call('createFolder', account, name),
   startDraft: (start) => call('startDraft', start),
@@ -72,6 +74,8 @@ const api: MailApi = {
   saveProfile: (patch) => call('saveProfile', patch),
   openInGmail: (email, thread) => call('openInGmail', email, thread),
   openLink: (url) => call('openLink', url),
+  mailLinks: () => call('mailLinks'),
+  useForMailLinks: () => call('useForMailLinks'),
   version: () => call('version'),
   onCommand: (listener) => {
     const relay = (_event: IpcRendererEvent, command: AppCommand): void => listener(command)

@@ -350,6 +350,27 @@ quits instead. Quitting properly runs `finishUp`: mail only waiting out Undo goe
 changes, within eight seconds. Mail scheduled for later stays scheduled; its time hasn't come, and
 sending early would be worse than sending late.
 
+### Notices
+
+Electron's Notification has no actions on Linux, so a notice for one message (`notifier.ts`) goes to
+the desktop's notification server through `notify-send` with Open, Archive and Mark read, after
+`gdbus` has asked the server whether it shows actions at all (asked again every ten minutes, since the
+server can be restarted or swapped). notify-send waits on the bus and prints the action chosen, and
+because it's the connection that sent the notice, it hears servers that tell only that connection
+(dunst, Plasma) as well as those that tell everyone (mako, Quickshell); a `gdbus monitor` beside a
+one-off `gdbus call` would miss the first kind. Archive and Mark read go through `act`, as the
+thread's buttons do, so they work with the window closed. A notice for several messages, a Summary's,
+and any desktop without notify-send, gdbus or actions keep Electron's plain notice, whose click opens
+the window. Both programs run without a shell, the words after `--`, and the body has `&`, `<` and `>`
+escaped, since a server may read it as markup. At most six notices wait on a button; the oldest stops
+waiting, and quitting stops them all.
+
+With Sound on, each notice plays `resources/new-mail.wav` through `pw-play`, or `paplay` where that
+fails, so it's heard with the window closed. It's two bell notes made from sine waves by
+`scripts/make-chime.mjs`, so no one else's recording is in the app, and it's unpacked from the archive
+with the icon so a player outside the app can read it. Only mail that's announced makes it: a muted
+sender's, an account with its notices off, and Other while only Focused is announced make none.
+
 ## The Assistant
 
 `assistant.ts` decides Focused or Other, and finds parcels, travel, bills and events. It runs as mail is
@@ -527,6 +548,14 @@ Writing and acting on mail gave strangers new things to aim at, so:
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft
   to read, never a message sent behind your back.
 - **`mailto:` links only fill in a draft.** Whatever they ask for, including a Bcc, is on show first.
+- **A mail file is a stranger's message with no server behind it.** `xrnmail some.eml` (or a file:
+  URL, as a launcher's `%U` gives) reads only a plain file, never a pipe or a device, of 64 MB at
+  most, parses it on the parser's thread and follows nothing in it (`letters.ts`). Its
+  Authentication-Results lines are words anyone could have written, so it's unverified, never
+  "from you", and no sender's pictures load by themselves. It's shown in a window of its own by a
+  token (`solo.ts` `file`), as `Letter.tsx`: the reader with nothing to archive, flag or move, behind
+  the same walls as mail. The page's calls for it (details, attachments, View original) use a number
+  below zero, so they can't be taken for a stored message's, and it's let go when the window closes.
 - **Blocking** matches the `From` address, which a sender writes, so it's a filter for nuisances and not
   a security wall. Mail it catches goes to Trash, where it can still be found.
 
@@ -664,6 +693,14 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
+- `Find.tsx`: the find bar over a thread. Electron's `findInPage` searches the whole window, the
+  list and sidebar beside the thread and the bar's own box with them, so the bar reads the thread's
+  words itself: the open messages under `.messages` and each message's frame (same-origin, so its
+  page can be read), a frame's words apart from the window's and a block's apart from the next.
+  Matching is `shared/find.ts`, case and marks folded one character at a time so a match maps back
+  to the text it came from. Matches are marked with the CSS Custom Highlight API in the page they're
+  in, which changes nothing in a message's page, and only what's drawn counts. It finds again when the
+  thread's page changes or a frame says it has drawn a new page (`xrn-shown`).
 - `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
   signature and the rest is held once for every page until the field is left.
 

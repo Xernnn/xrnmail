@@ -483,6 +483,15 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .row-snooze { position: fixed; z-index: 20; width: 0; height: 0; }
 .back { display: none; }
 .messages { flex: 1; display: flex; flex-direction: column; padding: 0 34px calc(28px + var(--details-room, 0px)); overflow-y: auto; }
+.find-bar { flex: none; display: flex; align-items: center; gap: 4px; height: 36px; margin: 0 22px 8px 30px; padding: 0 6px 0 12px; border-radius: 8px; background: var(--field); color: var(--muted); }
+.find-bar:focus-within { background: var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+.find-bar input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 14px; }
+.find-bar input::placeholder { color: var(--muted); }
+.find-bar input:focus-visible { outline: none; box-shadow: none; }
+.find-bar .icon:disabled { opacity: 0.35; }
+.find-count { flex: none; padding: 0 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+::highlight(xrn-find) { background: color-mix(in srgb, var(--star) 35%, transparent); }
+::highlight(xrn-find-now) { background: var(--star); color: #1c1f24; }
 .thread-head { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0 14px; }
 .thread-head.marked { padding-left: 18px; }
 .account-bar { position: absolute; left: 0; top: 6px; bottom: 14px; width: 6px; border-radius: 3px; }

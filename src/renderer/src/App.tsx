@@ -133,6 +133,8 @@ export function App(): ReactNode {
   const [settings, setSettings] = useState<Tab | null>(null)
   const [help, setHelp] = useState(false)
   const [panel, setPanel] = useState<Panel>(null)
+  /** How often the key for finding in the open thread has been pressed. */
+  const [findAsked, setFindAsked] = useState(0)
   const [bulkSnooze, setBulkSnooze] = useState(false)
   /** Snooze's times beside a row, for it or for the selection it's in. */
   const [rowSnooze, setRowSnooze] = useState<{ refs: ThreadRef[]; x: number; y: number; up: boolean } | null>(null)
@@ -872,6 +874,7 @@ export function App(): ReactNode {
       const trash = (): void => (bins ? forever(targets()) : void run(targets(), { kind: 'trash' }, 'Moved to Trash'))
       const commands: Record<KeyCommand, () => void> = {
         search: focusSearch,
+        find: () => { if (last) setFindAsked((n) => n + 1) },
         next: () => move(1),
         previous: () => move(-1),
         close: () => {
@@ -1063,7 +1066,7 @@ export function App(): ReactNode {
       find={SOLO ? undefined : (text) => {
         setSearch(text)
         focusSearch()
-      }} />
+      }} findAsked={findAsked} />
     </Boundary>
   )
   /** What's drawn over the page, in any window. */

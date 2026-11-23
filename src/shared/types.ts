@@ -116,6 +116,8 @@ export interface Settings {
   muted: string[]
   /** With the inbox split, only mail in Focused is announced. */
   notifyFocusedOnly: boolean
+  /** New mail's notice comes with a short chime. */
+  sound: boolean
   /** How long "Undo" stays possible after Send. */
   undoSeconds: number
   /** How long Undo is offered after archiving, deleting, moving and the rest, and how long the change
@@ -440,7 +442,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'sound' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder' | 'faces'>> & {
   /** Only the times named. */
@@ -549,6 +551,11 @@ export interface MailApi {
   openThreadWindow(account: string, thread: string, bins?: boolean): Promise<void>
   /** The same for a draft, in a composer of its own. */
   openDraftWindow(id: number): Promise<void>
+  /** The message of a file opened in a window of its own, named by its token, read-only. Its id is
+   *  below zero. Throws why when the file couldn't be read. */
+  letter(token: string): Promise<MessageView>
+  /** A reply to that message, or a forward, in a composer of its own. */
+  replyToLetter(token: string, kind: 'reply' | 'replyAll' | 'forward'): Promise<void>
   /** Makes a folder, or on Gmail a label, on the server there and then. A slash puts it inside another.
    *  Returns its path as the server has it. */
   createFolder(account: string, name: string): Promise<string>
@@ -577,6 +584,10 @@ export interface MailApi {
   openInGmail(email: string, thread: string): Promise<void>
   /** A link from a message or the app. Only web and mail addresses open. */
   openLink(url: string): Promise<void>
+  /** Whether mail links open here ('default'), elsewhere ('other'), or can't be set here ('none'). */
+  mailLinks(): Promise<'default' | 'other' | 'none'>
+  /** Makes mail links open here, and says the same as mailLinks after. */
+  useForMailLinks(): Promise<'default' | 'other' | 'none'>
   onChanged(listener: () => void): () => void
   /** A mail address was opened, from a message or the system, and here's the draft for it. */
   onCompose(listener: (draft: Draft) => void): () => void

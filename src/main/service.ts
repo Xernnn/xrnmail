@@ -71,6 +71,7 @@ const DEFAULT_SETTINGS: Settings = {
   blocked: [],
   muted: [],
   notifyFocusedOnly: false,
+  sound: false,
   undoSeconds: 10,
   undoActionSeconds: 5,
   defaultReply: 'reply',
@@ -1463,6 +1464,36 @@ export class MailService {
     }
   }
 
+  /** A reply to, or a forward of, a message opened from a file, made as one kept here would make it:
+   *  from the account it was sent to when that's yours, or the first. Nothing of it is kept, so a
+   *  forward takes its files from [files]. */
+  startDraftFromFile(message: MessageDetail, files: WholeAttachment[], kind: 'reply' | 'replyAll' | 'forward'): Draft {
+    const sentTo = [...message.to, ...message.cc].map((a) => this.ownerOf(a.address)).find(Boolean)
+    const account = sentTo ?? this.emails()[0]
+    if (!account) throw new Error('Add an account first.')
+    const base = {
+      account, from: '', to: '', cc: '', bcc: '', subject: '', html: '', text: '', quote: null, inReplyTo: '', references: '',
+      files: [], updated: this.deps.now()
+    }
+    if (kind === 'forward') {
+      const id = this.store.addDraft({ ...base, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward') })
+      const draft = this.draftOrThrow(id)
+      for (const found of files) draft.files.push(this.deps.files.fromBytes(id, found.name, found.type, found.content))
+      this.store.saveDraft(draft)
+      return this.draftOrThrow(id)
+    }
+    const own = this.ownAddresses(account)
+    return this.draftOrThrow(this.store.addDraft({
+      ...base,
+      from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
+      ...replyTargets(message, own, kind === 'replyAll'),
+      subject: replySubject(message.subject),
+      quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
+      inReplyTo: message.messageId,
+      references: `${message.references} ${message.messageId}`.trim()
+    }))
+  }
+
   /** Kept here at once, and in the account's Drafts once it has been left alone a moment. Saving
    *  what's there already changes nothing, so a composer closed untouched sends nothing up. */
   saveDraft(id: number, edit: DraftEdit): void {
@@ -2027,6 +2058,7 @@ export class MailService {
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,
       notifyFocusedOnly: patch.notifyFocusedOnly ?? settings.notifyFocusedOnly,
+      sound: patch.sound ?? settings.sound,
       undoSeconds: patch.undoSeconds === undefined ? settings.undoSeconds : clamp(patch.undoSeconds, 0, 30),
       undoActionSeconds: patch.undoActionSeconds === undefined ? settings.undoActionSeconds : clamp(patch.undoActionSeconds, 1, 30),
       defaultReply: patch.defaultReply ?? settings.defaultReply,

@@ -137,6 +137,16 @@ kept on the laptop.
   stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
+- **.eml files:** `xrnmail some.eml`, or Open With from a file manager, shows the message read-only in
+  a window of its own, cleaned and with its pictures blocked as mail is. Nobody received it here, so
+  it's always unverified, whatever lines it carries saying it was checked. Its files can be saved,
+  or opened as an attachment is, and Reply and Forward start from the account it was sent to, or the
+  first, once there's one.
+- **Find in message:** words in the open thread, in every message and in the HTML ones' own pages,
+  without case or marks as search has it, with "2/7" for which match of how many. A message folded
+  shut opens if it has them. It's Ctrl+G (Ctrl+Shift+F in the Gmail and Inbox sets), or Find in message
+  in the thread's ⋮ More; Enter or F3 goes to the next, Shift with either to the one before, and Esc
+  closes it.
 - **Faces:** a sender's photo, or their company's logo where their mail passed DMARC, and coloured
   initials otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or
   one you choose there. Settings, General, Show faces turns the lookups off. Who is asked about whom,
@@ -163,7 +173,10 @@ kept on the laptop.
   list or under it (each split dragged to the size you like, and kept) or one thing at a time, one to
   four lines of preview, and Settings you can search.
 - **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
-  in the inbox. With Focused and Other, mail in Other can arrive unannounced (Settings, Notifications).
+  in the inbox. A notice for one message has Archive and Mark read on it too, where the desktop's
+  notification server shows buttons, and they work with the window closed. Settings, Notifications,
+  Sound adds a soft two-note chime to each notice (off to start with). With Focused and Other,
+  mail in Other can arrive unannounced (Settings, Notifications).
   The tray shows what's unread, closing the window keeps it running there, and it can start at login
   (both in Settings, General). Spell check knows your language, plus English and Vietnamese.
 - **Light or dark**, or whatever the system says. In the dark, mail made for a white page is darkened
@@ -240,10 +253,13 @@ archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets that 
 (xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
 maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
 new key. A key another action has is offered to take over, and a change can go back to the set's own.
-Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set. Ctrl+F being Search in
+all of them, finding in a message is Ctrl+G, which Apple Mail and Outlook use for the next match, where
+the set's Ctrl+Shift+F is taken, and Ctrl+Shift+F in Gmail's and Inbox's, where it's free.
 
-To have mail links open here, set it as your mail app after installing:
-`xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.
+To have mail links open here, press Use for mail links in Settings, General after installing, which
+runs `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`; once they do, it says Default. A
+browser may keep its own choice for mail links (in Firefox and Zen: Settings, Applications, mailto).
 
 ## Live mail
 
@@ -471,7 +487,8 @@ npm run app:install            # build an AppImage and add it to the launcher
 
 `npm run app:install` (`scripts/install-linux-app.sh`) builds an AppImage into `dist/`, puts it at
 `~/Applications/xrnmail.AppImage`, and adds a launcher (`~/.local/share/applications/xrnmail.desktop`)
-that also takes `mailto:` links. Run it again to update: the new file is renamed over the old one, so
+that also takes `mailto:` links and `.eml` files, is found by searching for mail, and has New Message
+on its right-click menu. Run it again to update: the new file is renamed over the old one, so
 a running copy carries on. The launcher and Start at login run the AppImage with
 `--appimage-extract-and-run`, from an unpacked copy in `~/.cache/xrnmail`, not from a FUSE mount
 that takes the app down with it if the mount goes, and not from `/tmp`, which is memory on many
