@@ -96,7 +96,7 @@ export function Letter({ token }: { token: string }): ReactNode {
     <div className="app solo solo-file">
       <Reader messages={[message]} account={undefined} labels={[]} bins={false} panel={panel} setPanel={setPanel} own={own} settings={settings}
         unread={0} held={0} vip={null} many={false} file={{ replies }} findAsked={findAsked}
-        back={() => window.close()} act={() => undefined} snooze={() => undefined} reply={(kind) => reply(kind)}
+        back={() => window.close()} act={() => undefined} snooze={() => undefined} remind={() => undefined} unremind={() => undefined} reply={(kind) => reply(kind)}
         unsubscribe={() => undefined} rsvp={() => undefined} setFocus={() => undefined} trust={() => undefined}
         straight={() => undefined} forever={() => undefined} pin={() => undefined} summarize={() => undefined}
         block={(address) => ask(`Block ${address}?`, 'Block', () => window.mail.block(address), `Blocked ${address}`)}

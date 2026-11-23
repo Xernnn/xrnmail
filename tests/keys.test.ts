@@ -136,3 +136,19 @@ describe('keys of your own choosing', () => {
     expect(unbindable('Ctrl+Shift+E', 'E')).toBeNull()
   })
 })
+
+describe('Send & Archive', () => {
+  it('has no key in any set, as none of their apps has one, and can be given one held with Ctrl or Alt', () => {
+    for (const [set] of KEY_SETS) expect(keysOf(set, {}, 'sendArchive')).toEqual([])
+    expect(keyList('edison').some(([, what]) => what === 'Send & Archive')).toBe(false)
+    expect(unbindable('e', 'e', 'sendArchive')).toBe('Hold it with Ctrl or Alt.')
+    expect(unbindable('Shift+Enter', 'Enter', 'sendArchive')).toBe('Hold it with Ctrl or Alt.')
+    expect(unbindable('Ctrl+Shift+Enter', 'Enter', 'sendArchive')).toBeNull()
+    expect(unbindable('e', 'e', 'archive')).toBeNull()
+    const changes = rebound({}, 'sendArchive', 'Ctrl+Shift+Enter')
+    expect(keysFor('gmail', changes)['Ctrl+Shift+Enter']).toBe('sendArchive')
+    expect(keyList('gmail', changes)).toContainEqual(['Ctrl+Shift+Enter', 'Send & Archive'])
+    // A key that types, saved for it somehow, is let go of: in the composer it would send.
+    expect(cleanChanges({ sendArchive: 'e' })).toEqual({})
+  })
+})

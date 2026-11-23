@@ -79,6 +79,8 @@ export interface BatchSettings {
 /** Who you are when writing from an account. */
 export interface Identity {
   name: string
+  /** The plain signature of versions before there were several. It becomes one of `signatures` the
+   *  first time settings are read, and is empty from then on. */
   signature: string
   /** Other addresses this account can send from. */
   aliases: string[]
@@ -90,6 +92,18 @@ export interface Identity {
 
 export interface Template {
   name: string
+  text: string
+  /** The subject it gives a message that has none yet. */
+  subject?: string
+}
+
+/** A signature, written with the composer's own toolbar. A picture in it is a data: image in its
+ *  HTML, sent as a part of the message of its own, never fetched from anywhere. */
+export interface Signature {
+  id: string
+  name: string
+  html: string
+  /** The same, as text, for the text part. */
   text: string
 }
 
@@ -110,6 +124,11 @@ export interface Settings {
   hub: { url: string; user: string; connected: boolean }
   /** By account email. */
   identities: Record<string, Identity>
+  /** Every signature, in the order Settings shows them. */
+  signatures: Signature[]
+  /** Which signature goes under mail from each of your addresses, an account's own or an alias, by
+   *  address: a signature's id, or '' for none. An alias with nothing chosen takes its account's. */
+  signatureFor: Record<string, string>
   templates: Template[]
   /** Addresses or @domains whose new mail goes straight to Trash. */
   blocked: string[]
@@ -196,6 +215,13 @@ export interface Face {
   logo: boolean
 }
 
+/** A thread comes back to the inbox at [at] if nobody else has written in it by then. [fired] once
+ *  it has. */
+export interface Reminder {
+  at: number
+  fired: boolean
+}
+
 export interface ThreadRow {
   account: string
   thread: string
@@ -212,6 +238,8 @@ export interface ThreadRow {
   important: boolean
   /** Set while it's away, and for a while after it comes back. */
   snoozedUntil: number | null
+  /** When it comes back to the inbox if nobody else writes, and whether it has. */
+  remind?: Reminder | null
   facts: Facts | null
   /** Who wrote in it, oldest first, each once. */
   people: Address[]
@@ -325,6 +353,8 @@ export interface MessageView {
   replyTo: Address[]
   /** Its thread is kept under Pinned. */
   pinned: boolean
+  /** Its thread's reminder. */
+  remind?: Reminder | null
 }
 
 export interface LabelCount {
@@ -361,7 +391,7 @@ export interface SummaryOverview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'reminders' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
   /** [keep] is the open thread, which stays listed while it's read. */
   | { kind: 'unread'; account?: string; keep?: ThreadRef }
   | { kind: 'label'; account: string; label: string }
@@ -369,6 +399,13 @@ export type ListQuery =
   | { kind: 'assistant'; section: AssistantSection }
   /** A sender's page: their threads on one account. */
   | { kind: 'from'; account: string; address: string }
+
+/** The signature that goes under mail from [from], an address of [account]'s: the one chosen for it,
+ *  or for an alias with none chosen, the account's. */
+export function signatureFor(settings: Pick<Settings, 'signatures' | 'signatureFor'>, account: string, from: string): Signature | null {
+  const chosen = settings.signatureFor[(from || account).toLowerCase()] ?? settings.signatureFor[account.toLowerCase()] ?? ''
+  return settings.signatures.find((s) => s.id === chosen) ?? null
+}
 
 /** Gmail's label for mail it thinks matters, which its importance markers show. It's added and taken
  *  off as any label is. */
@@ -385,7 +422,12 @@ export interface DraftFile {
   name: string
   size: number
   type: string
+  /** A picture placed in the words, which name it by this Content-ID, rather than attached. */
+  cid?: string
 }
+
+/** The pictures that go in a message's words when pasted or dropped there. Anything else is attached. */
+export const INLINE_PICTURES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
 /** The message being answered or passed on. Its HTML comes from a stranger, so the composer
  *  sanitises it before saving or sending, and it's never placed in the app's own page. */
@@ -408,6 +450,8 @@ export interface Draft {
   to: string
   cc: string
   bcc: string
+  /** Where replies are to go, when not to the address it's from. */
+  replyTo?: string
   subject: string
   /** What the person wrote. */
   html: string
@@ -416,6 +460,14 @@ export interface Draft {
   inReplyTo: string
   references: string
   files: DraftFile[]
+  /** The signature under it: a signature's id, '' for none, or, not chosen, its From address's. */
+  signature?: string
+  /** The thread a reply or forward was started from. */
+  about?: ThreadRef
+  /** Once it has gone, it comes back to the inbox at this time if nobody else has written. */
+  remind?: number
+  /** Not kept: that thread is in the inbox now, so Send & Archive is offered. */
+  archivable?: boolean
   /** An answer to a calendar invitation, sent as one. */
   ical?: string
   state: DraftState
@@ -424,7 +476,7 @@ export interface Draft {
   updated: number
 }
 
-export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote'>
+export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'replyTo' | 'subject' | 'html' | 'text' | 'quote' | 'signature' | 'remind'>
 
 export type DraftStart =
   | { kind: 'new'; account?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string }
@@ -443,7 +495,7 @@ export const SENDER_LISTS: readonly SenderList[] = ['vip', 'summary', 'muted', '
 /** Only what's named changes. Each account named in `identities` has its identity replaced, and the
  *  others are left as they are. */
 export type ProfilePatch = Partial<Pick<Settings,
-  'identities' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'sound' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
+  'identities' | 'signatures' | 'signatureFor' | 'templates' | 'blocked' | 'muted' | 'notifyFocusedOnly' | 'sound' | 'undoSeconds' | 'undoActionSeconds' | 'defaultReply' | 'quoteReplies' | 'theme' | 'darkMail' | 'focused' | 'layout' | 'afterRemove' | 'previewLines' | 'attachmentCards' | 'sidebar' | 'sidebarIcons' | 'importanceMarks' | 'clock24' | 'keys' | 'keyChanges' |
   'quickOn' | 'quickActions' | 'swipes' | 'swipeLeft' | 'swipeLeftLong' | 'swipeRight' | 'swipeRightLong' |
   'background' | 'startAtLogin' | 'images' | 'imagesFrom' | 'readAfter' | 'threadOrder' | 'faces'>> & {
   /** Only the times named. */
@@ -517,6 +569,10 @@ export interface MailApi {
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
+  /** Brings a message you sent, and its thread, back to the inbox at [until] if nobody else has
+   *  written in it by then. */
+  remind(message: number, until: number): Promise<void>
+  unremind(targets: ThreadRef[]): Promise<void>
   /** Keeps threads under Pinned, or lets them go. It's kept on this laptop: mail servers have no such mark. */
   pin(targets: ThreadRef[], on: boolean): Promise<void>
   block(address: string): Promise<void>
@@ -584,10 +640,17 @@ export interface MailApi {
   undiscardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
-  addFile(id: number, name: string, type: string, bytes: ArrayBuffer): Promise<Draft>
+  /** With [inline], a picture for the words, which the draft names by its `cid`; one that isn't a
+   *  picture by its own bytes is attached. */
+  addFile(id: number, name: string, type: string, bytes: ArrayBuffer, inline?: boolean): Promise<Draft>
+  /** A picture in a draft's words, as a data: address for the composer to show. */
+  draftPicture(id: number, file: string): Promise<string>
   removeFile(id: number, file: string): Promise<Draft>
   /** With [at], waits until then; otherwise it waits out the undo time. Returns when it will leave. */
   send(id: number, at?: number): Promise<number>
+  /** Sends as `send` does, and archives the thread it answers or passes on, for as long as Undo of
+   *  the send lasts before the server hears: [undo] undoes the archiving. */
+  sendAndArchive(id: number): Promise<{ when: number; undo: number }>
   /** Calls a queued message back. */
   unsend(id: number): Promise<void>
   saveProfile(patch: ProfilePatch): Promise<void>

@@ -3,8 +3,10 @@ import {
   AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
 } from 'lucide-react'
 import {
-  QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type SummarySettings, type SwipeAction, type Template
+  INLINE_PICTURES, QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type Signature as SignatureKept, type SummarySettings,
+  type SwipeAction, type Template
 } from '@shared/types'
+import { asDataUrl, escapeAttribute, FormatBar, signatureMarkup, textOf } from './Composer'
 import { SettingsKeeper, type SettingsChange } from '@shared/keeper'
 import type { Question } from './Common'
 import { clock, problem } from './format'
@@ -49,7 +51,7 @@ const TAB_WORDS: Record<Tab, string> = {
   appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
   shortcuts: 'keys keyboard set edison gmail apple mail outlook inbox change press reset',
-  signatures: 'signature sign',
+  signatures: 'signature sign default alias picture image logo',
   templates: 'template ready text',
   summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
@@ -130,7 +132,7 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; change: Change }):
       event.stopPropagation()
       if (event.key === 'Escape') return setChoosing(null)
       const pressed = keyName(event)
-      const problem = unbindable(pressed, event.key)
+      const problem = unbindable(pressed, event.key, choosing.command)
       if (problem) return setChoosing({ command: choosing.command, problem })
       const taken = holder(set, changes, pressed, choosing.command)
       if (taken) return setChoosing({ command: choosing.command, key: pressed, taken })
@@ -586,18 +588,124 @@ function About(): ReactNode {
   )
 }
 
-function Signatures(props: { accounts: AccountView[]; ids: Identities }): ReactNode {
-  const { ids } = props
-  const many = props.accounts.length > 1
+/** The most a picture in a signature can be. It's kept with Settings, which are read often. */
+const SIGNATURE_PICTURE_BYTES = 512 * 1024
+const SAVE_SIGNATURE_MS = 700
+
+/** One signature, written with the composer's own toolbar, and saved a moment after each change. */
+function SignatureEditor(props: { signature: SignatureKept; save(signature: SignatureKept): void; remove(): void }): ReactNode {
+  const { signature } = props
+  const editor = useRef<HTMLDivElement>(null)
+  const [name, setName] = useState(signature.name)
+  const [error, setError] = useState('')
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latest = useRef(() => undefined as void)
+
+  useEffect(() => {
+    if (editor.current) editor.current.innerHTML = signatureMarkup(signature.html)
+  }, [signature.id])
+
+  const keep = (): void => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = null
+    props.save({ ...signature, name: name.trim() || signature.name, html: signatureMarkup(editor.current?.innerHTML ?? ''), text: textOf(editor.current) })
+  }
+  latest.current = keep
+  const soon = (): void => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => latest.current(), SAVE_SIGNATURE_MS)
+  }
+  // Settings closed meanwhile, what was written is kept.
+  useEffect(() => () => { if (timer.current) latest.current() }, [])
+
+  /** A picture goes in as data, kept with the signature; anything else as plain text. */
+  const insert = (files: File[], text: string): void => {
+    setError('')
+    const picture = files.find((file) => INLINE_PICTURES.includes(file.type))
+    if (!picture) {
+      if (text) document.execCommand('insertText', false, text)
+      return
+    }
+    if (picture.size > SIGNATURE_PICTURE_BYTES) return setError('512 KB at most')
+    void asDataUrl(picture).then((url) => {
+      editor.current?.focus()
+      document.execCommand('insertHTML', false, `<img src="${url}" alt="${escapeAttribute(picture.name)}" style="max-width:100%">`)
+      soon()
+    })
+  }
+
   return (
-    <section>
-      {props.accounts.map((a) => (
-        <label key={a.id}>
-          {many ? `Signature for ${a.email}` : 'Signature'}
-          <textarea rows={4} value={ids.who(a.email).signature} onChange={(e) => ids.edit(a.email, { signature: e.target.value })} onBlur={() => ids.flush(a.email)} />
-        </label>
-      ))}
-    </section>
+    <div className="signature-card">
+      <div className="line">
+        <input className="grow" aria-label="Signature name" value={name} onChange={(e) => { setName(e.target.value); soon() }} onBlur={keep} />
+        <button type="button" className="quiet danger" onClick={props.remove}>Remove</button>
+      </div>
+      <div ref={editor} className="editor signature-editor" role="textbox" aria-multiline="true" aria-label={name.trim() || signature.name} contentEditable
+        suppressContentEditableWarning onInput={soon} onBlur={keep}
+        onPaste={(e) => { e.preventDefault(); insert([...e.clipboardData.files], e.clipboardData.getData('text/plain')) }}
+        onDrop={(e) => {
+          e.preventDefault()
+          const at = document.caretPositionFromPoint(e.clientX, e.clientY)
+          if (at && editor.current?.contains(at.offsetNode)) {
+            editor.current.focus()
+            window.getSelection()?.setPosition(at.offsetNode, at.offset)
+          }
+          insert([...e.dataTransfer.files], e.dataTransfer.getData('text/plain'))
+        }} />
+      <FormatBar editor={editor} changed={soon} />
+      {error && <p className="error">{error}</p>}
+    </div>
+  )
+}
+
+/** Any number of signatures, and which one each of your addresses signs with. */
+function Signatures(props: { accounts: AccountView[]; settings: Settings; change: Change }): ReactNode {
+  const { accounts, settings, change } = props
+  const { signatures, signatureFor } = settings
+  const add = (): void => {
+    const made: SignatureKept = { id: crypto.randomUUID(), name: signatures.length > 0 ? `Signature ${signatures.length + 1}` : 'Signature', html: '', text: '' }
+    change((now) => ({
+      profile: {
+        signatures: [...now.signatures, made],
+        // The first one made signs every account that has none chosen.
+        ...(now.signatures.length === 0
+          ? { signatureFor: { ...Object.fromEntries(accounts.map((a) => [a.email.toLowerCase(), made.id])), ...now.signatureFor } }
+          : {})
+      }
+    }))
+  }
+  const choose = (address: string, id: string | null): void => change((now) => {
+    const { [address]: _was, ...rest } = now.signatureFor
+    return { profile: { signatureFor: id === null ? rest : { ...rest, [address]: id } } }
+  })
+  const named: [string, string][] = [['', 'None'], ...signatures.map((s): [string, string] => [s.id, s.name])]
+  return (
+    <>
+      <section>
+        {signatures.map((each) => (
+          <SignatureEditor key={each.id} signature={each}
+            save={(next) => change((now) => ({ profile: { signatures: now.signatures.map((s) => (s.id === next.id ? next : s)) } }))}
+            remove={() => change((now) => ({ profile: { signatures: now.signatures.filter((s) => s.id !== each.id) } }))} />
+        ))}
+        <button type="button" className="quiet" onClick={add}>Add signature</button>
+      </section>
+      {signatures.length > 0 && (
+        <section>
+          <h3>Defaults</h3>
+          {accounts.flatMap((a) => {
+            const own = a.email.toLowerCase()
+            const aliases = (settings.identities[a.email]?.aliases ?? []).map((alias) => alias.toLowerCase()).filter((alias) => alias !== own)
+            return [
+              <Choice key={own} label={a.email} value={signatureFor[own] ?? ''} options={named} set={(id) => choose(own, id)} />,
+              ...aliases.map((alias) => (
+                <Choice key={alias} label={alias} value={signatureFor[alias] ?? '*'} options={[['*', 'Same as account'], ...named]}
+                  set={(id) => choose(alias, id === '*' ? null : id)} />
+              ))
+            ]
+          })}
+        </section>
+      )}
+    </>
   )
 }
 
@@ -629,6 +737,7 @@ function Blocked(props: { blocked: string[]; senders: Senders }): ReactNode {
 function Templates(props: { templates: Template[]; save(edit: (templates: Template[]) => Template[]): void }): ReactNode {
   const { templates, save } = props
   const [name, setName] = useState('')
+  const [subject, setSubject] = useState('')
   const [text, setText] = useState('')
   return (
     <section>
@@ -639,12 +748,14 @@ function Templates(props: { templates: Template[]; save(edit: (templates: Templa
         </div>
       ))}
       <label>Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+      <label>Subject<input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>
       <label>Text<textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} /></label>
       <button className="quiet" disabled={!name.trim() || !text.trim()}
         onClick={() => {
-          const made = { name: name.trim(), text }
+          const made = { name: name.trim(), text, ...(subject.trim() ? { subject: subject.trim() } : {}) }
           save((now) => [...now.filter((t) => t.name !== made.name), made])
           setName('')
+          setSubject('')
           setText('')
         }}>
         Add template
@@ -713,7 +824,7 @@ function Pages(props: {
       {page === 'appearance' && <Appearance settings={settings} save={save} editMenu={props.editMenu} />}
       {page === 'actions' && <Actions settings={settings} save={save} change={change} />}
       {page === 'shortcuts' && <Shortcuts set={settings.keys} changes={settings.keyChanges[settings.keys] ?? {}} change={change} />}
-      {page === 'signatures' && <Signatures accounts={accounts} ids={ids} />}
+      {page === 'signatures' && <Signatures accounts={accounts} settings={settings} change={change} />}
       {page === 'templates' && <Templates templates={settings.templates} save={(edit) => change((now) => ({ profile: { templates: edit(now.templates) } }))} />}
       {page === 'summary' && <Summary summary={settings.summary} save={(summary) => change(() => ({ summary }))} ask={props.ask} />}
       {page === 'blocked' && <Blocked blocked={settings.blocked} senders={senders} />}

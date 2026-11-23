@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type M
 import { plainName } from '@shared/names'
 import { openRate, sortSenders, type SenderOrder } from '@shared/senders'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { Archive, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
+import { Archive, BellRing, Check, Clock, DollarSign, Flag, ListChecks, Mail, MailOpen, Newspaper, OctagonAlert, Paperclip, Pin, Plane, Ticket, Trash2, Truck, Undo2, type LucideIcon } from 'lucide-react'
 import type { AccountView, Draft, Facts, MailAction, Overview, QuickAction, Subscription, SwipeAction, ThreadRow } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { wantFaces } from './pictures'
@@ -59,6 +59,8 @@ export function Row(props: {
   assistant: boolean
   /** In Snoozed, where the time is when it comes back. */
   snoozed?: boolean
+  /** In Reminders, where the time is when it comes back if nobody has written. */
+  reminders?: boolean
   on: boolean
   picked: boolean
   swipe: Swipes
@@ -154,6 +156,8 @@ export function Row(props: {
             {!head && row.count > 1 && <span className="count">({row.count})</span>}
             {props.snoozed && row.snoozedUntil !== null
               ? <time className="back" dateTime={new Date(row.snoozedUntil).toISOString()}><Clock size={11} aria-hidden="true" />{comesBack(row.snoozedUntil)}</time>
+              : props.reminders && row.remind
+              ? <time className="back" dateTime={new Date(row.remind.at).toISOString()}><BellRing size={11} aria-hidden="true" />{comesBack(row.remind.at)}</time>
               : <time dateTime={new Date(row.date).toISOString()}>{head?.side || shortTime(row.date)}</time>}
           </span>
           <span className="thread-mid">
@@ -161,6 +165,12 @@ export function Row(props: {
             {props.importance && row.important && <ImportantMark className="mark important" label="Important" />}
             {row.starred && <Flag className="mark flag" size={13} aria-label="Flagged" />}
             {row.pinned && <Pin className="mark pin" size={13} aria-label="Pinned" />}
+            {row.remind?.fired && <BellRing className="mark reminded" size={13} aria-label="No reply" />}
+            {row.remind && !row.remind.fired && !props.reminders && (
+              <time className="mark remind" dateTime={new Date(row.remind.at).toISOString()} title={longTime(row.remind.at)}>
+                <BellRing size={12} aria-hidden="true" />{comesBack(row.remind.at)}
+              </time>
+            )}
             {row.attachment && <Paperclip className="mark" size={13} aria-label={files} />}
           </span>
           <span className="snippet">{row.facts ? factLine(row.facts) : row.snippet || ' '}</span>

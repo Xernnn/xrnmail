@@ -4,7 +4,7 @@ import { arranged, arrangedLabels, cleanLabels, cleanSidebar, movedLabel, moved,
 describe('the sidebar\'s own order', () => {
   it('starts as Edison has it, with everything shown', () => {
     const start = cleanSidebar(undefined)
-    expect(arranged(SIDEBAR_FOLDERS, start)).toEqual(['today', 'unread', 'starred', 'pinned', 'summary', 'snoozed', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'recent'])
+    expect(arranged(SIDEBAR_FOLDERS, start)).toEqual(['today', 'unread', 'starred', 'pinned', 'summary', 'snoozed', 'reminders', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'recent'])
     expect(arranged(SIDEBAR_ASSISTANT, start)).toEqual(['subscriptions', 'travel', 'packages', 'money', 'events'])
     expect(start.hidden).toEqual([])
   })
@@ -20,7 +20,8 @@ describe('the sidebar\'s own order', () => {
   it('puts an entry a saved choice has never heard of after the one it follows, and shows it', () => {
     // As saved before Pinned existed, with Flagged moved to the end.
     const old = { order: ['today', 'unread', 'snoozed', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'starred'], hidden: ['today'] }
-    expect(arranged(SIDEBAR_FOLDERS, cleanSidebar(old))).toEqual(['today', 'unread', 'snoozed', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'recent', 'starred', 'pinned', 'summary'])
+    // Reminders, newer still, goes after Snoozed.
+    expect(arranged(SIDEBAR_FOLDERS, cleanSidebar(old))).toEqual(['today', 'unread', 'snoozed', 'reminders', 'attachments', 'drafts', 'spam', 'trash', 'archive', 'sent', 'recent', 'starred', 'pinned', 'summary'])
     expect(cleanSidebar(old).hidden).toEqual(['today'])
     expect(arranged(SIDEBAR_FOLDERS, cleanSidebar({ order: ['unread'] })).slice(0, 2)).toEqual(['today', 'unread'])
   })

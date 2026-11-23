@@ -7,6 +7,8 @@ export type KeyCommand =
   | 'compose' | 'search' | 'next' | 'previous' | 'close' | 'reply' | 'replyAll' | 'forward' | 'archive' | 'trash' | 'removeFromView'
   | 'flag' | 'pin' | 'labels' | 'read' | 'unread' | 'toggleRead' | 'spam' | 'snooze' | 'select' | 'selectAll' | 'undo' | 'sync' | 'help'
   | 'find'
+  /** In the composer, so only a key held with Ctrl or Alt: none of the sets' own apps has one. */
+  | 'sendArchive'
 
 /** Every command, in the order Settings and the list of keys show them, with what it does in words. */
 export const COMMANDS: [KeyCommand, string][] = [
@@ -14,7 +16,8 @@ export const COMMANDS: [KeyCommand, string][] = [
   ['reply', 'Reply'], ['replyAll', 'Reply all'], ['forward', 'Forward'], ['archive', 'Archive'], ['removeFromView', 'Remove from view'],
   ['trash', 'Delete'], ['spam', 'Report spam'], ['flag', 'Flag'], ['pin', 'Pin'], ['labels', 'Labels or Move to'],
   ['read', 'Mark read'], ['unread', 'Mark unread'], ['toggleRead', 'Mark read or unread'], ['snooze', 'Snooze'],
-  ['select', 'Select'], ['selectAll', 'Select all'], ['undo', 'Undo'], ['sync', 'Check for mail'], ['help', 'These keys']
+  ['select', 'Select'], ['selectAll', 'Select all'], ['undo', 'Undo'], ['sync', 'Check for mail'], ['help', 'These keys'],
+  ['sendArchive', 'Send & Archive']
 ]
 
 const isCommand = (value: unknown): value is KeyCommand => COMMANDS.some(([command]) => command === value)
@@ -43,10 +46,15 @@ export const RESERVED: Record<string, string> = {
   F3: 'finding in a message', 'Shift+F3': 'finding in a message'
 }
 
-/** Why a press can't be a key of its own, if it can't: half a press, or the menu's or a page's own. */
-export function unbindable(name: string, key: string): string | null {
+/** Commands pressed while writing, whose key mustn't be one that types. */
+export const WRITING: readonly KeyCommand[] = ['sendArchive']
+
+/** Why a press can't be a key of its own, if it can't: half a press, or the menu's or a page's own,
+ *  or for a command pressed while writing, a key that types. */
+export function unbindable(name: string, key: string, command?: KeyCommand): string | null {
   if (MODIFIERS.has(key)) return 'Hold it with another key.'
   if (name in RESERVED) return `${spell(name)} is for ${RESERVED[name]}.`
+  if (command && WRITING.includes(command) && !/^(Ctrl|Alt)\+/.test(name)) return 'Hold it with Ctrl or Alt.'
   return name.length > 40 ? 'That press has no name.' : null
 }
 
@@ -157,7 +165,7 @@ export function cleanChanges(value: unknown): KeyChanges {
   const entries = value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : []
   for (const [command, key] of entries.reverse()) {
     if (!isCommand(command) || command in clean || typeof key !== 'string' || key.length > 40) continue
-    if (key && (key in RESERVED || used.has(key))) continue
+    if (key && (key in RESERVED || used.has(key) || (WRITING.includes(command) && !/^(Ctrl|Alt)\+/.test(key)))) continue
     used.add(key)
     clean[command] = key
   }

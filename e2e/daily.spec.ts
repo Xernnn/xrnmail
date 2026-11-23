@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileS
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
-import { jar, pdf } from '../tests/files'
-import { launch, ME, signIn, type Running } from './app'
+import { jar, pdf, png } from '../tests/files'
+import { later, launch, ME, signIn, type Running } from './app'
 
 const LONG = { timeout: 15_000 }
 const earlier = (hours: number): Date => new Date(Date.now() - hours * 3_600_000)
@@ -85,14 +85,15 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   await expect(box.getByLabel('From')).toBeDisabled() // one address to send from, shown all the same
   await expect(box.getByLabel('From')).toHaveValue(JSON.stringify([ME, ME]))
   await box.getByRole('button', { name: 'Cc Bcc' }).click()
-  expect(await fields()).toEqual(['To', 'Cc', 'Bcc', 'From', 'Subject'])
+  expect(await fields()).toEqual(['To', 'Cc', 'Bcc', 'Reply-To', 'From', 'Subject'])
   const tools = await box.getByRole('toolbar', { name: 'Formatting' }).getByRole('button').evaluateAll((all) => all.map((b) => b.getAttribute('aria-label')))
   expect(tools).toEqual(['Bold', 'Italic', 'Underline', 'Strikethrough', 'Clear formatting', 'Add link', 'Quote', 'Numbered list', 'List'])
   const send = box.getByRole('button', { name: 'Send', exact: true })
   await expect(send).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)') // words and a paper plane, not a filled button
   const [sendBox, barBox] = [await send.boundingBox(), await box.getByRole('toolbar', { name: 'Formatting' }).boundingBox()]
   expect(sendBox?.y ?? 0).toBeGreaterThan((barBox?.y ?? 0) + (barBox?.height ?? 0) - 1)
-  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('To', { exact: true }).fill('ada@example.com')
+  await box.getByLabel('Reply-To').fill('team@example.org')
   await box.getByLabel('Subject').fill('Formatted')
   await box.getByLabel('Message').click()
   await page.keyboard.type('struck')
@@ -101,6 +102,114 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   await send.click()
   await expect.poll(() => smtp.sent.length, LONG).toBe(1)
   expect(smtp.sent[0]?.raw).toMatch(/<(s|strike)>struck<\/(s|strike)>/)
+  expect(smtp.sent[0]?.raw).toContain('Reply-To: team@example.org')
+})
+
+test('a template brings its words, and its subject to a message that has none yet', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Templates' }).click()
+  await page.getByLabel('Name').fill('Thanks')
+  await page.getByLabel('Subject').fill('Thank you')
+  await page.getByLabel('Text').fill('Thanks so much!')
+  await page.getByRole('button', { name: 'Add template' }).click()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByRole('button', { name: 'Templates' }).click()
+  await page.getByRole('button', { name: 'Thanks', exact: true }).click()
+  await expect(box.getByLabel('Subject')).toHaveValue('Thank you')
+  await expect(box.getByLabel('Message')).toHaveText('Thanks so much!')
+  await box.getByLabel('Subject').fill('Already one')
+  await box.getByRole('button', { name: 'Templates' }).click()
+  await page.getByRole('button', { name: 'Thanks', exact: true }).click()
+  await expect(box.getByLabel('Subject')).toHaveValue('Already one')
+})
+
+test('Send & Archive: the thread leaves the inbox as the reply goes, and Undo brings both back', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Lunch plans', from: 'Ada <ada@example.com>' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ keyChanges: { edison: { sendArchive: 'Ctrl+Shift+E' } } }))
+  const threads = page.locator('.threads')
+  await threads.getByText('Lunch plans').click()
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply', exact: true }).click()
+  let box = composer(page)
+  await box.getByLabel('Message').fill('Yes please')
+  await expect(box.getByRole('button', { name: 'Send & Archive' })).toHaveAttribute('title', 'Send & Archive (Ctrl+Shift+E)')
+  await box.getByRole('button', { name: 'Send & Archive' }).click()
+  await expect(box).toHaveCount(0)
+  await expect(threads.getByText('Lunch plans')).toHaveCount(0)
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  box = composer(page)
+  await expect(box.getByLabel('Message')).toHaveText('Yes please')
+  await expect(threads.getByText('Lunch plans')).toBeVisible()
+  await box.getByLabel('Message').click()
+  await page.keyboard.press('Control+Shift+E')
+  await expect(box).toHaveCount(0)
+  await expect(threads.getByText('Lunch plans')).toHaveCount(0)
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Yes please')
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(threads.getByText('Lunch plans')).toBeVisible()
+  // A new message answers no thread, so there's nothing to archive.
+  await page.keyboard.press('c')
+  await expect(composer(page).getByRole('button', { name: 'Send & Archive' })).toHaveCount(0)
+})
+
+test('remind if no reply: a sent thread waits under Reminders, and comes back to the inbox unread and marked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Any news?', from: `Me <${ME}>`, to: 'ada@example.com' }), { arrived: earlier(5), labels: ['\\Sent'], flags: ['\\Seen'] })
+  await signIn(run)
+  const threads = page.locator('.threads')
+  await page.getByRole('button', { name: 'Sent', exact: true }).click()
+  await threads.getByText('Any news?').click()
+  await page.getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('button', { name: 'Remind if no reply' }).click()
+  await page.getByRole('button', { name: /^Tomorrow/ }).click()
+  await expect(page.getByRole('status')).toContainText('Reminder')
+  await expect(page.locator('.thread-head .remind-tag')).toBeVisible()
+  await page.getByRole('button', { name: 'Reminders', exact: true }).click()
+  await expect(threads.locator('.thread')).toHaveCount(1)
+  await expect(threads.locator('time.back')).toBeVisible()
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+  await expect(threads.getByText('Any news?')).toHaveCount(0)
+  await later(run, 2 * 86_400_000)
+  await expect(threads.getByText('Any news?')).toBeVisible(LONG)
+  const row = threads.locator('.thread', { hasText: 'Any news?' })
+  await expect(row).toHaveClass(/unread/)
+  await expect(row.getByLabel('No reply')).toBeVisible()
+  await row.getByText('Any news?').click()
+  await expect(row).not.toHaveClass(/unread/)
+  await expect(page.locator('.thread-head .remind-tag')).toContainText('No reply')
+  await page.getByRole('button', { name: 'Cancel reminder' }).click()
+  await expect(page.locator('.thread-head .remind-tag')).toHaveCount(0)
+  await expect(threads.getByText('Any news?')).toHaveCount(0)
+})
+
+test('remind if no reply, chosen as a message is written, is kept with the draft', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.keyboard.press('c')
+  let box = composer(page)
+  await box.getByLabel('Subject').fill('Quote please')
+  const bell = box.getByRole('button', { name: 'Remind if no reply' })
+  await bell.click()
+  await page.getByRole('button', { name: /^Next week/ }).click()
+  await expect(bell).toHaveClass(/\bon\b/)
+  await box.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Quote please').click()
+  box = composer(page)
+  await expect(box.getByRole('button', { name: 'Remind if no reply' })).toHaveClass(/\bon\b/)
+  await box.getByRole('button', { name: 'Remind if no reply' }).click()
+  await page.getByRole('button', { name: 'No reminder' }).click()
+  await expect(box.getByRole('button', { name: 'Remind if no reply' })).not.toHaveClass(/\bon\b/)
 })
 
 test('undoing a send calls it back with everything intact', async () => {
@@ -682,7 +791,7 @@ test('the window: a title and search over list and reader, and the sidebar in it
     (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
   expect(await names(0)).toEqual(['Inbox'])
   expect(await names(1)).toEqual([ME, 'All Mail'])
-  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: `Folders of ${ME}` }).click()
   await expect(side.getByRole('button', { name: 'All Mail' })).toHaveCount(0)
@@ -2090,19 +2199,19 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('menuitem', { name: 'Mark all as read' })).toBeVisible() // a place keeps its own entry
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await expect(side.getByRole('button', { name: 'Compose' })).toHaveCount(0)
-  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   await expect(folders.getByRole('button', { name: 'Move Today up' })).toBeDisabled()
   await expect(folders.getByRole('button', { name: 'Move Recently Seen down' })).toBeDisabled()
   await folders.getByLabel('Show Snoozed').uncheck()
   await folders.getByRole('button', { name: 'Move Pinned up' }).click()
   await folders.getByRole('button', { name: 'Move Today down' }).click()
   await folders.getByRole('listitem').filter({ hasText: 'Sent' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Unread' }))
-  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await assistant.getByLabel('Show Events').uncheck()
   await assistant.getByRole('listitem').filter({ hasText: 'Packages' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Trash' })) // not into the other list
   await expect(assistant.getByRole('listitem')).toHaveText(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
   await side.getByRole('button', { name: 'Pinned', exact: true }).click() // and they still go where they went
   await expect(page.locator('.view-title')).toHaveText('Pinned')
@@ -2114,13 +2223,13 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(folders.getByLabel('Show Snoozed')).not.toBeChecked()
   await folders.getByLabel('Show Unread').uncheck()
   await side.getByRole('button', { name: 'Cancel' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await side.getByRole('button', { name: 'Drafts', exact: true }).click({ button: 'right' })
   await expect(page.getByRole('menuitem')).toHaveText(['Edit Menu'])
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await folders.getByLabel('Show Unread').uncheck()
   await page.keyboard.press('Escape')
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
 
   // Settings leads to the same place, and what was hidden comes back where it was put.
   await page.getByRole('button', { name: 'Settings' }).click()
@@ -2129,13 +2238,13 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
   await folders.getByLabel('Show Snoozed').check()
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   const saved = await page.evaluate(async () => (await window.mail.settings()).sidebar)
   expect(saved.hidden).toEqual(['events'])
   expect(saved.order.slice(0, 5)).toEqual(['sent', 'unread', 'today', 'pinned', 'starred'])
   await page.reload()
   await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
 })
 
@@ -2438,6 +2547,71 @@ test('what is dropped into the message comes in as plain text', async () => {
   await expect(editor).toHaveText('Bold words')
 })
 
+test('a picture pasted or dropped goes into the words, stays there in Drafts, and is sent as a part the words name', async () => {
+  run = await launch()
+  const { page, app, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  let box = composer(page)
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Subject').fill('Pictures')
+  const editor = box.getByLabel('Message')
+  await editor.click()
+  await page.keyboard.type('Look ')
+  await page.evaluate((picture) => {
+    const data = new DataTransfer()
+    data.items.add(new File([Uint8Array.from(atob(picture), (c) => c.charCodeAt(0))], 'shot.png', { type: 'image/png' }))
+    document.querySelector('.composer .editor')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, png().toString('base64'))
+  await expect(editor.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/)
+  // Dropped on the words, it goes in them too; only what isn't a picture is attached.
+  const place = await editor.boundingBox()
+  const cdp = await app.context().newCDPSession(page)
+  const [dropped, notes] = [join(run.savedTo, '..', 'dropped.png'), join(run.savedTo, '..', 'notes.txt')]
+  writeFileSync(dropped, png([200, 40, 40]))
+  writeFileSync(notes, 'notes')
+  for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+    await cdp.send('Input.dispatchDragEvent', { type, x: (place?.x ?? 0) + 20, y: (place?.y ?? 0) + 8, data: { items: [], files: [dropped, notes], dragOperationsMask: 1 } })
+  }
+  await expect(editor.locator('img')).toHaveCount(2)
+  await expect(box.locator('.file-name')).toHaveText(['notes.txt'])
+  await box.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Pictures').click()
+  box = composer(page)
+  await expect(box.getByLabel('Message').locator('img').first()).toHaveAttribute('src', /^data:image\/png;base64,/)
+  await expect(box.getByLabel('Message').locator('img')).toHaveCount(2)
+  await box.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  const raw = (smtp.sent[0]?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=') // as quoted-printable reads
+  expect(raw).toContain('multipart/related')
+  const cids = [...raw.matchAll(/Content-ID: <([^>]+)>/g)].map((m) => m[1])
+  expect(cids).toHaveLength(2)
+  for (const cid of cids) expect(raw).toContain(`<img src="cid:${cid}"`)
+  expect(raw).toContain('style="max-width:100%"') // as wide as the page it's read on, at most
+  expect(raw).toContain('filename=notes.txt')
+  expect(raw).not.toContain('data:image')
+})
+
+// The editor is in the app's own page: whatever a draft says, nothing in it is fetched from anywhere.
+test('the composer shows only a draft\'s own pictures, never one from elsewhere', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.evaluate(async () => {
+    const draft = await window.mail.startDraft({ kind: 'new', to: 'ada@example.com', subject: 'Odd draft' })
+    await window.mail.saveDraft(draft.id, {
+      account: draft.account, from: '', to: draft.to, cc: '', bcc: '', subject: draft.subject, quote: null, text: 'Hi',
+      html: 'Hi<img src="https://pictures.example/open.gif"><img src="cid:not-mine@example.com">'
+    })
+  })
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Odd draft').click()
+  await expect(composer(page).getByLabel('Message')).toHaveText('Hi')
+  await expect(composer(page).getByLabel('Message').locator('img')).toHaveCount(0)
+})
+
 test('unsubscribing with one click opens nothing', async () => {
   run = await launch()
   const { page, gmail } = run
@@ -2539,10 +2713,11 @@ test('settings keep who you are, and it signs what you send', async () => {
   await page.getByRole('button', { name: 'Accounts' }).click()
   await page.getByLabel('Your name').fill('Sơn Nguyễn')
   await page.getByRole('button', { name: 'Signatures' }).click() // straight on, while the name is still being saved
-  await page.getByLabel('Signature').fill('Sent from xrnmail')
+  await page.getByRole('button', { name: 'Add signature' }).click()
+  await page.getByRole('textbox', { name: 'Signature', exact: true }).click()
+  await page.keyboard.type('Sent from xrnmail')
   await page.getByRole('button', { name: 'Done' }).click()
-  await expect.poll(() => page.evaluate((me) => window.mail.settings().then((s) => s.identities[me]), ME))
-    .toMatchObject({ name: 'Sơn Nguyễn', signature: 'Sent from xrnmail' })
+  await expect.poll(() => page.evaluate((me) => window.mail.settings().then((s) => s.identities[me]?.name), ME)).toBe('Sơn Nguyễn')
   await page.keyboard.press('c')
   const box = composer(page)
   await expect(box.getByText('Sent from xrnmail')).toBeVisible()
@@ -2552,6 +2727,62 @@ test('settings keep who you are, and it signs what you send', async () => {
   await expect.poll(() => smtp.sent.length, LONG).toBe(1)
   expect(smtp.sent[0]?.raw).toContain('Sent from xrnmail')
   expect(smtp.sent[0]?.from).toBe(ME)
+})
+
+// A signature just added, with nothing written in it yet, put a lone "--" under every message.
+test('a signature with nothing in it shows nothing under the message', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.evaluate((me) => window.mail.saveProfile({ signatures: [{ id: 'blank', name: 'Signature', html: '', text: '' }], signatureFor: { [me]: 'blank' } }), ME)
+  await page.keyboard.press('c')
+  await expect(composer(page).getByRole('button', { name: 'Signature', exact: true })).toBeVisible()
+  await expect(composer(page).locator('.signature')).toHaveCount(0)
+})
+
+test('several signatures, written with the toolbar: each address has its own, and the composer can pick another', async () => {
+  run = await launch()
+  const { page, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  await page.evaluate((me) => window.mail.saveProfile({ identities: { [me]: { name: 'Mai', signature: '', aliases: ['shop@example.com'], color: '', notify: true } } }), ME)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Signatures' }).click()
+  await page.getByRole('button', { name: 'Add signature' }).click()
+  const first = page.getByRole('textbox', { name: 'Signature', exact: true })
+  await first.click()
+  await page.keyboard.type('Mai ')
+  await page.locator('.signature-card').first().getByRole('button', { name: 'Bold' }).click()
+  await page.keyboard.type('Nguyen')
+  await page.getByRole('button', { name: 'Add signature' }).click()
+  await page.getByLabel('Signature name').nth(1).fill('Shop')
+  await page.getByRole('textbox', { name: 'Shop' }).click()
+  await page.keyboard.type('The Shop team')
+  await page.getByLabel('shop@example.com').selectOption({ label: 'Shop' })
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect.poll(() => page.evaluate(() => window.mail.settings().then((s) => s.signatures.map((x) => [x.name, x.text]))))
+    .toEqual([['Signature', 'Mai Nguyen'], ['Shop', 'The Shop team']])
+
+  await page.keyboard.press('c')
+  const box = composer(page)
+  const signature = box.locator('.signature')
+  await expect(signature).toContainText('Mai Nguyen')
+  await box.getByLabel('From').selectOption(JSON.stringify([ME, 'shop@example.com']))
+  await expect(signature).toContainText('The Shop team')
+  await box.getByRole('button', { name: 'Signature', exact: true }).click()
+  await page.getByRole('button', { name: 'None' }).click()
+  await expect(signature).toHaveCount(0)
+  await box.getByRole('button', { name: 'Signature', exact: true }).click()
+  await page.getByRole('button', { name: 'Signature', exact: true }).last().click()
+  await expect(signature).toContainText('Mai Nguyen')
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Message').fill('Hello')
+  await page.keyboard.press('Control+Enter')
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  const raw = (smtp.sent[0]?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=')
+  expect(raw).toMatch(/Mai <(b|strong)>Nguyen<\/(b|strong)>/)
+  expect(raw).not.toContain('The Shop team')
+  expect(smtp.sent[0]?.from).toBe('shop@example.com')
 })
 
 test('a thread can be right-clicked, dragged to the sidebar and swiped away', async () => {

@@ -7,7 +7,7 @@ import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { basename, join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
+  Rsvp, SenderList, Server, Signature, SummarySettings, SwipeAction, Template, ThreadRef
 } from '@shared/types'
 import { cleanSidebar } from '@shared/sidebar'
 import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
@@ -263,7 +263,7 @@ const number = (value: unknown): number => {
 /** How much of a message's source View original shows; Save as .eml keeps all of it. */
 const ORIGINAL_SHOWN = 2 * 1024 * 1024
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'reminders', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -367,10 +367,14 @@ function draftEdit(value: unknown): DraftEdit {
     to: text(d['to'], 8000),
     cc: text(d['cc'], 8000),
     bcc: text(d['bcc'], 8000),
+    replyTo: text(d['replyTo'] ?? '', 8000),
     subject: text(d['subject'], 2000),
     html: text(d['html'], MAX_BODY),
     text: text(d['text'], MAX_BODY),
-    quote: quote(d['quote'])
+    quote: quote(d['quote']),
+    // Not given, it's its From address's.
+    signature: d['signature'] === undefined || d['signature'] === null ? undefined : text(d['signature'], 64),
+    remind: d['remind'] === undefined || d['remind'] === null ? undefined : number(d['remind'])
   }
 }
 
@@ -414,6 +418,17 @@ function identity(who: Partial<Identity> | undefined): Identity {
   }
 }
 
+/** A signature's words, with any picture in them, which is kept with it. */
+const MAX_SIGNATURE = 2 * 1024 * 1024
+const SIGNATURE_ID = /^[\w-]{1,64}$/
+
+function signature(value: unknown): Signature {
+  const s = (value ?? {}) as Record<string, unknown>
+  const id = text(s['id'], 64)
+  if (!SIGNATURE_ID.test(id)) throw new Error('Bad request')
+  return { id, name: text(s['name'], 200), html: text(s['html'], MAX_SIGNATURE), text: text(s['text'], 20_000) }
+}
+
 function profile(value: unknown): ProfilePatch {
   const p = (value ?? {}) as Record<string, unknown>
   const patch: ProfilePatch = {}
@@ -424,8 +439,15 @@ function profile(value: unknown): ProfilePatch {
       ])
     )
   }
+  if (Array.isArray(p['signatures'])) patch.signatures = p['signatures'].slice(0, 50).map(signature)
+  if (p['signatureFor'] && typeof p['signatureFor'] === 'object') {
+    patch.signatureFor = Object.fromEntries(Object.entries(p['signatureFor'] as Record<string, unknown>).slice(0, 500)
+      .map(([address, id]) => [text(address, 320).toLowerCase(), text(id, 64)]))
+  }
   if (Array.isArray(p['templates'])) {
-    patch.templates = (p['templates'] as Template[]).map((t) => ({ name: text(t?.name, 200), text: text(t?.text, 20_000) }))
+    patch.templates = (p['templates'] as Template[]).map((t) => ({
+      name: text(t?.name, 200), text: text(t?.text, 20_000), ...(t?.subject ? { subject: text(t.subject, 2000) } : {})
+    }))
   }
   if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
   if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
@@ -549,6 +571,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
+  handle('remind', (message: unknown, until: unknown) => service.remind(number(message), number(until)))
+  handle('unremind', (refs: unknown) => service.unremind(targets(refs)))
   handle('pin', async (refs: unknown, on: unknown) => {
     const chosen = targets(refs)
     await service.reach(chosen)
@@ -690,14 +714,16 @@ function register(service: MailService, avatars: Avatars): void {
     const choice = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
     return service.addFilesFromDisk(number(id), choice.canceled ? [] : choice.filePaths)
   })
-  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown) => {
+  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown, inline: unknown) => {
     const data = bytes instanceof ArrayBuffer ? Buffer.from(bytes) : ArrayBuffer.isView(bytes) ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null
     if (!data) throw new Error('Bad request')
     if (data.length > MAX_DROP) throw new Error('Mail services take about 18 MB of attachments at most.')
-    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data)
+    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data, inline === true)
   })
+  handle('draftPicture', (id: unknown, file: unknown) => service.draftPicture(number(id), text(file, 64)))
   handle('removeFile', (id: unknown, file: unknown) => service.removeFile(number(id), text(file, 64)))
   handle('send', (id: unknown, at: unknown) => service.send(number(id), at === undefined ? undefined : number(at)))
+  handle('sendAndArchive', (id: unknown) => service.sendAndArchive(number(id)))
   handle('unsend', (id: unknown) => service.unsend(number(id)))
   handle('saveProfile', (patch: unknown) => {
     const clean = profile(patch)

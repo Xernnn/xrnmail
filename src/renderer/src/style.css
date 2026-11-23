@@ -381,6 +381,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .mark { flex: none; color: var(--muted); }
 .mark.flag { color: var(--star); fill: currentColor; }
 .mark.pin { color: var(--accent); fill: currentColor; }
+.mark.remind { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
+.mark.reminded { color: var(--accent); }
 .mark.important { opacity: 0.8; }
 .snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--preview-lines, 2); overflow: hidden; overflow-wrap: anywhere; color: var(--muted); font-size: 14px; line-height: 20px; }
 .cards { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 6px; overflow: hidden; }
@@ -632,6 +634,12 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .chips input { width: 120px; padding: 5px 9px; }
 .chip { padding: 5px 11px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .line { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.signature-card { display: grid; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.signature-card > .line { padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line-soft); }
+.signature-card > .line input { border: 0; background: transparent; font-weight: 600; }
+.signature-editor { min-height: 90px; padding: 10px 14px; font-size: 14px; color: var(--text); }
+.signature-card .format { border-bottom: 0; }
+.signature-card .error { padding: 0 14px 10px; }
 
 .add-account { display: grid; gap: 12px; }
 .settings .add-account { max-width: 480px; }

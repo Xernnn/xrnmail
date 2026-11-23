@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
-  AlarmClockOff, ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
+  AlarmClockOff, ArrowLeft, Ban, Bell, BellOff, BellRing, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
-  ReplyAll, Tag, TextSearch, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
+  ReplyAll, Tag, TextSearch, Ticket, Trash2, TriangleAlert, Truck, Undo2, X, Zap, type LucideIcon
 } from 'lucide-react'
 import { hasMatch } from '@shared/find'
 import { imagesLoad } from '@shared/images'
@@ -13,7 +13,7 @@ import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction,
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
 import { FindBar } from './Find'
-import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
+import { comesBack, factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
 import { Original } from './Original'
 import { FolderMenu, IconButton, LabelMenu, Popover, TimeMenu } from './Menus'
@@ -151,9 +151,13 @@ function Message(props: {
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
   trust(address: string): void
+  /** Your own message: its thread comes back at [at] if nobody else writes. */
+  remind(message: number, at: number): void
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
   const [menu, setMenu] = useState(false)
+  const [reminding, setReminding] = useState(false)
+  const mine = own.includes(m.from.address.toLowerCase())
   /** View original is open for this message. */
   const [source, setSource] = useState(false)
   const [details, setDetails] = useState(false)
@@ -221,8 +225,14 @@ function Message(props: {
                 <button type="button" className="menu-item" onClick={() => { setMenu(false); setSource(true) }}>
                   <FileCode size={15} aria-hidden="true" /> View original
                 </button>
+                {mine && !props.file && (
+                  <button type="button" className="menu-item" onClick={() => { setMenu(false); setReminding(true) }}>
+                    <BellRing size={15} aria-hidden="true" /> Remind if no reply
+                  </button>
+                )}
               </Popover>
             )}
+            {reminding && <TimeMenu title="Remind if no reply" right pick={(at) => { setReminding(false); props.remind(m.id, at) }} close={() => setReminding(false)} />}
           </div>
         )}
         {source && <Original message={m.id} subject={m.subject} close={() => setSource(false)} />}
@@ -295,6 +305,9 @@ export function Reader(props: {
   snooze(at: number): void
   /** It's snoozed, and can be brought back now. */
   unsnooze?: () => void
+  remind(message: number, at: number): void
+  /** Its reminder goes. */
+  unremind(): void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
   block(address: string): void
@@ -373,7 +386,8 @@ export function Reader(props: {
       return next
     })
 
-  const inInbox = messages.some((m) => m.labels.includes('\\Inbox'))
+  // A reminder that has come back has it in the inbox here.
+  const inInbox = messages.some((m) => m.labels.includes('\\Inbox')) || Boolean(last.remind?.fired)
   // Opened, a thread is read at once unless Settings say to wait or to leave it to you; then it can
   // be marked read from here.
   const unread = (settings?.readAfter ?? 0) !== 0 && messages.some((m) => !m.seen)
@@ -507,8 +521,16 @@ export function Reader(props: {
         <div className={props.many && account ? 'thread-head marked' : 'thread-head'}>
           {props.many && account && <span className="account-bar" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
           <h2 className="thread-subject">{messages[0]?.subject || 'No subject'}</h2>
-          {active.length > 0 && (
-            <div className="tags">{active.map((label) => <span className="tag" key={label}>{label}</span>)}</div>
+          {(active.length > 0 || last.remind) && (
+            <div className="tags">
+              {active.map((label) => <span className="tag" key={label}>{label}</span>)}
+              {last.remind && (
+                <span className="tag remind-tag" title={longTime(last.remind.at)}>
+                  <BellRing size={12} aria-hidden="true" />{last.remind.fired ? 'No reply' : comesBack(last.remind.at)}
+                  <button type="button" className="icon small" aria-label="Cancel reminder" title="Cancel reminder" onClick={props.unremind}><X size={12} aria-hidden="true" /></button>
+                </span>
+              )}
+            </div>
           )}
         </div>
         {ordered.map((m, i) => (
@@ -521,7 +543,7 @@ export function Reader(props: {
             <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own} noReply={props.file && !props.file.replies} file={Boolean(props.file)}
               settings={settings} account={account} actions={actions} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
-              unsubscribe={props.unsubscribe} trust={props.trust} />
+              unsubscribe={props.unsubscribe} trust={props.trust} remind={props.remind} />
           </div>
         ))}
       </div>

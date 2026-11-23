@@ -1,8 +1,8 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
-import { IMPORTANT, QUICK_SLOTS } from '@shared/types'
+import { IMPORTANT, INLINE_PICTURES, QUICK_SLOTS, signatureFor } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
@@ -12,8 +12,9 @@ import { MAX_RULES, type MailRule, type RuleApplied, type RuleEdit } from '@shar
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
+import { sniff } from './avatars'
 import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
-import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
+import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, placePictures, quoteOf, replySubject, replyTargets, type SignedWith } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
@@ -70,6 +71,8 @@ const DEFAULT_SETTINGS: Settings = {
   backfillDays: 90,
   hub: { url: '', user: '', connected: false },
   identities: {},
+  signatures: [],
+  signatureFor: {},
   templates: [],
   blocked: [],
   muted: [],
@@ -213,6 +216,12 @@ const doneBy = (action: MailAction): RuleApplied['did'] => {
   }
 }
 
+/** The kind of picture that can go in a message's words, by its own bytes, or null. */
+const pictureType = (bytes: Buffer): string | null => {
+  const type = sniff(bytes)
+  return type && INLINE_PICTURES.includes(type) ? type : null
+}
+
 /** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
  *  was unfinished is still queued and carries on next time. */
 export const background = (work: Promise<unknown>): void => void work.catch(() => undefined)
@@ -227,6 +236,24 @@ const cleanSenders = (senders: string[]): string[] =>
 
 /** Text set as a new draft's body, in the form the editor keeps. */
 const escapeForEditor = (text: string): string => escapeHtml(text).replace(/\r?\n/g, '<br>')
+
+/** Settings saved before there were several signatures: each account's plain one becomes a signature
+ *  of its own with the same words, the one its mail is signed with, and the identity keeps none. */
+function migratedSignatures(identities: Record<string, Partial<Identity>>): Pick<Settings, 'signatures' | 'signatureFor'> & { identities: Record<string, Partial<Identity>> } {
+  const signatures: Signature[] = []
+  const signatureFor: Record<string, string> = {}
+  const accounts = Object.entries(identities)
+  const cleared = accounts.map(([email, who], i): [string, Partial<Identity>] => {
+    const text = (who.signature ?? '').trim()
+    if (text) {
+      const id = `signature-${i + 1}`
+      signatures.push({ id, name: accounts.length > 1 ? email : 'Signature', html: escapeForEditor(text), text })
+      signatureFor[email.toLowerCase()] = id
+    }
+    return [email, { ...who, signature: '' }]
+  })
+  return { signatures, signatureFor, identities: Object.fromEntries(cleared) }
+}
 
 export function cleanSummary(summary: Partial<SummarySettings>): SummarySettings {
   return {
@@ -385,6 +412,9 @@ export class MailService {
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
+    // Plain signatures become signatures of the new kind once, the first time this version runs.
+    const saved = deps.store.meta('settings')
+    if (saved && !('signatures' in (JSON.parse(saved) as object))) this.saveSettings(this.settings())
     this.old = new OldMail({
       store: deps.store,
       accounts: () => this.emails(),
@@ -515,7 +545,7 @@ export class MailService {
         providerName: provider(config.provider).name,
         labels: config.gmail,
         folders: this.folders(email),
-        unread: this.store.unreadThreads(now, 'm.account = ?', email),
+        unread: this.store.unreadThreads(now, 'm.account = ?', email) + this.store.remindedUnseen(email),
         otherUnread: this.store.unreadThreads(now, 'm.account = ? AND m.focus = 0', email),
         color: this.identity(email).color
       }
@@ -1082,7 +1112,8 @@ export class MailService {
     const senders = landed.filter((mail) => !mail.summary)
     const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
-    const woken = this.store.wokenBetween(this.lastTick, now)
+    // Back as a snooze comes back, and told of the same way.
+    const woken = this.store.wokenBetween(this.lastTick, now) + this.store.settleReminders(now, (email) => this.ownAddresses(email))
     this.lastTick = now
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
@@ -1120,17 +1151,28 @@ export class MailService {
    *  change already sent can't be called back, so an Undo offered for one that went at once would do
    *  nothing. It survives a restart, and waits out being offline. */
   act(targets: ThreadRef[], action: MailAction, undoable = false): number {
+    return this.actAfter(targets, action, takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0)
+  }
+
+  /** The same, waiting [wait] before the server hears of it. */
+  private actAfter(targets: ThreadRef[], action: MailAction, wait: number): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
       if (action.kind === 'label' && !gmail) throw new Error('Only Gmail has labels. Use Move instead.')
       if (action.kind === 'move' && !this.folders(email).includes(action.to)) throw new Error("That folder isn't there any more.")
-      const states = mine.flatMap((ref) => touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail))
+      const states = mine.flatMap((ref) => {
+        const found = touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail)
+        // In the inbox only because a reminder brought it back, it's archived by letting the reminder
+        // go: on a service with folders, archiving would move your own copy out of Sent.
+        return action.kind === 'archive' && this.store.reminder(ref)?.fired && !found.some((s) => s.labels.includes(INBOX)) ? [] : found
+      })
       this.change(email, states, action, group, wait)
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
+      if (endsSnooze(action)) mine.forEach((ref) => this.store.unremind(ref))
+      if (action.kind === 'read') mine.forEach((ref) => this.store.seeReminder(ref))
     }
     return group
   }
@@ -1238,6 +1280,23 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** A message you sent, and its thread, come back to the inbox at [until] if nobody else has
+   *  written in it since. All kept here, as a snooze is: the server isn't told. */
+  remind(id: number, until: number): void {
+    const now = this.deps.now()
+    if (until <= now) throw new Error('Pick a time in the future.')
+    const message = this.store.message(id, now)
+    if (!message) throw new Error("That message isn't here any more.")
+    if (!this.ownAddresses(message.account).includes(message.from.address.toLowerCase())) throw new Error('Only for mail you sent.')
+    this.store.remind({ account: message.account, thread: message.thread, messageId: message.messageId }, message.date, until)
+    this.deps.changed()
+  }
+
+  unremind(targets: ThreadRef[]): void {
+    targets.forEach((ref) => this.store.unremind(ref))
+    this.deps.changed()
+  }
+
   /** Only this laptop ever knew what was opened, so this is all there is to forget. */
   clearRecent(): void {
     this.store.forgetSeen()
@@ -1333,9 +1392,11 @@ export class MailService {
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
     if (messages.length > 0) this.store.useOutside({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    if (read) this.store.seeReminder({ account, thread })
     const cut = this.store.filesCut(messages.map((m) => m.id))
     if (cut.length > 0) background(this.listFiles(cut))
-    return messages
+    const remind = this.store.reminder({ account, thread })
+    return remind ? messages.map((m) => ({ ...m, remind })) : messages
   }
 
   /** A message cut short when it was stored lists only the files in the part that was kept. Once
@@ -1551,7 +1612,12 @@ export class MailService {
   }
 
   drafts(): Draft[] {
-    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id))
+    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id)).map((draft) => this.offered(draft))
+  }
+
+  /** What the composer is to offer: Send & Archive, while the thread it answers is in the inbox. */
+  private offered(draft: Draft): Draft {
+    return { ...draft, archivable: draft.about !== undefined && this.store.inInbox(draft.about, this.deps.now()) }
   }
 
   async startDraft(start: DraftStart): Promise<Draft> {
@@ -1570,17 +1636,19 @@ export class MailService {
     }
     const message = this.store.message(start.message, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
+    const about = { account: message.account, thread: message.thread }
     if (start.kind === 'forward') {
       const id = this.store.addDraft({
-        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward')
+        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward'), about
       })
       // A cut message may have files its stored list doesn't know about.
       if (message.attachments.length > 0 || message.truncated) await this.carryAttachments(id, message.id)
-      return this.draftOrThrow(id)
+      return this.offered(this.draftOrThrow(id))
     }
     const own = this.ownAddresses(message.account)
-    return this.draftOrThrow(this.store.addDraft({
+    return this.offered(this.draftOrThrow(this.store.addDraft({
       ...base,
+      about,
       account: message.account,
       // Answered from whichever of your addresses it came to.
       from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
@@ -1590,7 +1658,7 @@ export class MailService {
       quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
       inReplyTo: message.messageId,
       references: `${message.references} ${message.messageId}`.trim()
-    }))
+    })))
   }
 
   private draftOrThrow(id: number): Draft {
@@ -1798,7 +1866,7 @@ export class MailService {
     const messageId = draftMessageId(sender)
     let raw: Buffer
     try {
-      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now()), messageId)
+      raw = await draftRaw(draftCopy(draft, sender, this.identity(email), (file) => this.deps.files.path(id, file), this.deps.now(), this.signedWith(draft)), messageId)
     } catch {
       // Something of it can't be read here, a file gone from the profile say: trying again won't
       // help, and it mustn't hold up the drafts after it.
@@ -1866,14 +1934,15 @@ export class MailService {
       const lost = new Map(this.store.draftLinks(email).filter((d) => !d.copy && d.messageId).map((d) => [d.messageId, d]))
       const unknown = recent.filter((uid) => !known.has(uid) && !this.tooBig.has(`${email}:${info.uidValidity}:${uid}`))
       const own = this.ownAddresses(email)
-      const { signature } = this.identity(email)
+      // Any of them may be at the end of words that went up from here.
+      const signature = this.settings().signatures.map((s) => s.text)
       for await (const remote of source.fetch(unknown, MAX_DRAFT_SOURCE)) {
         if (removed()) return
         const cut = remote.size > MAX_DRAFT_SOURCE
         const parsed = await parseDraft(remote.source, cut)
         // Bigger than can be sent from here, it stays where it is: brought in without its files and
         // changed here, it would go back up without them.
-        if (cut || parsed.files.reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
+        if (cut || [...parsed.files, ...parsed.pictures].reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
           this.tooBig.add(`${email}:${info.uidValidity}:${remote.uid}`)
           continue
         }
@@ -1896,9 +1965,15 @@ export class MailService {
   }
 
   private keepImported(email: string, parsed: Awaited<ReturnType<typeof parseDraft>>, copy: DraftCopy, saved: number,
-    own: string[], signature: string): void {
-    const id = this.store.addDraft({ account: email, ...importedDraft(parsed, email, own, signature), files: [], updated: saved }, copy)
-    const files = parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content))
+    own: string[], signature: string[]): void {
+    const { pictures, ...imported } = importedDraft(parsed, email, own, signature)
+    const id = this.store.addDraft({ account: email, ...imported, files: [], updated: saved }, copy)
+    const files = [
+      ...parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content)),
+      // Only a picture by its own bytes goes in the words.
+      ...pictures.filter((picture) => pictureType(picture.content) === picture.type)
+        .map((picture) => ({ ...this.deps.files.fromBytes(id, safeFileName(picture.name), picture.type, picture.content), cid: picture.cid }))
+    ]
     if (files.length > 0) this.store.saveDraft({ ...this.draftOrThrow(id), files })
   }
 
@@ -1925,8 +2000,22 @@ export class MailService {
     return this.draftOrThrow(id)
   }
 
-  addFileBytes(id: number, name: string, type: string, bytes: Buffer): Draft {
-    return this.withFile(id, () => this.deps.files.fromBytes(id, name, type, bytes))
+  /** With [inline], a picture for the words, if its own bytes say it's one that goes there. */
+  addFileBytes(id: number, name: string, type: string, bytes: Buffer, inline = false): Draft {
+    const picture = inline ? pictureType(bytes) : null
+    return this.withFile(id, () => {
+      const file = this.deps.files.fromBytes(id, name, picture ?? type, bytes)
+      return picture ? { ...file, cid: `${file.id}@xrnmail` } : file
+    })
+  }
+
+  /** A picture in a draft's words, for the composer to show: only ever a picture, by its own bytes. */
+  draftPicture(id: number, file: string): string {
+    const found = this.draftOrThrow(id).files.find((f) => f.id === file && f.cid)
+    const bytes = found ? this.deps.files.read(id, found) : null
+    const type = bytes ? pictureType(bytes) : null
+    if (!bytes || !type) throw new Error("That picture isn't here any more.")
+    return `data:${type};base64,${bytes.toString('base64')}`
   }
 
   removeFile(id: number, file: string): Draft {
@@ -1941,7 +2030,23 @@ export class MailService {
   private outgoingFrom(draft: Draft): ReturnType<typeof outgoing> {
     const from = (draft.from || draft.account).toLowerCase()
     if (!this.ownAddresses(draft.account).includes(from)) throw new Error('That address isn\'t on this account.')
-    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now())
+    return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now(), this.signedWith(draft))
+  }
+
+  /** The one chosen for it, or the one its From address has. */
+  private signedWith(draft: Draft): SignedWith {
+    const settings = this.settings()
+    const found = draft.signature !== undefined ? settings.signatures.find((s) => s.id === draft.signature) ?? null : signatureFor(settings, draft.account, draft.from)
+    return found ? { html: found.html, text: found.text } : null
+  }
+
+  /** A picture taken out of the words stays on the draft while it's written, so Undo in the editor
+   *  can put it back; once it's sent, only the ones the words show are kept. */
+  private shownFiles(draft: Draft): Draft['files'] {
+    const shown = new Set(placePictures(draft.html, draft.files, () => '').pictures.map((picture) => picture.cid))
+    const [kept, gone] = [draft.files.filter((f) => !f.cid || shown.has(f.cid)), draft.files.filter((f) => f.cid && !shown.has(f.cid))]
+    gone.forEach((file) => this.deps.files.remove(draft.id, file))
+    return kept
   }
 
   /** Nothing leaves here: it waits in the queue so Undo has something to call back. */
@@ -1952,12 +2057,23 @@ export class MailService {
     const now = this.deps.now()
     if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
     const sendAt = at ?? now + this.settings().undoSeconds * 1000
-    this.store.saveDraft({ ...draft, state: 'queued', sendAt, error: null, updated: now })
+    if (draft.remind !== undefined && draft.remind <= sendAt) throw new Error('Pick a reminder after it goes.')
+    this.store.saveDraft({ ...draft, files: this.shownFiles(draft), state: 'queued', sendAt, error: null, updated: now })
     // A message on its way isn't a draft: left in Drafts, another device could send it as well.
     this.letCopyGo(id)
     this.dirtySince.delete(id)
     this.deps.changed()
     return sendAt
+  }
+
+  /** Sent as Send sends it, and the thread it's about archived at once here. The server hears of the
+   *  archiving only once Undo of the send has run out too, so Undo can bring the thread back. */
+  sendAndArchive(id: number): { when: number; undo: number } {
+    const { about } = this.draftOrThrow(id)
+    const when = this.send(id)
+    if (!about) return { when, undo: 0 }
+    const { undoSeconds, undoActionSeconds } = this.settings()
+    return { when, undo: this.actAfter([about], { kind: 'archive' }, Math.max(undoSeconds, undoActionSeconds) * 1000 + UNDO_GRACE_MS) }
   }
 
   /** Back to being a draft, it goes up again as one. */
@@ -2076,6 +2192,11 @@ export class MailService {
     const config = this.config(draft.account)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
+      if (draft.remind !== undefined) {
+        // A reply's thread is known; anything else's is, once its copy in Sent is here.
+        const thread = draft.inReplyTo && draft.about?.account === draft.account ? draft.about.thread : ''
+        this.store.remind({ account: draft.account, thread, messageId: copy.messageId }, this.deps.now(), draft.remind)
+      }
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
       this.sendFailureDealt(draft.account)
@@ -2137,7 +2258,8 @@ export class MailService {
       const batch = { ...DEFAULT_SETTINGS.batch, ...saved.batch }
       // Saved before there was a switch: no times meant mail came as it arrived, and still does.
       batch.live = saved.batch?.live === true || batch.times.length === 0
-      const merged = { ...DEFAULT_SETTINGS, ...saved, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
+      const signed = saved.signatures === undefined ? migratedSignatures(saved.identities ?? {}) : {}
+      const merged = { ...DEFAULT_SETTINGS, ...saved, ...signed, batch, previewLines: lines, summary: cleanSummary({ ...DEFAULT_SETTINGS.summary, ...saved.summary }) }
       const filledIn = ([email, who]: [string, Partial<Identity>]): [string, Identity] =>
         [email, { name: '', signature: '', aliases: [], color: '', notify: true, ...who }]
       // A choice of sidebar entries saved before one of them existed gets it now, in its usual place.
@@ -2203,6 +2325,8 @@ export class MailService {
     this.saveSettings({
       ...settings,
       identities,
+      signatures: (patch.signatures ?? settings.signatures).slice(0, 50),
+      signatureFor: patch.signatureFor ?? settings.signatureFor,
       templates: (patch.templates ?? settings.templates).slice(0, 50),
       blocked: patch.blocked ? cleanSenders(patch.blocked) : settings.blocked,
       muted: patch.muted ? cleanSenders(patch.muted) : settings.muted,

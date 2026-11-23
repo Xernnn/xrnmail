@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import {
-  CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
+  BellRing, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clock, DollarSign, FileText, Flag, Folder, GripHorizontal, History, ListChecks, Mail, Mails, Newspaper, OctagonAlert,
   Paperclip, Pencil, Pin, Plane, RotateCw, Send, Settings as Gear, Tag, Ticket, Trash2, Truck, type LucideIcon
 } from 'lucide-react'
 import { arranged, arrangedLabels, cleanSidebar, moved, movedLabel, shownLabel, siblingsOf, SIDEBAR_GROUPS, type SidebarChoice, type SidebarEntry } from '@shared/sidebar'
@@ -31,6 +31,7 @@ const ENTRIES: Record<SidebarEntry, { label: string; icon: LucideIcon; target: V
   pinned: { label: 'Pinned', icon: Pin, target: { kind: 'pinned' } },
   summary: { label: 'Summary', icon: Newspaper, target: { kind: 'summary' } },
   snoozed: { label: 'Snoozed', icon: Clock, target: { kind: 'snoozed' } },
+  reminders: { label: 'Reminders', icon: BellRing, target: { kind: 'reminders' } },
   attachments: { label: 'Attachments', icon: Paperclip, target: { kind: 'attachments' } },
   drafts: { label: 'Drafts', icon: FileText, target: { kind: 'drafts' }, gathered: true },
   spam: { label: 'Spam', icon: OctagonAlert, target: { kind: 'spam' } },

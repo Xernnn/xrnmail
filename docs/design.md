@@ -87,6 +87,15 @@ away.
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+- A reminder is kept here only too (`reminders`): a thread comes back at `until` if nobody but you
+  has written in it since `at`, when the message was sent. One set as a message goes knows only that
+  message's Message-ID until its copy in Sent is here, and then its thread. Each tick puts them
+  right: one whose thread has mail from someone else since goes, and one whose time has come is
+  marked `fired` and told of as a woken snooze is. A fired one puts its thread in the inbox's list,
+  on top from its time, as unread until it's opened (`seen`), and in the account's count; the inbox's
+  query is the one it always was while none has fired. Archiving a thread that's there only because
+  of its reminder lets the reminder go and sends nothing: on a folder service, archiving would move
+  your own copy out of Sent. Archiving, deleting and moving end one, as they end a snooze.
 - A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
   means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
   a pinned thread keeps its place in every other list.
@@ -159,6 +168,11 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
   goes for good, with its copy, once Undo has had its time, or when the app closes; until then
   nothing about it changes on the server, and one that was waiting to go waits as a draft, so it
   can't leave meanwhile. Undo gives it back as it was. A crash meanwhile keeps it.
+- **Send & Archive** is Send, and an archive of the thread the draft was started from (`about`),
+  done here at once. The archive waits for whichever of the two Undo times is longer before the
+  server hears of it, so Undo of the send, which also undoes the archive, still has it to call back.
+  It's offered while that thread is in the inbox (`archivable`, worked out each time a draft is
+  handed to the page, never kept).
 - **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
   draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
   or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
@@ -169,8 +183,8 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
   on the server, as one older than the keeping window does: brought in without its files and changed
   here, it would go back up without them. Its words go into the composer as text: the copy's HTML is the server's, may hold a
   stranger's quoted HTML, and never reaches the page. What it quotes is kept apart, as a reply's quote
-  is, and goes out as it was quoted, not quoted again; the account's own signature comes off the end
-  of the words, so a draft that went up from here and came back isn't signed twice.
+  is, and goes out as it was quoted, not quoted again; whichever of the signatures is at the end of
+  the words comes off, so a draft that went up from here and came back isn't signed twice.
 - **Each draft here knows its copy**: the UID, the folder's UIDVALIDITY when it was had, its
   Message-ID, and which version of the draft it was made from (`pushed`). A renumbered folder finds
   its copies again by Message-ID instead of bringing them in twice.
@@ -557,6 +571,15 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **The editor holds only what's typed.** A quoted message would otherwise put a stranger's HTML in the
   app's own page, next to the bridge. The quote stays out of the editor, is sanitised on its way into
   the draft, and shows only in a sandboxed frame. Pasting is as plain text, for the same reason.
+  A picture pasted or dropped is the one exception, and only as bytes: it becomes one of the draft's
+  files, marked with a Content-ID (only PNG, JPEG, GIF and WebP, by their own bytes; anything else is
+  attached), and the words name it `cid:…`. The editor shows it as a `data:` address the main process
+  makes from that file, and drops any other `<img>` whatever a draft says, so nothing in the editor
+  is ever fetched. Sending, and the copy in the service's Drafts, put each picture the words show in
+  a part of its own under `multipart/related`; pictures in what's quoted, which the reader holds as
+  `data:` addresses, go the same way. A picture taken out of the words stays on the draft until it's
+  sent, so Undo in the editor can put it back. The text part says `[image: name]` where each one
+  was, as Gmail's does, and a draft coming back from the server has its pictures put back there.
 - **Every reply starts in the composer.** Reply, Reply All and Forward at the foot of a thread open it,
   with the recipients, the address it goes from and the quote on show before anything is sent. There's
   no box under a thread to type into, as Edison has none, so all of a reply is decided where it can
@@ -737,8 +760,18 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   to the text it came from. Matches are marked with the CSS Custom Highlight API in the page they're
   in, which changes nothing in a message's page, and only what's drawn counts. It finds again when the
   thread's page changes or a frame says it has drawn a new page (`xrn-shown`).
-- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
-  signature and the rest is held once for every page until the field is left.
+- `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name and
+  the rest is held once for every page until the field is left.
+- Signatures are a list in settings (`signatures`), each with its HTML, written in Settings with the
+  composer's own toolbar (`FormatBar`), and its text for the text part. A picture in one is a `data:`
+  image in that HTML, 512 KB at most since settings are read often, and goes as a part of the
+  message like a picture in the words; nothing of a signature is fetched or hosted anywhere.
+  `signatureFor` says which one each address signs with, an account's own or an alias, and an alias
+  with none chosen takes its account's. A draft keeps the one picked in the composer (`signature`,
+  `''` for none); a draft with none picked, and one whose From changes, takes its address's. It goes
+  under what's written and above the quote, as the one plain signature did. Settings saved before
+  there were several have each account's plain signature made into one of these with the same
+  words, its account's, once, the first time this version starts.
 
 Settings are saved as changes, never as a whole copy put back. Each save names only what it changes
 (`saveProfile`, `saveBatch` and `saveSummary` all take part of their settings, and an identity
@@ -772,7 +805,9 @@ conflict is settled by asking and then saving the change, with nothing else to k
 of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for itself (Tab, Enter,
 Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
 named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
-off the choosing instead of closing Settings.
+off the choosing instead of closing Settings. Send & Archive is pressed inside the composer, so its
+key has to be held with Ctrl or Alt (`WRITING`), or it would send as it was typed; no set gives it
+one, since none of their apps has it.
 
 Subscriptions say how much of each sender's mail is read (`Subscription.read` over `count`, from the
 `\Seen` flag, so read anywhere) and how much came in the last week, counted in the same query that

@@ -40,18 +40,30 @@ kept on the laptop.
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
-  that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
-  the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
-  it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
-  not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
-  leaves no draft behind. Starting another closes the one open the same way, so what was written in
-  it is in Drafts.
+  that survive a restart, and addresses suggested from your mail. Signatures are as many as you like,
+  written in Settings, Signatures with the composer's own toolbar, pictures and all (kept on this
+  laptop and sent with the message, never hosted anywhere). Each address, an account's own or an alias,
+  has its default; choosing another From in the composer brings its signature, and the Signature button
+  there picks another or none. Cc Bcc shows a Reply-To field with them, for where replies are to go. A
+  template can have a subject, which it gives a message that has none yet. A picture (PNG, JPEG, GIF or
+  WebP) pasted or dropped goes into the words where the caret is, and is sent as a part of the message
+  the words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
+  pictures of what it quotes in its words the same way. Replying starts from the buttons at the foot of
+  a thread, in the composer, or the one beside each message, which replies to everyone on it if
+  Settings, General say so. A reply quotes the message it answers, unless Settings, General say not to;
+  a forward always carries it. A reply or forward closed as it opened, with nothing written, leaves no
+  draft behind. Starting another closes the one open the same way, so what was written in it is in
+  Drafts.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
   up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away
   has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
+- **Send & Archive:** beside Send in a reply or forward to a thread in the inbox, it sends as Send
+  does and archives the thread as it goes; Undo of the send brings the thread back too. No set of
+  keys has one, as none of their apps does, but Settings, Shortcuts can give it a key held with Ctrl
+  or Alt.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
   General say: what takes mail away, and anything else offered with Undo, waits that long here before
@@ -110,6 +122,12 @@ kept on the laptop.
   today is offered only while it's still today, and This evening only before it comes. Snoozed shows
   when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
   it back now.
+- **Remind if no reply:** beside Send, or on a message you sent from its ⋮, with snooze's times. If
+  nobody else has written in the thread by then, it comes back to the top of the inbox, unread, with
+  a bell on its row, and the notice says so; a reply from anyone else calls it off, and one of your
+  own doesn't. Reminders lists what's waiting and when, and the thread shows it over its subject,
+  with Cancel reminder. It's kept on this laptop, as snoozes are: your mail service isn't told, and
+  archiving a thread that's in the inbox only because of a reminder changes nothing there.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
@@ -266,6 +284,8 @@ new key. A key another action has is offered to take over, and a change can go b
 Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set. Ctrl+F being Search in
 all of them, finding in a message is Ctrl+G, which Apple Mail and Outlook use for the next match, where
 the set's Ctrl+Shift+F is taken, and Ctrl+Shift+F in Gmail's and Inbox's, where it's free.
+Send & Archive has no key in any set; one given to it has to be held with Ctrl or Alt, since it's
+pressed while writing.
 
 To have mail links open here, press Use for mail links in Settings, General after installing, which
 runs `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`; once they do, it says Default. A
@@ -352,7 +372,7 @@ has withdrawn its desktop app, so the reference is the pictures in its Mac help 
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
 which is how Edison always works, is one switch away), the delivery line
-over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
+over the list, Snoozed, Reminders and Attachments in the sidebar, search without Vietnamese marks, sender
 warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:
