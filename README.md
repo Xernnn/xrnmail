@@ -113,6 +113,16 @@ kept on the laptop.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
+- **Mail rules:** Settings, Rules. A rule looks at From, To or Cc, the subject, the body, the List-Id
+  or the attachments (contains, doesn't contain, is, starts with, ends with, or matches a pattern),
+  all of them or any, on one account or all, and then labels the message or moves it to a folder,
+  archives it, marks it read, flags it, deletes it, marks it important (Gmail), adds it to the
+  Summary, lets it straight through, mutes its notice, or stops the rules after it. Rules run in
+  their order on each new message in the inbox as it's stored, mail that came while the app was
+  closed too, before its batch, the Summary or a notice decide anything, and each message only once.
+  What they change reaches the server as anything done by hand does. Apply now runs one over the
+  inbox kept here, with Undo. They don't forward: a rule forwarding to a mistyped address would send
+  mail to a stranger without anyone seeing it go. See [docs/design.md](docs/design.md#mail-rules).
 - **Tracker blocking:** invisible images and known open-trackers are removed, even after Show images:
   in pictures, CSS backgrounds and table cells, pictures a rule loads only under the pointer, and
   pictures that wait to be scrolled to. A picture sized to nothing by a style sheet's class still
@@ -420,7 +430,7 @@ Done differently:
 
 - It's used every day with Gmail. Outlook, Yahoo, iCloud and the rest have been tried only against
   the tests' fake servers, so expect surprises from real ones, Outlook's sign-in most of all.
-- No mail rules, translation, or written summaries of what mail says, and nothing is built for Windows or
+- No translation, or written summaries of what mail says, and nothing is built for Windows or
   macOS or for phones.
 - The Assistant reads machine-readable facts first, then strict patterns in English and Vietnamese. It
   will miss things: a wrong entry is worse than a missing one.
