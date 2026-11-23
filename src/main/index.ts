@@ -537,6 +537,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
+  handle('unsearched', (search: unknown) => service.unsearched(text(search, 500)))
+  handle('searchAgain', () => service.searchAgain())
   handle('thread', async (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) => {
     const ref = { account: text(account, 320), thread: text(thread, 64) }
     await service.reach([ref])
@@ -569,7 +571,11 @@ function register(service: MailService, avatars: Avatars): void {
     return service.act(chosen, what, undoable === true)
   })
   handle('undo', (token: unknown) => service.undo(number(token)))
-  handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
+  handle('snooze', async (refs: unknown, until: unknown) => {
+    const [chosen, at] = [targets(refs), number(until)]
+    await service.reach(chosen)
+    return service.snooze(chosen, at)
+  })
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
   handle('remind', (message: unknown, until: unknown) => service.remind(number(message), number(until)))
   handle('unremind', (refs: unknown) => service.unremind(targets(refs)))

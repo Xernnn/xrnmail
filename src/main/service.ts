@@ -1268,11 +1268,18 @@ export class MailService {
     }
   }
 
-  snooze(targets: ThreadRef[], until: number): void {
+  /** Snoozed, a thread leaves the inbox here until [until], then comes back to the top of it. One
+   *  that isn't in the inbox, archived or from before the window, is put back in it first, or it would
+   *  have nowhere to come back to; the number undoes that, as an action's does. */
+  snooze(targets: ThreadRef[], until: number): number | null {
     const now = this.deps.now()
     if (until <= now) throw new Error('Pick a time in the future.')
+    const away = targets.filter((ref) => !this.store.visibleMail(ref, now, false).some((mail) => mail.labels.includes(INBOX)))
+    targets.forEach((ref) => this.store.keepOutside(ref))
+    const back = away.length > 0 ? this.act(away, { kind: 'inbox' }, true) : null
     targets.forEach((ref) => this.store.snooze(ref, now, until))
     this.deps.changed()
+    return back
   }
 
   unsnooze(targets: ThreadRef[]): void {
@@ -1375,6 +1382,17 @@ export class MailService {
       return found
     }
     return [...found, ...this.old.rows(query.text, found, found.length < limit)]
+  }
+
+  /** The accounts whose server couldn't be asked about [text]'s older mail. */
+  unsearched(text: string): string[] {
+    return this.old.unsearched(text)
+  }
+
+  /** The servers are asked again about the search on show, from the start. */
+  searchAgain(): void {
+    this.old.leave()
+    this.deps.changed()
   }
 
   /** Threads a search found on the server, from before the keeping window, are fetched before

@@ -633,6 +633,12 @@ export class Store {
       .run(now, ref.account, ref.thread)
   }
 
+  /** A thread from before the window that's been snoozed is ordinary mail from now on: Snoozed lists
+   *  it, it comes back to the inbox, and the keeping step leaves it while it's snoozed. */
+  keepOutside(ref: ThreadRef): void {
+    this.db.prepare('DELETE FROM outside WHERE id IN (SELECT id FROM messages WHERE account = ? AND thread = ?)').run(ref.account, ref.thread)
+  }
+
   /** Rows for these threads, with what they have from before the window, as a search shows them. A
    *  thread with nothing left out of Trash and Spam has none. */
   olderRows(refs: ThreadRef[], now: number): ThreadRow[] {
@@ -757,13 +763,14 @@ export class Store {
 
   /** Mail past the keeping window, once the setting's been shortened. What was fetched from before it
    *  for a search stays while it's opened within a week, or pinned; and once the window has grown to
-   *  take it in, it's ordinary mail. */
+   *  take it in, it's ordinary mail. A snoozed thread stays whatever its age. */
   dropOlderThan(account: string, before: number, now: number): number {
     this.db.prepare('DELETE FROM outside WHERE id IN (SELECT id FROM messages WHERE account = ? AND arrived >= ?)').run(account, before)
     const old = this.all(
       `SELECT id FROM messages m WHERE account = ? AND arrived < ?
          AND NOT (id IN (SELECT id FROM outside WHERE used >= ?)
-                  OR (id IN (SELECT id FROM outside) AND EXISTS (SELECT 1 FROM pins p WHERE p.account = m.account AND p.thread = m.thread)))`,
+                  OR (id IN (SELECT id FROM outside) AND EXISTS (SELECT 1 FROM pins p WHERE p.account = m.account AND p.thread = m.thread))
+                  OR EXISTS (SELECT 1 FROM snoozes z WHERE z.account = m.account AND z.thread = m.thread))`,
       account, before, now - WEEK_MS
     )
     this.inTransaction(() => {

@@ -182,6 +182,46 @@ test('mail from before what is kept is found on the server, below what is, and o
   await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen') // opening it read it, on the server too
 })
 
+// A Gmail that couldn't be asked read the same as one with nothing older to find: "Nothing found".
+test('a search that could not ask the server says so, and Try again asks it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Harbour lease 2024' }), { arrived: earlier(24 * 400) })
+  await signIn(run)
+  gmail.refuseSearch.add(gmail.allMail)
+  const list = page.locator('.threads')
+  await page.getByLabel('Search').fill('harbour')
+  await expect(list.locator('.summary-head')).toHaveText(`Older mail not searched · ${ME}Try again`)
+  await expect(page.getByText('Nothing found')).toBeVisible()
+  gmail.refuseSearch.clear()
+  await list.getByRole('button', { name: 'Try again' }).click()
+  await expect(list.locator('.older-head + .thread')).toContainText('Harbour lease 2024')
+  await expect(list.getByText('Older mail not searched')).toHaveCount(0)
+})
+
+// Snoozing a row the search found on the server fetched nothing, and an archived thread had no inbox
+// to come back to: Snoozed never listed it, and it never came back.
+test('a thread found on the server, snoozed from its row, is under Snoozed, and Undo takes it out', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Harbour lease 2024' }), { arrived: earlier(24 * 400), labels: [] })
+  await signIn(run)
+  const list = page.locator('.threads')
+  await page.getByLabel('Search').fill('harbour')
+  await expect(list.locator('.older-head + .thread')).toContainText('Harbour lease 2024')
+  await list.getByText('Harbour lease 2024').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Snooze' }).click()
+  await page.locator('.popover', { hasText: 'Snooze until' }).getByRole('button', { name: /^Tomorrow/ }).click()
+  await expect(page.getByRole('status')).toHaveText(/^Snoozed until/)
+  await page.getByLabel('Search').fill('')
+  await page.getByRole('button', { name: 'Snoozed', exact: true }).click()
+  await expect(list.getByText('Harbour lease 2024')).toBeVisible()
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  await expect(list.getByText('Harbour lease 2024')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Inbox', exact: true }).click()
+  await expect(list.getByText('Harbour lease 2024')).toHaveCount(0)
+})
+
 test('the search box offers its operators as what is typed could finish, and nothing more', async () => {
   run = await launch()
   const { page, gmail } = run
