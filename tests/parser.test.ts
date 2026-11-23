@@ -19,6 +19,13 @@ const answering = (mail: unknown): Worker => new Worker(
   { eval: true }
 )
 
+/** A thread that hangs on the first message it's given, as on one built to trip the parser. */
+const hanging = (): Worker => new Worker(
+  `const { parentPort } = require('node:worker_threads')
+   parentPort.on('message', () => { for (;;) {} })`,
+  { eval: true }
+)
+
 describe('reading mail off the main process', () => {
   it('gives what the thread read, for each message asked for', async () => {
     const parser = new Parser(() => answering({ subject: 'From the thread' }))
@@ -34,6 +41,17 @@ describe('reading mail off the main process', () => {
     const here = await parseMail(RAW)
     expect(read).toEqual([here, here])
     expect((await parser.parse(RAW)).subject).toBe('Plans')
+  })
+
+  it('gives up on a message that takes too long, as one that can\'t be read, and reads the rest on a new thread', async () => {
+    let started = 0
+    const parser = new Parser(() => (++started === 1 ? hanging() : answering({ subject: 'From the thread' })), 300)
+    const [stuck, behind] = [parser.parse(RAW), parser.parse(RAW)]
+    await expect(stuck).rejects.toThrow()
+    expect((await behind).subject).toBe('From the thread')
+    expect((await parser.parse(RAW)).subject).toBe('From the thread')
+    expect(started).toBe(2)
+    await parser.close()
   })
 
   it('reads here when no thread can be started', async () => {

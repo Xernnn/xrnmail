@@ -233,6 +233,11 @@ stopping the rest.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
+- Mail is read on a thread of its own (`parser.ts`), so a long backfill doesn't make the window
+  stutter. A message that takes over 20 seconds to read is kept as one that can't be read, as any
+  other that fails is, and the thread, stuck on it, is replaced; left alone it held the account's
+  pass, and so its changes, drafts and Sent copies, until the app restarted. It isn't tried again
+  on the main process, where it would hang the window too.
 - Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
   and made again from the whole message the first time it's opened. A forward takes the files of the
