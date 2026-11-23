@@ -2668,6 +2668,48 @@ test('two settings changed one straight after the other both stick, and so do tw
   await expect.poll(async () => (await page.evaluate(() => window.mail.settings())).summary.senders.slice().sort()).toEqual(['hi@shop.example', 'news@post.example'])
 })
 
+// Settings and adding an account carried sentences: "Their new mail goes straight to Trash",
+// "Ready-made text for the composer", "Under what you write", "Counts for your day's page", and a
+// paragraph on registering an app with Microsoft. The owner wants figures and short labels only.
+test('Settings and adding an account have short labels and figures, and no sentences', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveSummary({ senders: ['news@shop.example'], chosen: true }))
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const words = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length
+  const pages = await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button').allInnerTexts()
+  expect(pages).toHaveLength(13)
+  let seen = ''
+  for (const name of pages) {
+    await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: name.trim(), exact: true }).click()
+    const main = settings.locator('.settings-page')
+    seen += await main.innerText()
+    for (const heading of await main.locator('h3').allInnerTexts()) expect.soft(words(heading), `${name}: ${heading}`).toBeLessThanOrEqual(4)
+    for (const line of await main.locator('p:not(.error)').allInnerTexts()) expect.soft(words(line), `${name}: ${line}`).toBeLessThanOrEqual(3)
+    for (const field of await main.locator('[placeholder]').evaluateAll((all) => all.map((f) => f.getAttribute('placeholder') ?? ''))) {
+      expect.soft(words(field), `${name}: ${field}`).toBeLessThanOrEqual(3)
+    }
+  }
+  for (const sentence of ['Under what you write', 'Who you write as']) expect(seen.toLowerCase()).not.toContain(sentence.toLowerCase())
+  await settings.getByRole('button', { name: 'Accounts', exact: true }).click()
+  await settings.getByRole('button', { name: 'Add account' }).click()
+  for (const service of ['Outlook', 'Other']) {
+    await settings.getByRole('radio', { name: service }).click()
+    for (const line of await settings.locator('.add-account p:not(.error)').allInnerTexts()) expect.soft(words(line), `${service}: ${line}`).toBeLessThanOrEqual(3)
+    for (const label of await settings.locator('.add-account label').evaluateAll((all) => all.map((l) => l.firstChild?.textContent ?? ''))) {
+      expect.soft(words(label), `${service}: ${label}`).toBeLessThanOrEqual(3)
+    }
+  }
+  await settings.getByRole('button', { name: 'Summary', exact: true }).click()
+  await settings.getByRole('button', { name: 'Turn off Summary' }).click()
+  const asking = page.locator('dialog.confirm')
+  await expect(asking.getByRole('heading')).toHaveText('Turn off Summary?')
+  await expect(asking.getByRole('button', { name: 'Turn off' })).toBeVisible()
+  await expect(asking.locator('p')).toHaveCount(0)
+})
+
 test('settings can be searched', async () => {
   run = await launch()
   const { page } = run

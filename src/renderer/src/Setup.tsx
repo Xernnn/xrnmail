@@ -128,13 +128,9 @@ export function AddAccount(props: { done?(): void }): ReactNode {
             <input autoComplete="off" spellCheck={false} required placeholder="00000000-0000-0000-0000-000000000000" value={clientId}
               onChange={(e) => setClientId(e.target.value)} />
           </label>
-          <p className="muted note">
-            Microsoft only lets a registered app in, and yours is free: register one for "personal and work accounts", turn on
-            public client flows, and copy its Application ID here.
-          </p>
           {code && (
             <p className="device-code">
-              Enter <strong>{code.code}</strong> on the Microsoft page that just opened.
+              Code <strong>{code.code}</strong>
             </p>
           )}
         </>
@@ -147,7 +143,7 @@ export function AddAccount(props: { done?(): void }): ReactNode {
       {custom && (
         <>
           <label>
-            Sign-in name, if it isn't your address
+            Sign-in name
             <input autoComplete="off" spellCheck={false} value={user} onChange={(e) => setUser(e.target.value)} />
           </label>
           <ServerFields title="Incoming" value={imap} change={setImap} />
