@@ -486,7 +486,8 @@ npm run app:install            # build an AppImage and add it to the launcher
 
 `npm run app:install` (`scripts/install-linux-app.sh`) builds an AppImage into `dist/`, puts it at
 `~/Applications/xrnmail.AppImage`, and adds a launcher (`~/.local/share/applications/xrnmail.desktop`)
-that also takes `mailto:` links and `.eml` files. Run it again to update: the new file is renamed over the old one, so
+that also takes `mailto:` links and `.eml` files, is found by searching for mail, and has New Message
+on its right-click menu. Run it again to update: the new file is renamed over the old one, so
 a running copy carries on. The launcher and Start at login run the AppImage with
 `--appimage-extract-and-run`, from an unpacked copy in `~/.cache/xrnmail`, not from a FUSE mount
 that takes the app down with it if the mount goes, and not from `/tmp`, which is memory on many
