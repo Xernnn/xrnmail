@@ -610,6 +610,19 @@ test('a picture that never comes leaves the message shown and working, and one t
   }
 })
 
+test('a plain HTML message of paragraphs shows to its last line', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p>Are you still on for Friday?</p><p>Bring the tickets.</p><p id="last">See you at seven.</p>'
+  gmail.add(rawMail({ subject: 'Friday', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Friday', { exact: true }).click()
+  const last = page.frameLocator('iframe.body-frame').locator('#last')
+  await last.waitFor()
+  // The frame is as tall as the message: its last line ends inside it, not under its edge.
+  await expect.poll(() => last.evaluate((el) => window.innerHeight - el.getBoundingClientRect().bottom)).toBeGreaterThanOrEqual(0)
+})
+
 /** A receipt made for a white page, with a picture in it, and a newsletter that's dark already. */
 const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const LIGHT_RECEIPT = `<table id="card" width="100%" bgcolor="#ffffff" style="border:1px solid #dddddd"><tr><td style="color:#222222;font-family:Arial">

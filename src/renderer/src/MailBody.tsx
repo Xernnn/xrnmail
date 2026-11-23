@@ -103,7 +103,7 @@ function frameDocument(clean: string, images: boolean, dark: boolean, designed: 
   const look = !blends ? 'body{background:#fff;color:#1c1b1a}'
     : dark ? `html{color-scheme:dark;--xrn-unloaded:${UNLOADED_DARK}}body{background:transparent;color:#e6e7ea}a{color:#8ab4ff}blockquote{border-left-color:#3b3e45}`
     : 'body{background:transparent;color:#1d2025}a{color:#1a5fd0}'
-  return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{box-sizing:border-box;margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}${FIND_STYLE}</style></head><body>${clean}</body></html>`
+  return `<!doctype html><html class="${images ? '' : 'no-images'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>html{overflow-x:auto;overflow-y:hidden}body{box-sizing:border-box;display:flow-root;margin:0;padding:${blends ? '0 2px' : '16px 18px'};font:14px/1.6 ${FRAME_FONTS};word-break:break-word}img{max-width:100%;height:auto}blockquote{margin:0 0 0 8px;padding-left:10px;border-left:2px solid #d5d9e0}${look}${UNLOADED}${HIDE_QUOTED}${FIND_STYLE}</style></head><body>${clean}</body></html>`
 }
 
 const SYSTEM_DARK = '(prefers-color-scheme: dark)'
