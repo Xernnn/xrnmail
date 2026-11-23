@@ -240,7 +240,8 @@ stopping the rest.
   on the main process, where it would hang the window too.
 - Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
-  and made again from the whole message the first time it's opened. A forward takes the files of the
+  and made again from the whole message the first time it's opened, one message of a thread at a
+  time, since each takes a connection. A forward takes the files of the
   whole message, whatever the list says.
 - Gmail's own unsent drafts are in All Mail too. They're kept hidden, so a thread doesn't show them.
 

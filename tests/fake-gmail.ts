@@ -88,6 +88,8 @@ export class FakeGmail {
   dropNextConnection = false
   /** Answers LOGIN with this, a busy server's NO say, whatever the password. */
   loginAnswer: string | null = null
+  /** The most connections open at once, since it was last set. */
+  most = 0
   /** Answer NO to anything that would change the mailbox. */
   refuseWrites = false
   /** Take a connection and say nothing on it, not even hello, as a server that has stopped answering. */
@@ -267,6 +269,7 @@ export class FakeGmail {
 
   private serve(socket: Socket): void {
     this.sockets.add(socket)
+    this.most = Math.max(this.most, this.sockets.size)
     socket.on('error', () => undefined)
     socket.on('close', () => {
       this.sockets.delete(socket)

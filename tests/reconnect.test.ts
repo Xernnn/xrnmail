@@ -446,3 +446,19 @@ describe('sending', () => {
     expect(smtp.received).toBe(0)
   })
 })
+
+describe('a thread of messages too big to keep whole', () => {
+  it('lists their files over one connection at a time, not one each at once', async () => {
+    for (const c of ['a', 'b', 'c']) {
+      const attachment = { name: `${c}.pdf`, type: 'application/pdf', body: c.repeat(4.2 * 1024 * 1024) }
+      gmail.add(rawMail({ subject: `Scan ${c}`, attachment }), { arrived: new Date(clock - 30 * 3_600_000), thread: 99n })
+    }
+    await service.syncAll()
+    const ids = service.thread(ME, '99', false, false, false).map((m) => m.id)
+    expect(store.filesCut(ids)).toHaveLength(3)
+    gmail.most = gmail.connections
+    service.thread(ME, '99')
+    await eventually(() => expect(store.filesCut(ids)).toEqual([]))
+    expect(gmail.most).toBeLessThanOrEqual(2) // the files, and marking the thread read
+  })
+})

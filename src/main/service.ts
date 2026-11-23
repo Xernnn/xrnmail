@@ -1126,21 +1126,28 @@ export class MailService {
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
-    for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
+    const cut = this.store.filesCut(messages.map((m) => m.id))
+    if (cut.length > 0) background(this.listFiles(cut))
     return messages
   }
 
   /** A message cut short when it was stored lists only the files in the part that was kept. Once
    *  it's opened, the list is made again from the whole message, so each file can be opened, saved
-   *  and forwarded. Failing says nothing: the next look tries again. */
-  private async listFiles(id: number): Promise<void> {
-    if (this.listing.has(id)) return
-    this.listing.add(id)
-    try {
-      await this.wholeAttachments(id)
-      this.deps.changed()
-    } finally {
-      this.listing.delete(id)
+   *  and forwarded. Failing says nothing: the next look tries again. One message at a time: each
+   *  opens a connection, and a thread of scans opening them all at once came near the fifteen
+   *  Gmail allows, past which it turns sign-ins away. */
+  private async listFiles(ids: number[]): Promise<void> {
+    const mine = ids.filter((id) => !this.listing.has(id))
+    for (const id of mine) this.listing.add(id)
+    for (const id of mine) {
+      try {
+        await this.wholeAttachments(id)
+        this.deps.changed()
+      } catch {
+        // Tried again the next time it's opened.
+      } finally {
+        this.listing.delete(id)
+      }
     }
   }
 
