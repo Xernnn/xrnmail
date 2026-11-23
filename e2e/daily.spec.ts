@@ -1798,6 +1798,32 @@ test('a thread in a window of its own: it follows the thread, and the main windo
   expect(app.windows()).toHaveLength(1)
 })
 
+// The menu answered in the main window whichever window it was used in: F1 in a thread's own
+// window showed the keys in the main window, and Ctrl+P printed that.
+test('the menu in a thread\'s own window shows the keys there, and leaves writing to the main window', async () => {
+  run = await launch()
+  const { page, gmail, app } = run
+  gmail.add(rawMail({ subject: 'Lease', text: 'Signed copy inside.' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Lease').click()
+  const out = page.getByRole('toolbar', { name: 'Thread', exact: true }).getByRole('button', { name: 'Open in a window' })
+  const [solo] = await Promise.all([app.waitForEvent('window'), out.click()])
+  await expect(solo.getByRole('heading', { name: 'Lease' })).toBeVisible()
+  // As the menu does when it's used in that window: the window comes with the click.
+  const choose = (label: string): Promise<void> => app.evaluate(({ BrowserWindow, Menu }, wanted) => {
+    const from = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('solo=thread'))
+    const items = Menu.getApplicationMenu()?.items.flatMap((item) => item.submenu?.items ?? []) ?? []
+    items.find((item) => item.label === wanted)?.click(undefined, from)
+  }, label)
+  await choose('Keyboard Shortcuts')
+  await expect(solo.getByRole('heading', { name: 'Keys' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Keys' })).toHaveCount(0)
+  await solo.getByRole('button', { name: 'Done' }).click()
+  await choose('New Message')
+  await expect(page.getByRole('region', { name: 'Compose' })).toBeVisible()
+  await expect(solo.getByRole('region', { name: 'Compose' })).toHaveCount(0)
+})
+
 test('a thread deleted for good closes its window, once Undo has had its time', async () => {
   run = await launch()
   const { page, gmail, app } = run

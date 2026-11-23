@@ -13,7 +13,7 @@ import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
-import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
+import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
@@ -73,7 +73,14 @@ function tellPage(): void {
   }, 150)
 }
 
-const tellCommand = (command: AppCommand): void => window?.webContents.send('command', command)
+/** A command from the menu goes to the window it was given in when that window does it for itself;
+ *  the rest is the main window's, which comes forward for it if it was asked from another. */
+const tellCommand = (command: AppCommand, from?: Electron.BaseWindow): void => {
+  const solo = [...solos.values()].find((shown) => shown === from && !shown.isDestroyed())
+  if (solo && ownCommand(command)) return solo.webContents.send('command', command)
+  if (solo) showWindow()
+  window?.webContents.send('command', command)
+}
 
 /** Where a connection goes. The tests point every account at their fakes, in the clear. */
 function connection(server: Server, fake: string | undefined, account: AccountConfig, login: Login): ImapConfig {
