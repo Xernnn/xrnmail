@@ -818,9 +818,14 @@ test('an invitation that is over offers no answer, and a bounce offers no Block'
   await expect(page.locator('.thread-subject')).toHaveText('Undelivered Mail Returned to Sender')
   await expect(message.getByText('Your message could not be delivered.')).toBeVisible()
   await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0)
+  await page.getByRole('toolbar', { name: 'Thread', exact: true }).getByRole('button', { name: 'More', exact: true }).click()
+  await expect(page.locator('.popover').getByRole('button', { name: 'Print' })).toBeVisible()
+  await expect(page.locator('.popover').getByRole('button', { name: 'Block sender' })).toHaveCount(0)
 })
 
-test('the reader: actions over the thread, a pill by the sender, and Reply and Forward at the foot', async () => {
+// A blue Block pill sat beside Reply on every personal thread, the most prominent button on a
+// friend's mail; Block sender is under More with the other things to do about a sender.
+test('the reader: actions over the thread, Unsubscribe by a list\'s sender, Block under More, and Reply and Forward at the foot', async () => {
   run = await launch()
   const { page, gmail } = run
   gmail.add(rawMail({ subject: 'Plain', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(5) })
@@ -857,7 +862,11 @@ test('the reader: actions over the thread, a pill by the sender, and Reply and F
   await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Focused' }).click()
   await page.locator('.threads').getByText('Plain').click()
-  await message.getByRole('button', { name: 'Block' }).click()
+  await expect(page.locator('.thread-subject')).toHaveText('Plain')
+  await expect(message.getByRole('button', { name: 'Reply to this' })).toBeVisible()
+  await expect(message.getByRole('button', { name: 'Block' })).toHaveCount(0) // not beside Reply
+  await tools.getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('button', { name: 'Block sender' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Block' }).click()
   await expect(page.getByText('Blocked mai@example.com')).toBeVisible()
   await expect(page.locator('.threads').getByText('Plain')).toHaveCount(0)

@@ -123,8 +123,6 @@ function Message(props: {
   open: boolean
   /** The one that offers Unsubscribe, when a thread has several that could. */
   leaving: boolean
-  /** The one that offers to block its sender, where there's nothing to unsubscribe from. */
-  blocking: boolean
   /** It's in Trash or Spam. */
   bins: boolean
   own: string[]
@@ -140,7 +138,6 @@ function Message(props: {
   rsvp(message: number, answer: Rsvp): void
   reply(kind: ReplyKind, message: number): void
   unsubscribe(message: number): void
-  block(address: string): void
   trust(address: string): void
 }): ReactNode {
   const { message: m, open, leaving, bins, own, settings, toggle, onPeek, say, rsvp } = props
@@ -194,7 +191,6 @@ function Message(props: {
           ? <IconButton icon={ReplyAll} label="Reply all to this" click={() => props.reply('replyAll', m.id)} />
           : <IconButton icon={Reply} label="Reply to this" click={() => props.reply('reply', m.id)} />)}
         {leaving && <button className="pill soft" onClick={() => props.unsubscribe(m.id)}>Unsubscribe</button>}
-        {props.blocking && !leaving && <button className="pill soft" onClick={() => props.block(m.from.address)}>Block</button>}
         {!bins && (
           <div className="anchor">
             <IconButton icon={MoreVertical} label="Message actions" click={() => setMenu(!menu)} />
@@ -352,7 +348,6 @@ export function Reader(props: {
   const foldAt = newestFirst ? ordered.length - 1 : 1
   // Not from Trash or Spam: a spammer's link confirms the address is read, and that's all it does.
   const leaving = bins ? undefined : [...messages].reverse().find((m) => m.unsubscribe)
-  const blockable = [...messages].reverse().find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()) && !SYSTEM_SENDER.test(m.from.address))
   const several = last.to.length + last.cc.length > 1
   const isStraight = (address: string): boolean => vip !== null && !own.includes(address.toLowerCase()) && straightThrough(address, vip)
   const muted = sender !== undefined && (settings?.muted ?? []).includes(sender.toLowerCase())
@@ -447,7 +442,7 @@ export function Reader(props: {
               {bulkSender && !bins && (summarized
                 ? moreItem(Newspaper, 'Remove sender from Summary', () => props.summarize(bulkSender, false))
                 : moreItem(Newspaper, 'Add sender to Summary', () => props.summarize(bulkSender, true)))}
-              {sender && !bins && moreItem(Ban, 'Block sender', () => props.block(sender))}
+              {sender && !bins && !SYSTEM_SENDER.test(sender) && moreItem(Ban, 'Block sender', () => props.block(sender))}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
             </Popover>
@@ -475,10 +470,10 @@ export function Reader(props: {
                 <span className="fold-count">{hidden.length}</span> more {hidden.length === 1 ? 'email' : 'emails'}
               </button>
             )}
-            <Message message={m} open={open.has(m.id)} leaving={m === leaving} blocking={!bins && !leaving && m === blockable} bins={bins} own={own}
+            <Message message={m} open={open.has(m.id)} leaving={m === leaving} bins={bins} own={own}
               settings={settings} account={account} actions={actions} straight={isStraight(m.from.address)}
               toggle={() => toggle(m.id)} onPeek={setPeek} say={props.say} rsvp={props.rsvp} reply={props.reply}
-              unsubscribe={props.unsubscribe} block={props.block} trust={props.trust} />
+              unsubscribe={props.unsubscribe} trust={props.trust} />
           </div>
         ))}
       </div>
