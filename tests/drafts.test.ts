@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { draftCopy, outgoing } from '@main/compose'
@@ -8,6 +8,7 @@ import { parseDraft } from '@main/parse'
 import { changes, draftRaw, importedDraft, isBlank } from '@main/remote-drafts'
 import { MIGRATIONS, Store } from '@main/store'
 import type { Draft } from '@shared/types'
+import { png } from './files'
 
 const ME = 'me@example.com'
 
@@ -71,6 +72,54 @@ describe('a draft\'s copy on the server', () => {
     const edit = { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: '', html: 'Hi', text: 'Hi', quote: null }
     expect(changes(one, edit)).toBe(false)
     expect(changes(one, { ...edit, text: 'Hi!' })).toBe(true)
+  })
+})
+
+describe('pictures in the words', () => {
+  const shot = { id: 'f1', name: 'shot.png', size: png().length, type: 'image/png', cid: 'f1@xrnmail' }
+  const paths = (file: { id: string }): string => (file.id === 'f1' ? picture : '')
+  let picture = ''
+
+  it('go as parts of their own that the words name, with what is quoted carrying its own, and only the ones shown', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'xrnmail-pictures-'))
+    picture = join(folder, 'f1')
+    writeFileSync(picture, png())
+    try {
+      const forwarded = `<p>Look:</p><img alt="logo" src="data:image/png;base64,${png().toString('base64')}">`
+      const mail = outgoing(draft({
+        to: 'ada@example.com', subject: 'Pics', text: 'See [image: shot.png]', html: 'See <img src="cid:f1@xrnmail" alt="shot.png" style="max-width:100%">',
+        files: [shot, { ...shot, id: 'f2', cid: 'f2@xrnmail' }, { id: 'f3', name: 'plan.txt', size: 4, type: 'text/plain' }],
+        quote: { kind: 'forward', intro: 'Fwd', html: forwarded, text: 'Look:' }
+      }), ME, identity, paths, 0)
+      expect(mail.files.map((f) => f.name)).toEqual(['plan.txt']) // f2 was taken out of the words, so it doesn't go
+      expect(mail.pictures.map((p) => p.cid)).toEqual(['f1@xrnmail', expect.stringMatching(/@xrnmail$/)])
+      expect(mail.html).not.toContain('data:image')
+      expect(mail.html).toContain(`src="cid:${mail.pictures[1]?.cid}"`)
+      const raw = (await draftRaw(mail, '<pics@example.com>')).toString()
+      expect(raw).toContain('multipart/related')
+      expect(raw).toContain('Content-ID: <f1@xrnmail>')
+      expect(raw).toContain(`Content-ID: <${mail.pictures[1]?.cid}>`)
+      expect(raw).not.toContain('f2@xrnmail')
+      expect(raw).toContain('filename=plan.txt')
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  it('come back from the server where the text says they were', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'xrnmail-pictures-'))
+    picture = join(folder, 'f1')
+    writeFileSync(picture, png())
+    try {
+      const mail = draftCopy(draft({ to: 'ada@example.com', subject: 'Pics', text: 'Before\n[image: shot.png]\nAfter', html: 'Before<br><img src="cid:f1@xrnmail" alt="shot.png"><br>After', files: [shot] }),
+        ME, identity, paths, 0)
+      const back = importedDraft(await parseDraft(await draftRaw(mail, '<pics-2@example.com>')), ME, [ME], identity.signature)
+      expect(back.text).toBe('Before\n[image: shot.png]\nAfter')
+      expect(back.html).toBe('Before<br><img src="cid:f1@xrnmail" alt="shot.png" style="max-width:100%"><br>After')
+      expect(back.pictures.map((p) => [p.cid, p.name, p.type, p.content.equals(png())])).toEqual([['f1@xrnmail', 'shot.png', 'image/png', true]])
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
   })
 })
 

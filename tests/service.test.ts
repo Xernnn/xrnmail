@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
@@ -14,6 +14,7 @@ import { ImapWriter } from '@main/writer'
 import { gmailThreadUrl, isSafeExternalUrl, isSafeHubUrl } from '@main/safe-url'
 import { FakeGmail, rawMail } from './fake-gmail'
 import { FakeSmtp } from './fake-smtp'
+import { png } from './files'
 
 /** A busy laptop can take a while; only a wrong answer should fail a test. */
 const eventually = (check: () => void): Promise<void> => vi.waitFor(check, { timeout: 15_000, interval: 15 })
@@ -1379,6 +1380,55 @@ describe('sending', () => {
     expect(copy).not.toHaveBeenCalled()
     copy.mockRestore()
     expect(service.drafts()[0]?.files).toEqual([])
+  })
+
+  it('puts a picture in the words only when its own bytes say it is one, and sends it named by Content-ID', async () => {
+    const draft = await write()
+    const shot = service.addFileBytes(draft.id, 'shot.png', 'image/png', png(), true).files[0]
+    expect(shot).toMatchObject({ name: 'shot.png', type: 'image/png', cid: `${shot?.id}@xrnmail` })
+    expect(service.draftPicture(draft.id, shot?.id ?? '')).toBe(`data:image/png;base64,${png().toString('base64')}`)
+    const fake = service.addFileBytes(draft.id, 'run.png', 'image/png', Buffer.from('#!/bin/sh\necho hi'), true).files[1]
+    expect(fake).toMatchObject({ name: 'run.png', type: 'image/png' }) // attached, as any other file
+    expect(fake?.cid).toBeUndefined()
+    expect(() => service.draftPicture(draft.id, fake?.id ?? '')).toThrow("That picture isn't here any more.")
+    const gone = service.addFileBytes(draft.id, 'gone.png', 'image/png', png(), true).files[2]
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Hi', quote: null,
+      html: `<p>Look</p><img src="cid:${shot?.cid}" alt="shot.png">`, text: 'Look\n[image: shot.png]' })
+    service.send(draft.id)
+    // The one taken out of the words has gone already, and Undo of the send wouldn't bring it back.
+    expect(service.drafts()[0]?.files.map((f) => f.name)).toEqual(['shot.png', 'run.png'])
+    expect(existsSync(join(folder, String(draft.id), gone?.id ?? ''))).toBe(false)
+    await later(10_000)
+    const raw = smtp.sent[0]?.raw ?? ''
+    expect(raw).toContain('multipart/related')
+    expect(raw).toContain(`Content-ID: <${shot?.cid}>`)
+    expect(raw).toContain(`cid:${shot?.cid}`)
+    expect(raw).toContain('[image: shot.png]')
+    expect(raw).toContain('filename=run.png')
+    expect(raw).not.toContain('gone.png')
+  })
+
+  it('a forward keeps the pictures of the message it passes on in its words', async () => {
+    const lines = png().toString('base64')
+    gmail.add([
+      'From: Ada <ada@example.com>', `To: ${ME}`, 'Subject: Screenshot', 'Message-ID: <shot-mail@example.com>', 'MIME-Version: 1.0',
+      'Content-Type: multipart/related; boundary="REL"', '', '--REL', 'Content-Type: text/html; charset=utf-8', '',
+      '<p>Look at this:</p><img src="cid:shot@example.com">', '--REL', 'Content-Type: image/png', 'Content-Transfer-Encoding: base64',
+      'Content-ID: <shot@example.com>', 'Content-Disposition: inline; filename="shot.png"', '', lines, '--REL--', ''
+    ].join('\r\n'), { arrived: past(30) })
+    await service.syncAll()
+    const [message] = store.thread(ME, ref('Screenshot').thread, clock)
+    const forward = await service.startDraft({ kind: 'forward', message: message?.id ?? 0 })
+    expect(forward.files).toEqual([]) // in the words, not attached
+    service.saveDraft(forward.id, { ...forward, to: 'bao@example.com' })
+    service.send(forward.id)
+    await later(10_000)
+    const raw = smtp.sent[0]?.raw ?? ''
+    expect(raw).toContain('multipart/related')
+    expect(raw).not.toContain('data:image')
+    const cid = /Content-ID: <([^>]+)>/.exec(raw)?.[1]
+    expect(raw).toContain(`cid:${cid}`)
+    expect(raw.replace(/\r?\n/g, '')).toContain(lines)
   })
 
   it('removing an account takes its drafts and identity', async () => {

@@ -500,6 +500,15 @@ Writing and acting on mail gave strangers new things to aim at, so:
 - **The editor holds only what's typed.** A quoted message would otherwise put a stranger's HTML in the
   app's own page, next to the bridge. The quote stays out of the editor, is sanitised on its way into
   the draft, and shows only in a sandboxed frame. Pasting is as plain text, for the same reason.
+  A picture pasted or dropped is the one exception, and only as bytes: it becomes one of the draft's
+  files, marked with a Content-ID (only PNG, JPEG, GIF and WebP, by their own bytes; anything else is
+  attached), and the words name it `cid:…`. The editor shows it as a `data:` address the main process
+  makes from that file, and drops any other `<img>` whatever a draft says, so nothing in the editor
+  is ever fetched. Sending, and the copy in the service's Drafts, put each picture the words show in
+  a part of its own under `multipart/related`; pictures in what's quoted, which the reader holds as
+  `data:` addresses, go the same way. A picture taken out of the words stays on the draft until it's
+  sent, so Undo in the editor can put it back. The text part says `[image: name]` where each one
+  was, as Gmail's does, and a draft coming back from the server has its pictures put back there.
 - **Every reply starts in the composer.** Reply, Reply All and Forward at the foot of a thread open it,
   with the recipients, the address it goes from and the quote on show before anything is sent. There's
   no box under a thread to type into, as Edison has none, so all of a reply is decided where it can

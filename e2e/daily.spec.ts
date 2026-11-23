@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileS
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
-import { jar, pdf } from '../tests/files'
+import { jar, pdf, png } from '../tests/files'
 import { launch, ME, signIn, type Running } from './app'
 
 const LONG = { timeout: 15_000 }
@@ -2436,6 +2436,71 @@ test('what is dropped into the message comes in as plain text', async () => {
   await drag({ items: [], files: [file], dragOperationsMask: 1 }) // files dropped there are still attached
   await expect(composer(page).locator('.file-name')).toHaveText(['plan.txt'])
   await expect(editor).toHaveText('Bold words')
+})
+
+test('a picture pasted or dropped goes into the words, stays there in Drafts, and is sent as a part the words name', async () => {
+  run = await launch()
+  const { page, app, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  let box = composer(page)
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Subject').fill('Pictures')
+  const editor = box.getByLabel('Message')
+  await editor.click()
+  await page.keyboard.type('Look ')
+  await page.evaluate((picture) => {
+    const data = new DataTransfer()
+    data.items.add(new File([Uint8Array.from(atob(picture), (c) => c.charCodeAt(0))], 'shot.png', { type: 'image/png' }))
+    document.querySelector('.composer .editor')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, png().toString('base64'))
+  await expect(editor.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/)
+  // Dropped on the words, it goes in them too; only what isn't a picture is attached.
+  const place = await editor.boundingBox()
+  const cdp = await app.context().newCDPSession(page)
+  const [dropped, notes] = [join(run.savedTo, '..', 'dropped.png'), join(run.savedTo, '..', 'notes.txt')]
+  writeFileSync(dropped, png([200, 40, 40]))
+  writeFileSync(notes, 'notes')
+  for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+    await cdp.send('Input.dispatchDragEvent', { type, x: (place?.x ?? 0) + 20, y: (place?.y ?? 0) + 8, data: { items: [], files: [dropped, notes], dragOperationsMask: 1 } })
+  }
+  await expect(editor.locator('img')).toHaveCount(2)
+  await expect(box.locator('.file-name')).toHaveText(['notes.txt'])
+  await box.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Pictures').click()
+  box = composer(page)
+  await expect(box.getByLabel('Message').locator('img').first()).toHaveAttribute('src', /^data:image\/png;base64,/)
+  await expect(box.getByLabel('Message').locator('img')).toHaveCount(2)
+  await box.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  const raw = (smtp.sent[0]?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=') // as quoted-printable reads
+  expect(raw).toContain('multipart/related')
+  const cids = [...raw.matchAll(/Content-ID: <([^>]+)>/g)].map((m) => m[1])
+  expect(cids).toHaveLength(2)
+  for (const cid of cids) expect(raw).toContain(`<img src="cid:${cid}"`)
+  expect(raw).toContain('style="max-width:100%"') // as wide as the page it's read on, at most
+  expect(raw).toContain('filename=notes.txt')
+  expect(raw).not.toContain('data:image')
+})
+
+// The editor is in the app's own page: whatever a draft says, nothing in it is fetched from anywhere.
+test('the composer shows only a draft\'s own pictures, never one from elsewhere', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.evaluate(async () => {
+    const draft = await window.mail.startDraft({ kind: 'new', to: 'ada@example.com', subject: 'Odd draft' })
+    await window.mail.saveDraft(draft.id, {
+      account: draft.account, from: '', to: draft.to, cc: '', bcc: '', subject: draft.subject, quote: null, text: 'Hi',
+      html: 'Hi<img src="https://pictures.example/open.gif"><img src="cid:not-mine@example.com">'
+    })
+  })
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Odd draft').click()
+  await expect(composer(page).getByLabel('Message')).toHaveText('Hi')
+  await expect(composer(page).getByLabel('Message').locator('img')).toHaveCount(0)
 })
 
 test('unsubscribing with one click opens nothing', async () => {

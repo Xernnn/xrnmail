@@ -3,7 +3,7 @@ import { simpleParser, type AddressObject, type Attachment } from 'mailparser'
 import { plainName, reorders } from '@shared/names'
 import { splitQuoted } from '@shared/quoted'
 import { authenticated } from '@shared/images'
-import type { AccountConfig, Address, AttachmentInfo, HeaderDetails, SenderWarning } from '@shared/types'
+import { INLINE_PICTURES, type AccountConfig, type Address, type AttachmentInfo, type HeaderDetails, type SenderWarning } from '@shared/types'
 import { organization } from './avatars'
 import { headerDetails, trustedChecks } from './details'
 import { inviteOf, type Invite } from './invite'
@@ -373,6 +373,8 @@ export interface ParsedDraft {
   references: string
   /** Its files, not the pictures placed in its HTML. Cut drafts list none, since what's there of them is broken. */
   files: WholeAttachment[]
+  /** The pictures placed in its HTML, of the kinds the composer places, each with its Content-ID. */
+  pictures: (WholeAttachment & { cid: string })[]
 }
 
 export async function parseDraft(source: Buffer, cut = false): Promise<ParsedDraft> {
@@ -389,6 +391,8 @@ export async function parseDraft(source: Buffer, cut = false): Promise<ParsedDra
     text: text.slice(0, MAX_TEXT),
     inReplyTo: mail.inReplyTo ?? '',
     references: [mail.references ?? []].flat().join(' '),
-    files: cut ? [] : (mail.attachments ?? []).filter((a) => !a.related).map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content }))
+    files: cut ? [] : (mail.attachments ?? []).filter((a) => !a.related).map((a) => ({ name: a.filename ?? 'attachment', type: a.contentType, content: a.content })),
+    pictures: cut ? [] : (mail.attachments ?? []).filter((a) => a.related && a.cid && INLINE_PICTURES.includes(a.contentType.toLowerCase()))
+      .map((a) => ({ name: a.filename ?? 'image', type: a.contentType.toLowerCase(), content: a.content, cid: a.cid ?? '' }))
   }
 }

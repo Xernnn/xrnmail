@@ -40,7 +40,10 @@ kept on the laptop.
   message's menu.
 - **Deliver now:** works a set number of times a day, after a 30-second wait.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
-  that survive a restart, and addresses suggested from your mail. Replying starts from the buttons at
+  that survive a restart, and addresses suggested from your mail. A picture (PNG, JPEG, GIF or WebP)
+  pasted or dropped goes into the words where the caret is, and is sent as a part of the message the
+  words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
+  pictures of what it quotes in its words the same way. Replying starts from the buttons at
   the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
   it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
   not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,

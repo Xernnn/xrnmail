@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import SMTPConnection, { type SMTPConnectionAuth } from 'nodemailer/lib/smtp-connection'
-import type { OutgoingMail } from './compose'
+import { partsOf, type OutgoingMail } from './compose'
 import type { ImapConfig } from './source'
 import { noteAttempts } from './sync-log'
 
@@ -81,7 +81,7 @@ export class SmtpSender implements MailSender {
       date: new Date(mail.date),
       inReplyTo: mail.inReplyTo || undefined,
       references: mail.references || undefined,
-      attachments: mail.files.map((file) => ({ filename: file.name, path: file.path, contentType: file.type })),
+      attachments: partsOf(mail),
       icalEvent: mail.ical ? { method: 'REPLY', content: mail.ical } : undefined
     }
     const outgoing = new MailComposer(options).compile()

@@ -2,7 +2,7 @@ import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
   NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
-import { QUICK_SLOTS } from '@shared/types'
+import { INLINE_PICTURES, QUICK_SLOTS } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
@@ -11,8 +11,9 @@ import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
+import { sniff } from './avatars'
 import { dayKey, holdOf, isTime, isVip, nextBatchAfter, nextSummaryAfter, type BatchRules } from './batches'
-import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, replySubject, replyTargets } from './compose'
+import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, placePictures, quoteOf, replySubject, replyTargets } from './compose'
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
@@ -172,6 +173,12 @@ export interface ServiceDeps {
   earlyWaitSeconds?: number
   /** How long a search waits for typing to stop before asking the servers about older mail. */
   searchSettleMs?: number
+}
+
+/** The kind of picture that can go in a message's words, by its own bytes, or null. */
+const pictureType = (bytes: Buffer): string | null => {
+  const type = sniff(bytes)
+  return type && INLINE_PICTURES.includes(type) ? type : null
 }
 
 /** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
@@ -1693,7 +1700,7 @@ export class MailService {
         const parsed = await parseDraft(remote.source, cut)
         // Bigger than can be sent from here, it stays where it is: brought in without its files and
         // changed here, it would go back up without them.
-        if (cut || parsed.files.reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
+        if (cut || [...parsed.files, ...parsed.pictures].reduce((sum, file) => sum + file.content.length, 0) > MAX_DRAFT_BYTES) {
           this.tooBig.add(`${email}:${info.uidValidity}:${remote.uid}`)
           continue
         }
@@ -1717,8 +1724,14 @@ export class MailService {
 
   private keepImported(email: string, parsed: Awaited<ReturnType<typeof parseDraft>>, copy: DraftCopy, saved: number,
     own: string[], signature: string): void {
-    const id = this.store.addDraft({ account: email, ...importedDraft(parsed, email, own, signature), files: [], updated: saved }, copy)
-    const files = parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content))
+    const { pictures, ...imported } = importedDraft(parsed, email, own, signature)
+    const id = this.store.addDraft({ account: email, ...imported, files: [], updated: saved }, copy)
+    const files = [
+      ...parsed.files.map((file) => this.deps.files.fromBytes(id, safeFileName(file.name), file.type, file.content)),
+      // Only a picture by its own bytes goes in the words.
+      ...pictures.filter((picture) => pictureType(picture.content) === picture.type)
+        .map((picture) => ({ ...this.deps.files.fromBytes(id, safeFileName(picture.name), picture.type, picture.content), cid: picture.cid }))
+    ]
     if (files.length > 0) this.store.saveDraft({ ...this.draftOrThrow(id), files })
   }
 
@@ -1745,8 +1758,22 @@ export class MailService {
     return this.draftOrThrow(id)
   }
 
-  addFileBytes(id: number, name: string, type: string, bytes: Buffer): Draft {
-    return this.withFile(id, () => this.deps.files.fromBytes(id, name, type, bytes))
+  /** With [inline], a picture for the words, if its own bytes say it's one that goes there. */
+  addFileBytes(id: number, name: string, type: string, bytes: Buffer, inline = false): Draft {
+    const picture = inline ? pictureType(bytes) : null
+    return this.withFile(id, () => {
+      const file = this.deps.files.fromBytes(id, name, picture ?? type, bytes)
+      return picture ? { ...file, cid: `${file.id}@xrnmail` } : file
+    })
+  }
+
+  /** A picture in a draft's words, for the composer to show: only ever a picture, by its own bytes. */
+  draftPicture(id: number, file: string): string {
+    const found = this.draftOrThrow(id).files.find((f) => f.id === file && f.cid)
+    const bytes = found ? this.deps.files.read(id, found) : null
+    const type = bytes ? pictureType(bytes) : null
+    if (!bytes || !type) throw new Error("That picture isn't here any more.")
+    return `data:${type};base64,${bytes.toString('base64')}`
   }
 
   removeFile(id: number, file: string): Draft {
@@ -1764,6 +1791,15 @@ export class MailService {
     return outgoing(draft, from, this.identity(draft.account), (file) => this.deps.files.path(draft.id, file), this.deps.now())
   }
 
+  /** A picture taken out of the words stays on the draft while it's written, so Undo in the editor
+   *  can put it back; once it's sent, only the ones the words show are kept. */
+  private shownFiles(draft: Draft): Draft['files'] {
+    const shown = new Set(placePictures(draft.html, draft.files, () => '').pictures.map((picture) => picture.cid))
+    const [kept, gone] = [draft.files.filter((f) => !f.cid || shown.has(f.cid)), draft.files.filter((f) => f.cid && !shown.has(f.cid))]
+    gone.forEach((file) => this.deps.files.remove(draft.id, file))
+    return kept
+  }
+
   /** Nothing leaves here: it waits in the queue so Undo has something to call back. */
   send(id: number, at?: number): number {
     const draft = this.draftOrThrow(id)
@@ -1772,7 +1808,7 @@ export class MailService {
     const now = this.deps.now()
     if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
     const sendAt = at ?? now + this.settings().undoSeconds * 1000
-    this.store.saveDraft({ ...draft, state: 'queued', sendAt, error: null, updated: now })
+    this.store.saveDraft({ ...draft, files: this.shownFiles(draft), state: 'queued', sendAt, error: null, updated: now })
     // A message on its way isn't a draft: left in Drafts, another device could send it as well.
     this.letCopyGo(id)
     this.dirtySince.delete(id)

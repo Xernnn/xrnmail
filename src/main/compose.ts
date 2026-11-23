@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import addressparser from 'nodemailer/lib/addressparser'
 import type { Address, Draft, DraftFile, DraftStart, Identity, Quote } from '@shared/types'
 import type { MessageDetail } from './store'
@@ -6,6 +7,16 @@ import type { MessageDetail } from './store'
 
 export interface OutgoingFile extends DraftFile {
   path: string
+}
+
+/** A picture in the words, sent as a part of its own that the HTML names by its Content-ID: one of
+ *  the draft's own files, or one that came in what's quoted. */
+export interface OutgoingPicture {
+  cid: string
+  name: string
+  type: string
+  path?: string
+  content?: Buffer
 }
 
 export interface OutgoingMail {
@@ -19,6 +30,7 @@ export interface OutgoingMail {
   inReplyTo: string
   references: string
   files: OutgoingFile[]
+  pictures: OutgoingPicture[]
   /** An answer to a calendar invitation, as an .ics. */
   ical?: string
   /** When it's going out, in ms. */
@@ -150,19 +162,62 @@ export function draftCopy(draft: Draft, email: string, identity: Identity | unde
   return whole(draft, email, identity, paths, date, { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc) })
 }
 
+/** A picture an <img> names: one of the draft's own by its Content-ID, or one written into the
+ *  markup as data, which is what the message being quoted or forwarded holds. The markup is clean,
+ *  from the composer or the sanitiser, so every attribute is in double quotes. */
+const PICTURE_SRC = /(<img\b[^>]{0,4096}?\ssrc=")(?:cid:([^"\s]{1,256})|data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+))"/gi
+
+const EXTENSIONS: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
+
+/** The pictures the words show go as parts of their own, named by Content-ID, as mail apps send
+ *  them: a data: address is shown by almost none of them. A draft's own picture that the words no
+ *  longer show doesn't go at all. */
+export function placePictures(html: string, files: DraftFile[], paths: (file: DraftFile) => string): { html: string; pictures: OutgoingPicture[] } {
+  const own = new Map(files.flatMap((file) => (file.cid ? [[file.cid, file] as const] : [])))
+  const pictures = new Map<string, OutgoingPicture>()
+  const written = new Map<string, string>()
+  const placed = html.replace(PICTURE_SRC, (whole, start: string, cid: string | undefined, type: string | undefined, data: string | undefined) => {
+    if (cid !== undefined) {
+      const file = own.get(cid)
+      if (file && !pictures.has(cid)) pictures.set(cid, { cid, name: file.name, type: file.type, path: paths(file) })
+      return whole
+    }
+    if (!type || !data) return whole
+    let made = written.get(data)
+    if (!made) {
+      made = `${randomUUID()}@xrnmail`
+      written.set(data, made)
+      pictures.set(made, { cid: made, name: `image-${written.size}.${EXTENSIONS[type.toLowerCase()] ?? 'png'}`, type: type.toLowerCase(), content: Buffer.from(data, 'base64') })
+    }
+    return `${start}cid:${made}"`
+  })
+  return { html: placed, pictures: [...pictures.values()] }
+}
+
+/** What nodemailer is given for a message's files and pictures. */
+export function partsOf(mail: Pick<OutgoingMail, 'files' | 'pictures'>): { filename: string; contentType: string; path?: string; content?: Buffer; cid?: string }[] {
+  return [
+    ...mail.files.map((file) => ({ filename: file.name, path: file.path, contentType: file.type })),
+    ...mail.pictures.map((picture) => ({
+      filename: picture.name, contentType: picture.type, cid: picture.cid, ...(picture.path ? { path: picture.path } : { content: picture.content })
+    }))
+  ]
+}
+
 function whole(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
   people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc'>): OutgoingMail {
   const signature = identity?.signature.trim() ?? ''
+  const { html, pictures } = placePictures([
+    draft.html,
+    signature ? `<br><div>-- <br>${paragraphs(signature)}</div>` : '',
+    draft.quote ? quotedHtml(draft.quote) : ''
+  ].join(''), draft.files, paths)
   return {
     date,
     from: { name: identity?.name.trim() ?? '', address: email },
     ...people,
     subject: draft.subject.replace(/[\r\n]+/g, ' '),
-    html: [
-      draft.html,
-      signature ? `<br><div>-- <br>${paragraphs(signature)}</div>` : '',
-      draft.quote ? quotedHtml(draft.quote) : ''
-    ].join(''),
+    html,
     text: [
       draft.text,
       signature ? `\n\n-- \n${signature}` : '',
@@ -170,7 +225,8 @@ function whole(draft: Draft, email: string, identity: Identity | undefined, path
     ].join(''),
     inReplyTo: draft.inReplyTo,
     references: draft.references,
-    files: draft.files.map((file) => ({ ...file, path: paths(file) })),
+    files: draft.files.filter((file) => !file.cid).map((file) => ({ ...file, path: paths(file) })),
+    pictures,
     ical: draft.ical
   }
 }

@@ -382,7 +382,12 @@ export interface DraftFile {
   name: string
   size: number
   type: string
+  /** A picture placed in the words, which name it by this Content-ID, rather than attached. */
+  cid?: string
 }
+
+/** The pictures that go in a message's words when pasted or dropped there. Anything else is attached. */
+export const INLINE_PICTURES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
 /** The message being answered or passed on. Its HTML comes from a stranger, so the composer
  *  sanitises it before saving or sending, and it's never placed in the app's own page. */
@@ -567,7 +572,11 @@ export interface MailApi {
   undiscardDraft(id: number): Promise<void>
   /** Opens the system's file picker. Files only ever enter a draft through it, or by being dropped. */
   pickFiles(id: number): Promise<Draft>
-  addFile(id: number, name: string, type: string, bytes: ArrayBuffer): Promise<Draft>
+  /** With [inline], a picture for the words, which the draft names by its `cid`; one that isn't a
+   *  picture by its own bytes is attached. */
+  addFile(id: number, name: string, type: string, bytes: ArrayBuffer, inline?: boolean): Promise<Draft>
+  /** A picture in a draft's words, as a data: address for the composer to show. */
+  draftPicture(id: number, file: string): Promise<string>
   removeFile(id: number, file: string): Promise<Draft>
   /** With [at], waits until then; otherwise it waits out the undo time. Returns when it will leave. */
   send(id: number, at?: number): Promise<number>

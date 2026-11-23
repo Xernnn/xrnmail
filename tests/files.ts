@@ -69,8 +69,8 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, body, sum])
 }
 
-/** One white pixel. */
-export function png(): Buffer {
+/** One pixel, white unless another colour is given. */
+export function png(colour: [number, number, number] = [255, 255, 255]): Buffer {
   const header = Buffer.alloc(13)
   header.writeUInt32BE(1, 0)
   header.writeUInt32BE(1, 4)
@@ -79,7 +79,7 @@ export function png(): Buffer {
   return Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
     chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.from([0, 255, 255, 255]))),
+    chunk('IDAT', deflateSync(Buffer.from([0, ...colour]))),
     chunk('IEND', Buffer.alloc(0))
   ])
 }

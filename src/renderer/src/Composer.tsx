@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import type { AccountView, Address, Draft, DraftEdit, Quote, Settings } from '@shared/types'
+import { INLINE_PICTURES, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings } from '@shared/types'
 import { Avatar } from './Common'
 import { fileSize, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
@@ -16,6 +16,51 @@ const SAVE_AFTER_MS = 700
 /** What's quoted came from a stranger, so it's cleaned on its way into the draft: this copy is what gets sent. */
 const cleanQuote = (quote: Quote | null): Quote | null =>
   quote ? { ...quote, html: quote.html ? sanitize(quote.html) : null } : null
+
+/** What the editor may hold: what's typed, and pictures that are the draft's own. [keep] says what an
+ *  <img> shows instead of its src, or null for one that isn't the draft's, which goes: no picture
+ *  from anywhere else is ever fetched here. */
+function ownMarkup(html: string, keep: (src: string) => string | null): string {
+  const clean = sanitize(html)
+  if (!/<img\b/i.test(clean)) return clean
+  const box = document.createElement('template')
+  box.innerHTML = clean
+  for (const img of box.content.querySelectorAll('img')) {
+    const src = keep(img.getAttribute('src') ?? '')
+    if (src === null) img.remove()
+    else img.setAttribute('src', src)
+  }
+  return box.innerHTML
+}
+
+/** What's typed, as text, with "[image: name]" where a picture is, as the text part of a message
+ *  with pictures says it. A copy of the words is measured off screen, without its pictures, since
+ *  only words that are laid out have lines. */
+function textOf(editor: HTMLElement | null): string {
+  if (!editor) return ''
+  if (!editor.querySelector('img')) return editor.innerText
+  const box = document.createElement('template')
+  box.innerHTML = editor.innerHTML
+  for (const img of box.content.querySelectorAll('img')) img.replaceWith(`[image: ${img.getAttribute('alt') || 'image'}]`)
+  const copy = document.createElement('div')
+  copy.style.cssText = 'position:fixed;left:-100000px;top:0;width:600px;pointer-events:none'
+  copy.append(box.content)
+  document.body.append(copy)
+  try {
+    return copy.innerText
+  } finally {
+    copy.remove()
+  }
+}
+
+const asDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result))
+  reader.onerror = () => reject(reader.error ?? new Error("That picture couldn't be read."))
+  reader.readAsDataURL(blob)
+})
+
+const escapeAttribute = (text: string): string => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 const asRecipient = (who: Address): string => {
   if (!who.name) return who.address
@@ -162,11 +207,24 @@ export function Composer(props: {
   const gone = useRef(false)
   const selection = useRef<Range | null>(null)
   const ownDrag = useRef(false)
+  /** The draft's pictures the editor shows, by the data: address each is shown with. */
+  const shown = useRef(new Map<string, string>())
+  const filesNow = useRef(files)
+  filesNow.current = files
+
+  /** The editor's words, with each picture named by its Content-ID, as the draft keeps it. */
+  const written = (): string => {
+    const own = new Set(filesNow.current.flatMap((file) => (file.cid ? [file.cid] : [])))
+    return ownMarkup(editor.current?.innerHTML ?? '', (src) => {
+      const cid = src.startsWith('data:') ? shown.current.get(src) : src.startsWith('cid:') ? src.slice(4) : undefined
+      return cid && own.has(cid) ? `cid:${cid}` : null
+    })
+  }
 
   const collect = useCallback((): DraftEdit => ({
     account, from, to, cc, bcc, subject, quote,
-    html: sanitize(editor.current?.innerHTML ?? ''),
-    text: editor.current?.innerText ?? ''
+    html: written(),
+    text: textOf(editor.current)
   }), [account, from, to, cc, bcc, subject, quote])
 
   const latest = useRef(collect)
@@ -188,8 +246,18 @@ export function Composer(props: {
   }, [save])
 
   useEffect(() => {
-    if (editor.current) editor.current.innerHTML = sanitize(draft.html)
-    startText.current = editor.current?.innerText ?? ''
+    const own = new Set(draft.files.flatMap((file) => (file.cid ? [`cid:${file.cid}`] : [])))
+    if (editor.current) editor.current.innerHTML = ownMarkup(draft.html, (src) => (own.has(src) ? src : null))
+    startText.current = textOf(editor.current)
+    // The pictures come from the draft's own files, and are shown as data: addresses.
+    for (const file of draft.files) {
+      if (!file.cid || !editor.current?.querySelector('img')) continue
+      const cid = file.cid
+      void window.mail.draftPicture(draft.id, file.id).then((url) => {
+        shown.current.set(url, cid)
+        editor.current?.querySelectorAll('img').forEach((img) => { if (img.getAttribute('src') === `cid:${cid}`) img.setAttribute('src', url) })
+      }, () => undefined)
+    }
     if (!draft.to) return
     if (editor.current) {
       editor.current.focus()
@@ -330,11 +398,44 @@ export function Composer(props: {
     soon()
   }
 
-  const addFiles = async (list: FileList): Promise<void> => {
+  /** Where the caret is in the words, if it's there. */
+  const caret = (): Range | null => {
+    const picked = window.getSelection()
+    const range = picked && picked.rangeCount > 0 ? picked.getRangeAt(0) : null
+    return range && editor.current?.contains(range.startContainer) ? range.cloneRange() : null
+  }
+
+  /** A picture goes into the words at [at], or at their end, as wide as the page it's read on at
+   *  most. That's said on the picture itself, for whoever reads it, and so the editor has no rule of
+   *  its own for it: Chromium drops a style a rule already gives. */
+  const place = async (file: DraftFile, bytes: ArrayBuffer, at: Range | null): Promise<void> => {
+    const url = await asDataUrl(new Blob([bytes], { type: file.type }))
+    if (!file.cid || !editor.current) return
+    shown.current.set(url, file.cid)
+    editor.current.focus()
+    const range = at ?? document.createRange()
+    if (!at) {
+      range.selectNodeContents(editor.current)
+      range.collapse(false)
+    }
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    document.execCommand('insertHTML', false, `<img src="${url}" alt="${escapeAttribute(plainName(file.name))}" style="max-width:100%">`)
+    soon()
+  }
+
+  /** Pictures of the kinds mail shows go in the words, where [at] says; anything else is attached. */
+  const addFiles = async (list: File[], at: Range | null = null): Promise<void> => {
     try {
+      let had = new Set(filesNow.current.map((file) => file.id))
       for (const file of list) {
-        const next = await window.mail.addFile(draft.id, file.name, file.type || 'application/octet-stream', await file.arrayBuffer())
+        const bytes = await file.arrayBuffer()
+        const inline = INLINE_PICTURES.includes(file.type)
+        const next = await window.mail.addFile(draft.id, file.name, file.type || 'application/octet-stream', bytes, inline)
         setFiles(next.files)
+        const added = next.files.find((f) => !had.has(f.id))
+        had = new Set(next.files.map((f) => f.id))
+        if (added?.cid) await place(added, bytes, at)
       }
     } catch (e) {
       setError(problem(e))
@@ -356,13 +457,21 @@ export function Composer(props: {
     setDragging(false)
     if (event.dataTransfer.files.length === 0) return
     event.preventDefault()
-    void addFiles(event.dataTransfer.files)
+    // A picture dropped on the words goes where it was dropped; anywhere else, where the caret was.
+    const point = document.caretPositionFromPoint(event.clientX, event.clientY)
+    let at = caret()
+    if (point && editor.current?.contains(point.offsetNode)) {
+      at = document.createRange()
+      at.setStart(point.offsetNode, point.offset)
+      at.collapse(true)
+    }
+    void addFiles([...event.dataTransfer.files], at)
   }
 
   const paste = (event: ClipboardEvent): void => {
     if (event.clipboardData.files.length > 0) {
       event.preventDefault()
-      return void addFiles(event.clipboardData.files)
+      return void addFiles([...event.clipboardData.files], caret())
     }
     // As text: what's on the clipboard may well have come from a stranger's email.
     event.preventDefault()
@@ -437,9 +546,9 @@ export function Composer(props: {
           </div>
         )}
       </div>
-      {files.length > 0 && (
+      {files.some((file) => !file.cid) && (
         <ul className="attachments">
-          {files.map((file) => (
+          {files.filter((file) => !file.cid).map((file) => (
             <li key={file.id}>
               <Paperclip size={14} aria-hidden="true" />
               <span className="file-name">{plainName(file.name)}</span> <span className="muted">{fileSize(file.size)}</span>

@@ -618,12 +618,13 @@ function register(service: MailService, avatars: Avatars): void {
     const choice = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
     return service.addFilesFromDisk(number(id), choice.canceled ? [] : choice.filePaths)
   })
-  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown) => {
+  handle('addFile', (id: unknown, name: unknown, type: unknown, bytes: unknown, inline: unknown) => {
     const data = bytes instanceof ArrayBuffer ? Buffer.from(bytes) : ArrayBuffer.isView(bytes) ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null
     if (!data) throw new Error('Bad request')
     if (data.length > MAX_DROP) throw new Error('Mail services take about 18 MB of attachments at most.')
-    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data)
+    return service.addFileBytes(number(id), safeFileName(text(name, 500)), text(type, 200), data, inline === true)
   })
+  handle('draftPicture', (id: unknown, file: unknown) => service.draftPicture(number(id), text(file, 64)))
   handle('removeFile', (id: unknown, file: unknown) => service.removeFile(number(id), text(file, 64)))
   handle('send', (id: unknown, at: unknown) => service.send(number(id), at === undefined ? undefined : number(at)))
   handle('unsend', (id: unknown) => service.unsend(number(id)))
