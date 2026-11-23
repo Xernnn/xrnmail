@@ -2627,7 +2627,7 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   await settings.click()
   await expect(page.getByRole('navigation', { name: 'Settings' }).getByRole('button')).toHaveText([
     'General', 'Notifications', 'Accounts', 'Appearance', 'Customize Actions', 'Shortcuts', 'Signatures', 'Templates', 'Summary',
-    'Blocked Senders', 'Batches', 'xrnhub', 'About'
+    'Blocked Senders', 'Rules', 'Batches', 'xrnhub', 'About'
   ])
   await page.getByRole('button', { name: 'Appearance' }).click()
   await expect(page.getByRole('heading', { name: 'Appearance', level: 2 })).toBeVisible()
@@ -2721,7 +2721,7 @@ test('Settings and adding an account have short labels and figures, and no sente
   const settings = page.getByRole('dialog', { name: 'Settings' })
   const words = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length
   const pages = await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button').allInnerTexts()
-  expect(pages).toHaveLength(13)
+  expect(pages).toHaveLength(14)
   let seen = ''
   for (const name of pages) {
     await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: name.trim(), exact: true }).click()

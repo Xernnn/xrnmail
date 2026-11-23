@@ -53,7 +53,7 @@ const TAB_WORDS: Record<Tab, string> = {
   templates: 'template ready text',
   summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
-  rules: 'mail rules filters conditions actions label move folder archive read flag delete important summary straight through mute apply now',
+  rules: 'mail rules filters conditions actions label move folder archive read flag delete important summary straight through apply now',
   batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
   hub: 'connect counts',
   about: 'version'
