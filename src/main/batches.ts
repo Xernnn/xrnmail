@@ -33,6 +33,8 @@ export interface Arrival {
   arrived: number
   fromAddress: string
   labels: string[]
+  /** A mail rule's say: the Summary, or straight through, whoever sent it. */
+  rule?: 'summary' | 'straight' | null
 }
 
 export const isTime = (text: string): boolean => TIME.test(text)
@@ -89,13 +91,16 @@ export function closeness(address: string, list: string[]): number {
  * was added, your own sent mail, and mail filed away by a filter are there at once. A sender in the
  * Summary waits for the Summary, whatever the batches say, and one let straight through doesn't
  * wait; named in both, by an address in one and its @domain in the other, the address is the
- * narrower choice and wins. Everyone else waits for the next batch.
+ * narrower choice and wins. A mail rule that said which beats both lists, since it was made for
+ * this one message. Everyone else waits for the next batch.
  */
 export function holdOf(mail: Arrival, ownAddress: string, holdFrom: number, rules: BatchRules): Hold {
   const now = { at: mail.arrived, summary: false }
   if (mail.arrived <= holdFrom) return now
   if (!mail.labels.includes('\\Inbox')) return now
   if (mail.fromAddress.toLowerCase() === ownAddress.toLowerCase()) return now
+  if (mail.rule === 'straight') return now
+  if (mail.rule === 'summary' && rules.summary) return { at: nextSummaryAfter(mail.arrived, rules.summary), summary: true }
   const summary = rules.summary ? closeness(mail.fromAddress, rules.summary.senders) : 0
   const straight = closeness(mail.fromAddress, rules.vip)
   if (rules.summary && summary > 0 && summary >= straight) return { at: nextSummaryAfter(mail.arrived, rules.summary), summary: true }

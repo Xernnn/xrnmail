@@ -12,6 +12,7 @@ import type {
 import { cleanSidebar } from '@shared/sidebar'
 import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
+import { cleanRule } from '@shared/rules'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
 import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
@@ -529,6 +530,11 @@ function register(service: MailService, avatars: Avatars): void {
   handle('saveSummary', (summary: unknown) => service.saveSummary(summarySettings(summary)))
   handle('summarySenders', () => service.summarySenders())
   handle('editSenders', (name: unknown, addresses: unknown, on: unknown) => service.editSenders(senderList(name), texts(addresses, 500, 320), on === true))
+  handle('mailRules', () => service.mailRules())
+  handle('saveRule', (rule: unknown) => service.saveRule(cleanRule(rule)))
+  handle('deleteRule', (id: unknown) => service.deleteRule(number(id)))
+  handle('moveRule', (id: unknown, to: unknown) => service.moveRule(number(id), number(to)))
+  handle('applyRule', (id: unknown) => service.applyRule(number(id)))
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())

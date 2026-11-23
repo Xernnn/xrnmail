@@ -479,6 +479,42 @@ this reaches the server, where the mail sits in the inbox as usual.
   time, says so the same way instead of announcing its mail as new. Muted senders count in neither.
 - xrnhub hears only about batches.
 
+## Mail rules
+
+`shared/rules.ts` says what a rule is, and `cleanRule` cleans every one the page sends and the profile
+holds; `main/rules.ts` says whether one holds for a message and what the ones that hold ask for. They
+are kept in `rules`, in their order, and an id is never given out twice.
+
+- They run in `toStored` (`ruling` in `SyncOptions`), as a sync stores each new message and before
+  `holdOf`. A rule that archives, files or deletes makes it mail that doesn't wait, as a filter on
+  the server does. Let straight through and Add to Summary beat both sender lists (`Arrival.rule`),
+  since the rule was made for this message. Mute keeps it out of the sync's notice and the tick's
+  count. What only this laptop knows of is kept on the message (`by_rule`), so `retime` leaves a
+  rule's Summary alone.
+- Only new inbox mail is looked at: from after the account was added, not in Trash or Spam, not from a
+  blocked sender (it's going to Trash), and not while a folder starts over. Mail from before the
+  window that a search brings is stored by `addOutside`, never by a sync, so no rule sees it.
+- What they ask of the server goes through `change` once the message is stored, with no wait, so it's
+  shown at once, waits out being offline and is put back if refused, like anything done by hand. On
+  Gmail that's the labels, then the flags, then Archive or Delete; on a folder server the flags,
+  then one move: Delete, or else the first folder named, or else Archive. A change that would change
+  nothing isn't queued.
+- A message is looked at once. `rules_done` notes the account and Gmail's id, or the Message-ID, or
+  failing both a hash of sender, subject and arrival. A move on a server without UIDPLUS drops the
+  row, and the next sync stores the message again where it went; brought back to the inbox on the
+  phone, it would have been moved away again. The keeping step lets go of notes older than the
+  window and raises `rules-floor:<account>`, under which everything counts as looked at, so the mail
+  a longer window brings back isn't new.
+- A pattern is JavaScript's, which backtracks: `(a+)+$` over forty a's and a "!" doesn't finish. Each
+  runs in a `vm` context with a 50 ms limit, over the first 100,000 characters of each field, and one
+  that runs out never runs again until a restart, so it costs a pass 50 ms once. Patterns are 200
+  characters at most, and one that doesn't compile is turned down when the rule is saved.
+- Apply now runs one rule, on or off, over the inbox mail that can be seen (`ruleRows`): one group of
+  changes that waits out Undo, as a selection's would. It leaves out Add to Summary, straight through
+  and Mute, which are about mail arriving, and says how many messages it changed and what it did.
+- There's no forwarding. A rule forwarding to a mistyped address would send mail to a stranger, with
+  nobody seeing it go.
+
 ## Hostile mail
 
 A stranger writes every email, and the window holds a bridge to all of them. So there are several

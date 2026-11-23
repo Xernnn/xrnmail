@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
 } from 'lucide-react'
 import {
   QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type SummarySettings, type SwipeAction, type Template
@@ -13,6 +13,7 @@ import {
   COMMANDS, FIXED, holder, KEY_SETS, keyName, keysOf, rebound, reset, spell, unbindable, type KeyChanges, type KeyCommand, type KeySet
 } from '@shared/keys'
 import { forgetFaces } from './pictures'
+import { Rules } from './Rules'
 import { AddAccount } from './Setup'
 import { AccountFace } from './Sidebar'
 import { SummarySchedule } from './Summary'
@@ -25,7 +26,7 @@ const KEEP_DAYS = [30, 90, 365, 1095]
 type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 export type Tab =
-  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'batches' | 'hub' | 'about'
+  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'rules' | 'batches' | 'hub' | 'about'
 
 type TabIcon = ComponentType<{ className?: string; size?: number; 'aria-hidden'?: 'true' }>
 
@@ -37,7 +38,7 @@ const TABS: [Tab, string, TabIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
   ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
-  ['batches', 'Batches', Clock], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
+  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
 ]
 
 /** What each page holds, for the search box. */
@@ -52,6 +53,7 @@ const TAB_WORDS: Record<Tab, string> = {
   templates: 'template ready text',
   summary: 'subscription summary digest newsletters daily weekly schedule time turn off',
   blocked: 'senders block unblock trash',
+  rules: 'mail rules filters conditions actions label move folder archive read flag delete important summary straight through apply now',
   batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
   hub: 'connect counts',
   about: 'version'
@@ -697,6 +699,7 @@ function Pages(props: {
   ask: Ask
   change: Change
   editMenu?: () => void
+  version: number
 }): ReactNode {
   const { page, accounts, settings, change } = props
   const save: Save = (patch) => change(() => ({ profile: patch }))
@@ -714,6 +717,7 @@ function Pages(props: {
       {page === 'templates' && <Templates templates={settings.templates} save={(edit) => change((now) => ({ profile: { templates: edit(now.templates) } }))} />}
       {page === 'summary' && <Summary summary={settings.summary} save={(summary) => change(() => ({ summary }))} ask={props.ask} />}
       {page === 'blocked' && <Blocked blocked={settings.blocked} senders={senders} />}
+      {page === 'rules' && <Rules accounts={accounts} version={props.version} undoSeconds={settings.undoActionSeconds} ask={props.ask} />}
       {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} change={change} />}
       {page === 'hub' && <Hub settings={settings} />}
       {page === 'about' && <About />}
@@ -777,7 +781,7 @@ export function SettingsDialog(props: {
           <button className="quiet" onClick={props.close}>Done</button>
         </header>
         {failure && <p className="error settings-failure" role="alert">{failure}</p>}
-        {settings && <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} change={change} editMenu={props.editMenu} />}
+        {settings && <Pages page={page} accounts={props.accounts} settings={settings} ask={props.ask} change={change} editMenu={props.editMenu} version={props.version} />}
       </div>
     </dialog>
   )

@@ -1,10 +1,11 @@
-import { labelsOf } from './actions'
+import type { MailAction } from '@shared/types'
+import { applied, labelsOf } from './actions'
 import type { Sorted } from './assistant'
 import { holdOf, type BatchRules } from './batches'
 import { NO_DETAILS } from './details'
 import { checkedBy, MAX_SOURCE, parseMail, type ParsedMail, type Receiver } from './parse'
 import { threadOf, type MailboxRef, type MailSource, type RemoteMail } from './source'
-import type { Store, StoredMail } from './store'
+import { RULE_QUIET, RULE_STRAIGHT, RULE_SUMMARY, type Store, type StoredMail } from './store'
 
 const CHUNK = 40
 const DAY_MS = 86_400_000
@@ -22,8 +23,13 @@ export interface SyncOptions {
   now: number
   /** Told after each chunk, so the list fills as it goes on a first sync. */
   progress?: (done: number, total: number) => void
-  /** Told about each new message, except when a folder is starting over. */
-  added?: (mail: StoredMail, id: number, holdFrom: number) => void
+  /** Told about each new message, except when a folder is starting over, with what the mail rules
+   *  asked of the server for it. */
+  added?: (mail: StoredMail, id: number, holdFrom: number, ruled: Ruled | null) => void
+  /** What the mail rules make of a new message, asked before its moment is worked out, so a rule
+   *  that files it away, lets it through or holds it for the Summary decides that; null when they
+   *  have nothing to say. Not asked when a folder is starting over. */
+  ruling?: (mail: ParsedMail, remote: RemoteMail, labels: string[], holdFrom: number) => Ruled | null
   /** Messages in a folder with a change on its way. What the server says about them is out of date. */
   busy?: (box: string) => Set<number>
   /** Which side of the inbox it goes, and what the Assistant makes of it. */
@@ -37,6 +43,19 @@ export interface SyncOptions {
    *  pass that's under way stops instead of putting the mail back. */
   stopped?: () => boolean
 }
+
+/** What the mail rules made of a message as it arrived. */
+export interface Ruled {
+  /** What names it on the server, so it's looked at once. */
+  key: string
+  /** For the server, in order, through the queue like any change. */
+  changes: MailAction[]
+  hold: 'summary' | 'straight' | null
+  quiet: boolean
+}
+
+/** What the rules asked of the server for a message being stored, until it's stored. */
+const rulings = new WeakMap<StoredMail, Ruled>()
 
 /** The account was removed while its pass was running. */
 class SyncStopped extends Error {}
@@ -84,8 +103,13 @@ export async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boole
   const labels = labelsOf(box, remote.labels, gmail)
   const sorted = options.sort?.(mail) ?? { focused: true, facts: null }
   const rules = typeof options.rules === 'function' ? options.rules() : options.rules
-  const hold = holdOf({ arrived: remote.arrived, fromAddress: mail.from.address, labels }, options.email, holdFrom, rules)
-  return {
+  const ruled = mail === UNREADABLE ? null : options.ruling?.(mail, remote, labels, holdFrom) ?? null
+  // Filed away by a rule, it's there at once, as what a filter on the server files away is.
+  const state = { id: 0, box: box.id, labels, seen: remote.seen, flagged: remote.flagged, hidden: false }
+  const after = (ruled?.changes ?? []).reduce(applied, state).labels
+  const hold = holdOf({ arrived: remote.arrived, fromAddress: mail.from.address, labels: after, rule: ruled?.hold }, options.email, holdFrom, rules)
+  const byRule = !ruled ? 0 : (ruled.quiet ? RULE_QUIET : 0) | (ruled.hold === 'summary' ? RULE_SUMMARY : ruled.hold === 'straight' ? RULE_STRAIGHT : 0)
+  const stored: StoredMail = {
     account: options.account,
     box: box.id,
     uid: remote.uid,
@@ -115,8 +139,11 @@ export async function toStored(remote: RemoteMail, box: MailboxRef, gmail: boole
     focused: sorted.focused,
     facts: sorted.facts,
     warnings: checked.warnings,
-    details: mail === UNREADABLE ? null : checked.details
+    details: mail === UNREADABLE ? null : checked.details,
+    byRule
   }
+  if (ruled) rulings.set(stored, ruled)
+  return stored
 }
 
 async function syncBox(source: MailSource, store: Store, options: SyncOptions, box: MailboxRef, holdFrom: number): Promise<SyncResult> {
@@ -140,11 +167,11 @@ async function syncBox(source: MailSource, store: Store, options: SyncOptions, b
       const wanted = new Set(missing.slice(i, i + CHUNK))
       for await (const remote of source.fetch([...wanted], MAX_SOURCE)) {
         if (!wanted.has(remote.uid)) continue
-        const stored = await toStored(remote, box, source.gmail, options, holdFrom)
+        const stored = await toStored(remote, box, source.gmail, startingOver ? { ...options, ruling: undefined } : options, holdFrom)
         goOn(options)
         const id = store.addMail(stored)
         added++
-        if (id !== null && !startingOver) options.added?.(stored, id, holdFrom)
+        if (id !== null && !startingOver) options.added?.(stored, id, holdFrom, rulings.get(stored) ?? null)
       }
       options.progress?.(Math.min(i + CHUNK, missing.length), missing.length)
     }

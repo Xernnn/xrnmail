@@ -2,12 +2,13 @@ import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
   NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
-import { QUICK_SLOTS } from '@shared/types'
+import { IMPORTANT, QUICK_SLOTS } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
 import { cleanSidebar } from '@shared/sidebar'
 import { cleanSearches, withSearch } from '@shared/searches'
 import { cleanLater, DEFAULT_LATER } from '@shared/later'
 import { cleanAllChanges, isKeySet } from '@shared/keys'
+import { MAX_RULES, type MailRule, type RuleApplied, type RuleEdit } from '@shared/rules'
 import { configFor, provider, providerFor, type Provider } from '@shared/providers'
 import { applied, binOf, endsSnooze, INBOX, labelsOf, reachesBins, takesAway, touched, type MailState } from './actions'
 import { sortMail } from './assistant'
@@ -16,6 +17,8 @@ import { draftCopy, escapeHtml, forwardSubject, outgoing, parseMailto, quoteOf, 
 import { MAX_DRAFT_BYTES, type DraftFiles } from './draft-files'
 import { replyIcs } from './invite'
 import { pollDeviceCode, refreshTokens, SignInExpired, startDeviceCode, type DeviceCode, type Tokens } from './oauth'
+import { changesOf, decide, ruleHolds, rulingOf, type RuleMail } from './rules'
+import { createHash } from 'node:crypto'
 import { NO_DETAILS } from './details'
 import { attachmentsOf, detailsOf, makeSnippet, parseDraft, parseMail, receiverOf, SNIPPET_RULES, type ParsedMail, type WholeAttachment } from './parse'
 import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, importedDraft, isBlank, MAX_DRAFT_SOURCE } from './remote-drafts'
@@ -23,10 +26,10 @@ import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFile
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { OldMail, SEARCH_SETTLE_MS } from './server-search'
-import { cleanSecret, TooBig, type MailSource, type MailWatcher } from './source'
+import { cleanSecret, TooBig, type MailSource, type MailWatcher, type RemoteMail } from './source'
 import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
-import { syncAccount } from './sync'
+import { syncAccount, type Ruled } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
 
 /** Everything the app does, with the clock and the outside world passed in. */
@@ -173,6 +176,41 @@ export interface ServiceDeps {
   earlyWaitSeconds?: number
   /** How long a search waits for typing to stop before asking the servers about older mail. */
   searchSettleMs?: number
+}
+
+/** What names a message on its account's server whatever folder it's in: Gmail's own id, or its
+ *  Message-ID, or failing both who sent it what, when. */
+function ruleKey(remote: RemoteMail, mail: ParsedMail): string {
+  if (remote.gmailId) return `g:${remote.gmailId}`
+  if (mail.messageId) return `m:${mail.messageId}`
+  return `h:${createHash('sha256').update(`${mail.from.address}\n${mail.subject}\n${remote.arrived}`).digest('hex')}`
+}
+
+const ruleMail = (mail: ParsedMail): RuleMail => ({
+  from: mail.from, to: mail.to, cc: mail.cc, subject: mail.subject, text: mail.text, list: mail.details.list,
+  attachments: mail.attachments.map((a) => a.name)
+})
+
+const changesSomething = (state: MailState, action: MailAction): boolean => {
+  const next = applied(state, action)
+  return next.seen !== state.seen || next.flagged !== state.flagged || next.labels.join('\n') !== state.labels.join('\n')
+}
+
+/** What a change to mail is called in Apply now's note. */
+const doneBy = (action: MailAction): RuleApplied['did'] => {
+  switch (action.kind) {
+    case 'label':
+      return action.label === IMPORTANT ? 'important' : 'label'
+    case 'star':
+      return 'flag'
+    case 'trash':
+    case 'move':
+    case 'archive':
+    case 'read':
+      return action.kind
+    default:
+      return null
+  }
 }
 
 /** Work nobody waits for. It can outlive the store when the app quits, and that's harmless: what
@@ -852,12 +890,19 @@ export class MailService {
         sort: (mail) => sortMail(mail, own, focusRules.get(mail.from.address.toLowerCase()) ?? null, knows(mail.from.address)),
         parse: this.deps.parse,
         receiver: receiverOf(config, own),
-        added: (mail, id, holdFrom) => {
+        ruling: (mail, remote, labels, holdFrom) => this.ruled(email, mail, remote, labels, holdFrom),
+        added: (mail, id, holdFrom, ruled) => {
+          if (ruled) this.followRules(email, id, mail.arrived, ruled)
           if (mail.arrived <= holdFrom || binOf(mail.labels) > 0) return
           const current = this.settings() // a sender blocked or muted meanwhile counts
           if (isVip(mail.from.address, current.blocked)) return void blocked.push(id)
           if (mail.from.address) senders.push(mail.from.address)
-          if (!isVip(mail.from.address, current.muted) && this.worthTelling(mail.labels, mail.from.address, mail.seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
+          // Where the rules left it: filed away, or read, it isn't news.
+          const left = ruled ? this.store.visibleState(id) : null
+          if (ruled && (ruled.quiet || !left)) return
+          const labels = left?.labels ?? mail.labels
+          const seen = left?.seen ?? mail.seen
+          if (!isVip(mail.from.address, current.muted) && this.worthTelling(labels, mail.from.address, seen, email, mail.focused) && mail.releaseAt <= this.lastTick) {
             if (mail.summary) summed.push(mail.from.name || mail.from.address)
             else {
               fresh++
@@ -892,6 +937,105 @@ export class MailService {
     if (senders.length > 0) this.deps.noticed?.(unique(senders.map((a) => a.toLowerCase())))
     if (fresh > 0) this.deps.landed?.(fresh, fresh === 1 ? preview : undefined)
     if (summed.length > 0) this.deps.summarized?.(summed.length, unique(summed))
+  }
+
+  /** The rules that are on, in their order: read again only once they change. */
+  private rulesOn: MailRule[] | null = null
+
+  private activeRules(email?: string): MailRule[] {
+    this.rulesOn ??= this.store.rules().filter((rule) => rule.on)
+    return this.rulesOn.filter((rule) => email === undefined || !rule.account || rule.account === email)
+  }
+
+  /** What the rules make of a message a sync is storing: only new mail in the inbox, from after the
+   *  account was added, that they haven't looked at before. A blocked sender's is going to Trash
+   *  whatever they say. */
+  private ruled(email: string, mail: ParsedMail, remote: RemoteMail, labels: string[], holdFrom: number): Ruled | null {
+    if (remote.arrived <= holdFrom || !labels.includes(INBOX) || binOf(labels) > 0) return null
+    if (isVip(mail.from.address, this.settings().blocked)) return null
+    const rules = this.activeRules(email)
+    if (rules.length === 0) return null
+    const key = ruleKey(remote, mail)
+    if (this.store.ruledAlready(email, key, remote.arrived)) return null
+    const ruling = decide(rules, ruleMail(mail))
+    const { gmail } = this.config(email)
+    return { key, changes: changesOf(ruling, gmail, this.folders(email)), hold: ruling.hold, quiet: ruling.mute }
+  }
+
+  /** A message the rules have looked at is noted, and what they asked of the server goes into the
+   *  queue as any change does, so it's shown at once, waits out being offline, and is put back if
+   *  the server won't have it. One that would change nothing isn't sent. */
+  private followRules(email: string, id: number, arrived: number, ruled: Ruled): void {
+    this.store.markRuled(email, ruled.key, arrived)
+    const group = this.nextGroup()
+    for (const action of ruled.changes) {
+      const state = this.store.visibleState(id)
+      if (!state) return
+      if (changesSomething(state, action)) this.change(email, [state], action, group, 0)
+    }
+  }
+
+  /** The mail rules, in their order. */
+  mailRules(): MailRule[] {
+    return this.store.rules()
+  }
+
+  /** A rule kept, new or changed, for an account that's here or for all of them. A rule left with no
+   *  name is named by its place. */
+  saveRule(edit: RuleEdit): MailRule {
+    const rules = this.store.rules()
+    const old = edit.id === undefined ? undefined : rules.find((rule) => rule.id === edit.id)
+    if (edit.id !== undefined && !old) throw new Error('That rule is gone.')
+    if (!old && rules.length >= MAX_RULES) throw new Error(`${MAX_RULES} rules at most.`)
+    if (edit.account && !this.emails().includes(edit.account) && edit.account !== old?.account) throw new Error('That account is gone.')
+    const name = edit.name || old?.name || `Rule ${rules.length + 1}`
+    const id = this.store.saveRule({ ...edit, name })
+    if (id === null) throw new Error('That rule is gone.')
+    this.rulesOn = null
+    this.deps.changed()
+    return { ...edit, name, id }
+  }
+
+  deleteRule(id: number): void {
+    this.store.deleteRule(id)
+    this.rulesOn = null
+    this.deps.changed()
+  }
+
+  /** A rule to [to] in the order, counting from 0. */
+  moveRule(id: number, to: number): void {
+    this.store.moveRule(id, to)
+    this.rulesOn = null
+    this.deps.changed()
+  }
+
+  /** Apply now: a rule, on or off, over the inbox kept here, as if each message had just come. What
+   *  goes to the server waits out Undo, as anything else that takes mail away does, and Undo puts it
+   *  all back. What only matters as mail arrives (the Summary, straight through, muting) is left
+   *  out: it's here already. */
+  applyRule(id: number): RuleApplied {
+    const rule = this.store.rules().find((r) => r.id === id)
+    if (!rule) throw new Error('That rule is gone.')
+    const now = this.deps.now()
+    const group = this.nextGroup()
+    const wait = this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS
+    const ruling = rulingOf(rule)
+    const changed = new Set<number>()
+    const did = new Set<RuleApplied['did']>()
+    for (const email of this.emails().filter((e) => !rule.account || rule.account === e)) {
+      const matched: number[] = []
+      for (const row of this.store.ruleRows(email, now)) if (ruleHolds(rule, row.mail)) matched.push(row.id)
+      if (matched.length === 0) continue
+      for (const action of changesOf(ruling, this.config(email).gmail, this.folders(email))) {
+        const states = matched.map((m) => this.store.visibleState(m)).filter((s) => s !== null).filter((s) => changesSomething(s, action))
+        if (states.length === 0) continue
+        this.change(email, states, action, group, wait)
+        states.forEach((s) => changed.add(s.id))
+        did.add(doneBy(action))
+      }
+    }
+    const order: RuleApplied['did'][] = ['trash', 'move', 'label', 'archive', 'read', 'flag', 'important']
+    return { count: changed.size, undo: changed.size > 0 ? group : null, did: order.find((kind) => did.has(kind)) ?? null }
   }
 
   /** What decides when mail lands: the batches, who comes straight through, and the Summary. Live,
@@ -944,10 +1088,10 @@ export class MailService {
       // A muted sender's mail lands like any other, and only goes unannounced.
       const muted = this.settings().muted
       const quiet = this.quietOther()
-      const loud = senders.filter((mail) => !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
+      const loud = senders.filter((mail) => !mail.quiet && !isVip(mail.from, muted) && (mail.focused || !quiet)).length + woken
       if (loud > 0) this.deps.landed?.(loud)
       // A Summary is announced as one, apart from the batch.
-      const told = summed.filter((mail) => !isVip(mail.from, muted))
+      const told = summed.filter((mail) => !mail.quiet && !isVip(mail.from, muted))
       if (told.length > 0) this.deps.summarized?.(told.length, unique(told.map((mail) => mail.name || mail.from)))
       this.deps.changed()
     }
@@ -1144,12 +1288,17 @@ export class MailService {
       spam: this.store.spamCount(now),
       assistant: this.store.assistantCounts(now),
       summary: {
-        next: summary.senders.length > 0 ? nextSummaryAfter(now, summary) : null,
+        next: summary.senders.length > 0 || this.feedsSummary() ? nextSummaryAfter(now, summary) : null,
         held: this.store.summaryHeld(now),
         unread: this.store.summaryUnread(now),
         latest: this.store.latestSummary(now)
       }
     }
+  }
+
+  /** A rule that's on can hold mail for the Summary with nobody in it. */
+  private feedsSummary(): boolean {
+    return this.activeRules().some((rule) => rule.actions.some((a) => a.kind === 'summary'))
   }
 
   private nextBatch(now: number): number | null {
