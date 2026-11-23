@@ -664,6 +664,14 @@ The window is laid out as Edison Mail for Mac's is, rebuilt in this code from wh
   composer keeps what's typed, or takes away a draft with nothing in it, and then closes the window
   itself; one that doesn't answer in two seconds is closed anyway. A draft has one editor: opening
   it from Drafts while it has a window brings that window forward.
+- `Find.tsx`: the find bar over a thread. Electron's `findInPage` searches the whole window, the
+  list and sidebar beside the thread and the bar's own box with them, so the bar reads the thread's
+  words itself: the open messages under `.messages` and each message's frame (same-origin, so its
+  page can be read), a frame's words apart from the window's and a block's apart from the next.
+  Matching is `shared/find.ts`, case and marks folded one character at a time so a match maps back
+  to the text it came from. Matches are marked with the CSS Custom Highlight API in the page they're
+  in, which changes nothing in a message's page, and only what's drawn counts. It finds again when the
+  thread's page changes or a frame says it has drawn a new page (`xrn-shown`).
 - `Settings.tsx`: Edison's sections, then xrnmail's own. What's typed into an account's name,
   signature and the rest is held once for every page until the field is left.
 

@@ -137,6 +137,11 @@ kept on the laptop.
   stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
+- **Find in message:** words in the open thread, in every message and in the HTML ones' own pages,
+  without case or marks as search has it, with "2/7" for which match of how many. A message folded
+  shut opens if it has them. It's Ctrl+G (Ctrl+Shift+F in the Gmail and Inbox sets), or Find in message
+  in the thread's ⋮ More; Enter or F3 goes to the next, Shift with either to the one before, and Esc
+  closes it.
 - **Faces:** a sender's photo, or their company's logo where their mail passed DMARC, and coloured
   initials otherwise. Your own accounts show your photo in the sidebar and Settings, from Gravatar or
   one you choose there. Settings, General, Show faces turns the lookups off. Who is asked about whom,
@@ -240,7 +245,9 @@ archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets that 
 (xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
 maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
 new key. A key another action has is offered to take over, and a change can go back to the set's own.
-Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set. Ctrl+F being Search in
+all of them, finding in a message is Ctrl+G, which Apple Mail and Outlook use for the next match, where
+the set's Ctrl+Shift+F is taken, and Ctrl+Shift+F in Gmail's and Inbox's, where it's free.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObjec
 import {
   AlarmClockOff, ArrowLeft, Ban, Bell, BellOff, Check, ChevronDown, Clock, DollarSign, Download, ExternalLink, FileCode,
   Filter, Flag, FolderInput, Forward, Hourglass, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Plane, Printer, Reply, SquareArrowOutUpRight,
-  ReplyAll, Tag, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
+  ReplyAll, Tag, TextSearch, Ticket, Trash2, TriangleAlert, Truck, Undo2, Zap, type LucideIcon
 } from 'lucide-react'
+import { hasMatch } from '@shared/find'
 import { imagesLoad } from '@shared/images'
 import { hintFor, type KeyCommand } from '@shared/keys'
 import { plainName } from '@shared/names'
@@ -11,6 +12,7 @@ import { canOpenDirectly } from '@shared/openable'
 import { IMPORTANT, type AccountView, type Address, type Facts, type MailAction, type MessageView, type Rsvp, type SenderWarning, type Settings } from '@shared/types'
 import { Avatar, Empty, ImportantMark, KIND_ICONS } from './Common'
 import { Details, type AddressActions } from './Details'
+import { FindBar } from './Find'
 import { factLine, fileKind, fileSize, longTime, problem, shortTime, straightThrough, userLabels } from './format'
 import { MailBody } from './MailBody'
 import { Original } from './Original'
@@ -301,6 +303,8 @@ export function Reader(props: {
   write(address: string): void
   /** Searches for what's given. Not in a window of its own. */
   find?: (text: string) => void
+  /** Counts each time the key for finding in the message is pressed. */
+  findAsked?: number
   say(text: string): void
 }): ReactNode {
   const { messages, account, labels, bins, panel, setPanel, back, act, own, settings, vip } = props
@@ -308,14 +312,40 @@ export function Reader(props: {
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [unfolded, setUnfolded] = useState(false)
   const [peek, setPeek] = useState<string | null>(null)
+  /** The find bar is open, with what's typed in it, and how often it's been asked for. */
+  const [finding, setFinding] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [findAgain, setFindAgain] = useState(0)
+  const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // What's unread, and always the newest, opens by itself.
     setOpen(new Set(messages.filter((m, i) => !m.seen || i === messages.length - 1).map((m) => m.id)))
     setUnfolded(false)
     setPeek(null)
+    setFinding(false)
+    setFindText('')
     return () => void window.mail.allowRemoteImages(false)
   }, [last?.thread, last?.account])
+
+  const startFinding = (): void => {
+    setFinding(true)
+    setFindAgain((n) => n + 1)
+  }
+  // Only a press made while this reader is here: one from before doesn't open the bar.
+  const askedBefore = useRef(props.findAsked)
+  useEffect(() => {
+    if (props.findAsked === askedBefore.current) return
+    askedBefore.current = props.findAsked
+    startFinding()
+  }, [props.findAsked])
+
+  // A closed message with what's being found in it opens, so its words can be found.
+  useEffect(() => {
+    if (!finding || !findText.trim()) return
+    const found = messages.filter((m) => !open.has(m.id) && hasMatch(m.text, findText)).map((m) => m.id)
+    if (found.length > 0) setOpen((now) => new Set([...now, ...found]))
+  }, [finding, findText, messages])
 
   if (!last) {
     return (
@@ -449,6 +479,7 @@ export function Reader(props: {
                 ? moreItem(Newspaper, 'Remove sender from Summary', () => props.summarize(bulkSender, false))
                 : moreItem(Newspaper, 'Add sender to Summary', () => props.summarize(bulkSender, true)))}
               {sender && !bins && !SYSTEM_SENDER.test(sender) && moreItem(Ban, 'Block sender', () => props.block(sender))}
+              {moreItem(TextSearch, 'Find in message', startFinding)}
               {moreItem(Printer, 'Print', () => window.print())}
               {gmail && moreItem(ExternalLink, 'Open in Gmail', () => void window.mail.openInGmail(last.account, last.thread))}
             </Popover>
@@ -461,7 +492,8 @@ export function Reader(props: {
           </>
         )}
       </div>
-      <div className="messages">
+      {finding && <FindBar root={scroller} query={findText} setQuery={setFindText} asked={findAgain} close={() => setFinding(false)} />}
+      <div className="messages" ref={scroller}>
         <div className={props.many && account ? 'thread-head marked' : 'thread-head'}>
           {props.many && account && <span className="account-bar" style={{ background: account.color }} title={account.email} aria-hidden="true" />}
           <h2 className="thread-subject">{messages[0]?.subject || 'No subject'}</h2>
