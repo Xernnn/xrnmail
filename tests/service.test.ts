@@ -2220,7 +2220,7 @@ describe('the sidebar', () => {
     const saved = service.settings().sidebar
     expect(saved.order.slice(0, 4)).toEqual(['sent', 'recent', 'today', 'unread'])
     expect(saved.hidden).toEqual(['spam'])
-    expect(new Set(saved.order).size).toBe(18)
+    expect(new Set(saved.order).size).toBe(19)
     service.saveProfile({ theme: 'dark' }) // another setting leaves it be
     expect(service.settings().sidebar).toEqual(saved)
     // As a version before Pinned would have saved it: Pinned turns up after Flagged, shown.
