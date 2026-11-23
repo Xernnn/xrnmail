@@ -1,8 +1,10 @@
 import DOMPurify from 'dompurify'
 import { Ellipsis, ImageOff, Palette, ShieldCheck } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { oddLink } from '@shared/links'
 import { splitQuoted } from '@shared/quoted'
 import { cleanCss, tinyImage, TRACKER } from '@shared/trackers'
+import { Confirm, type Question } from './Common'
 import { darkenDocument, UNLOADED_DARK } from './darken'
 import { fitDocument } from './fit'
 
@@ -129,6 +131,23 @@ function useDark(): boolean {
   return dark
 }
 
+/** Opens a link from a message, first asking about one that isn't going where its words say. */
+function useLinks(): [(href: string, words: string) => void, ReactNode] {
+  const [asking, setAsking] = useState<Question | null>(null)
+  const follow = useCallback((href: string, words: string): void => {
+    const odd = oddLink(href, words)
+    if (!odd) return void window.mail.openLink(href)
+    setAsking({
+      title: `Go to ${odd.host}?`, note: `It shows ${odd.shown}.`, action: 'Open', danger: true,
+      answer: (yes) => {
+        setAsking(null)
+        if (yes) void window.mail.openLink(href)
+      }
+    })
+  }, [])
+  return [follow, asking && <Confirm question={asking} />]
+}
+
 /** Three dots that bring back what a reply quoted. */
 function QuoteToggle(props: { open: boolean; toggle(): void }): ReactNode {
   return (
@@ -166,6 +185,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
   const watcher = useRef<ResizeObserver | null>(null)
   /** The frame's page that's been sized, darkened and wired, so each is done once. */
   const wired = useRef<Document | null>(null)
+  const [follow, asking] = useLinks()
   const { clean, removed } = useMemo(() => sanitizeCounting(html), [html])
   const hasRemote = useMemo(() => REMOTE.test(clean), [clean])
   const hasQuote = useMemo(() => !keepQuoted && QUOTED.test(clean), [clean, keepQuoted])
@@ -257,7 +277,7 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
     doc.addEventListener('click', (event) => {
       const link = linkAt(event.target)
       event.preventDefault()
-      if (link) void window.mail.openLink(link.href)
+      if (link) follow(link.href, link.textContent ?? '')
     })
     // A click inside moves the keyboard into the frame, and its keys still belong to the app.
     doc.addEventListener('keydown', (event) => {
@@ -329,13 +349,14 @@ function HtmlBody({ html, onPeek, images: auto, sender, trust, keepQuoted, darke
         onLoad={loaded}
       />
       {hasQuote && <QuoteToggle open={quoteOpen} toggle={() => setQuoteOpen(!quoteOpen)} />}
+      {asking}
     </>
   )
 }
 
 const LINK = /(https?:\/\/[^\s<>"']+)/g
 
-function Linked({ text }: { text: string }): ReactNode {
+function Linked({ text, follow }: { text: string; follow(href: string, words: string): void }): ReactNode {
   const parts = text.split(LINK)
   return parts.map((part, i) => {
     if (i % 2 === 0) return part
@@ -343,7 +364,7 @@ function Linked({ text }: { text: string }): ReactNode {
     while (end > 0 && '.,;:!?)]'.includes(part[end - 1] ?? '')) end--
     const url = part.slice(0, end)
     return [
-      <a key={i} href={url} onClick={(e) => { e.preventDefault(); void window.mail.openLink(url) }}>
+      <a key={i} href={url} onClick={(e) => { e.preventDefault(); follow(url, url) }}>
         {url}
       </a>,
       part.slice(url.length)
@@ -354,11 +375,13 @@ function Linked({ text }: { text: string }): ReactNode {
 function TextBody({ text, keepQuoted }: { text: string; keepQuoted?: boolean }): ReactNode {
   const [open, setOpen] = useState(false)
   const { fresh, quoted } = useMemo(() => (keepQuoted ? { fresh: text, quoted: '' } : splitQuoted(text)), [text, keepQuoted])
+  const [follow, asking] = useLinks()
   return (
     <>
-      <div className="body-text"><Linked text={fresh} /></div>
+      <div className="body-text"><Linked text={fresh} follow={follow} /></div>
       {quoted && <QuoteToggle open={open} toggle={() => setOpen(!open)} />}
-      {quoted && open && <div className="body-text quoted"><Linked text={quoted} /></div>}
+      {quoted && open && <div className="body-text quoted"><Linked text={quoted} follow={follow} /></div>}
+      {asking}
     </>
   )
 }

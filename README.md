@@ -132,7 +132,8 @@ kept on the laptop.
   message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
   way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
   signature from their domain) say is theirs; anything else with their address on it asks again.
-  A picture that can't be fetched is a plain block, with a count and Try again. See
+  A picture that can't be fetched is a plain block, with a count and Try again. A link that shows one
+  address and goes to another asks before it opens. See
   [docs/design.md](docs/design.md#hostile-mail).
 - **Quoted text folded away:** a reply shows what's new, with `•••` for what it quotes, and previews
   in the list do the same.

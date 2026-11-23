@@ -311,6 +311,29 @@ test('a very long link opens like any other', async () => {
   await expect.poll(run.opened).toEqual([long])
 })
 
+// A link's words can name one place while it goes to another, and a click went there without a word.
+test('a link that says one place and goes to another asks first', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const html = '<p><a id="shown" href="https://evil.example/login">https://paypal.com/login</a></p>' +
+    '<p><a id="dressed" href="https://paypal.com@evil.example/">Sign in</a></p><p><a id="plain" href="https://shop.example/sale">See the sale</a></p>'
+  gmail.add(rawMail({ subject: 'Check your account', from: 'Mai Tran <mai@example.com>', html }), { arrived: earlier(2) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Check your account').click()
+  const frame = page.frameLocator('iframe.body-frame')
+  await frame.locator('#plain').click()
+  await expect.poll(run.opened).toEqual(['https://shop.example/sale'])
+  await frame.locator('#shown').click()
+  const asking = page.getByRole('dialog').filter({ hasText: 'Go to evil.example?' })
+  await expect(asking).toContainText('It shows paypal.com.')
+  await asking.getByRole('button', { name: 'Cancel' }).click()
+  await expect(asking).toHaveCount(0)
+  await frame.locator('#dressed').click()
+  await expect(asking).toContainText('It shows paypal.com.')
+  await asking.getByRole('button', { name: 'Open' }).click()
+  await expect.poll(run.opened).toEqual(['https://shop.example/sale', 'https://paypal.com@evil.example/'])
+})
+
 // While a frame's new page is being made it has no root yet, and showing the quoted text then threw,
 // with nothing to catch it, so the whole window went white.
 test('a message that can\'t be drawn leaves the window as it was, and says so in the reader alone', async () => {

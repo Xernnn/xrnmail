@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { organization } from '@shared/domains'
 import type { Face } from '@shared/types'
 import { isPrivateAddress, isPublicHttps } from './safe-url'
 
@@ -62,17 +63,7 @@ const FREE_MAIL = /^(gmail|googlemail|outlook|hotmail|live|msn|passport|yahoo|ym
 
 export const isFreeMail = (domain: string): boolean => FREE_MAIL.test(domain)
 
-/** Second levels that are bought under, as in example.co.uk or example.edu.vn. */
-const SHARED_SECOND = /^(co|com|net|org|edu|gov|ac|or|ne|go|gob|mil|nic|ltd|plc|sch|info|biz|id)$/
-
-/** The part of a domain that's bought: mail.example.com and example.com are the same company. */
-export function organization(domain: string): string {
-  const parts = domain.toLowerCase().replace(/\.$/, '').split('.').filter(Boolean)
-  if (parts.length <= 2) return parts.join('.')
-  const second = parts.at(-2) ?? ''
-  const keep = SHARED_SECOND.test(second) && (parts.at(-1)?.length ?? 0) === 2 ? 3 : 2
-  return parts.slice(-keep).join('.')
-}
+export { organization }
 
 const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i
 

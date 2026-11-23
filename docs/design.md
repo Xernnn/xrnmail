@@ -383,6 +383,10 @@ walls, and `e2e/mail.spec.ts` sends a hostile message through them.
    the main process refuses the known services' addresses even with Show images on. A picture sized
    to nothing by a class in a style sheet still loads once allowed.
 6. Links go through a scheme allowlist before reaching the system, and hovering shows where one goes.
+   A link whose words are an address or a domain at another company than the one it goes to, or
+   whose address puts a name before an @ (`https://paypal.com@evil.example/`), asks first: "Go to
+   evil.example?", with what it shows (`shared/links.ts`). Companies are told apart as for sender
+   warnings, so a newsletter's own click-tracking under its domain doesn't ask.
 7. No navigation, downloads, permissions or webviews, and the bridge answers only the app's own page.
    A page can't open a window. Only the main process does, for a thread or a draft, and that window
    is the same page with the same preferences (`pagePreferences`: sandboxed, isolated from the
