@@ -1572,6 +1572,33 @@ test('keys work after clicking inside a message', async () => {
   await expect(page.locator('.threads').getByText('Styled')).toHaveCount(0)
 })
 
+// The window's keys went on acting behind the Summary's "When your Summary arrives" and New Label,
+// which hold the focus as Settings and the other dialogs do.
+test('keys wait while the Summary asks when, and while a label is being made', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  const headers = ['List-Unsubscribe: <https://list.example/u>']
+  gmail.add(rawMail({ subject: 'Deals', from: 'Shop <hi@shop.example>', headers }), { arrived: earlier(3) })
+  await signIn(run)
+  await page.getByRole('button', { name: 'Subscriptions' }).click()
+  await page.getByRole('button', { name: 'Add hi@shop.example to Summary' }).click()
+  const when = page.getByRole('dialog', { name: 'When your Summary arrives' })
+  await when.getByRole('button', { name: 'Schedule' }).focus()
+  await page.keyboard.press('c')
+  await page.waitForTimeout(500)
+  await expect(composer(page)).toHaveCount(0)
+  await when.getByRole('button', { name: 'Cancel' }).click()
+
+  await page.locator('.sidebar .sidebar-foot .status').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
+  await page.locator('.sidebar').getByRole('button', { name: `New Label on ${ME}` }).click()
+  const making = page.getByRole('dialog', { name: 'New Label' })
+  await making.getByRole('button', { name: 'Cancel' }).focus()
+  await page.keyboard.press('c')
+  await page.waitForTimeout(500)
+  await expect(composer(page)).toHaveCount(0)
+})
+
 // Every key went dead while a composer was open, though it sits docked in a corner and the list and
 // the thread are there beside it to go on reading.
 test('keys work beside an open composer, and none of them act from inside it', async () => {
