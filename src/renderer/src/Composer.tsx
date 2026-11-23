@@ -91,6 +91,8 @@ function Recipients(props: { label: string; value: string; focus?: boolean; chan
           else if (hit && e.key === 'ArrowDown') { e.preventDefault(); setAt((at + 1) % hits.length) }
           else if (hit && e.key === 'ArrowUp') { e.preventDefault(); setAt((at - 1 + hits.length) % hits.length) }
           else if (hit && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); accept(hit) }
+          // The suggestions go, and the composer stays: it's the next Esc that closes it.
+          else if (hit && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setHits([]) }
           else if (e.key === 'Enter' && typing.trim()) { e.preventDefault(); commit() }
           else if (e.key === ' ' && readRecipient(typing.trim()).valid) { e.preventDefault(); commit() }
         }} />

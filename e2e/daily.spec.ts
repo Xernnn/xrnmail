@@ -2430,6 +2430,24 @@ test('a thread can be right-clicked, dragged to the sidebar and swiped away', as
   await expect(page.getByText('Moved to Trash')).toBeVisible()
 })
 
+// Esc with the suggestions under To showing closed the whole composer, not the suggestions.
+test('Esc over the address suggestions closes them, and the next Esc the composer', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Plans', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.keyboard.press('c')
+  const box = composer(page)
+  await box.getByLabel('To').fill('mai')
+  await expect(box.getByRole('listbox')).toContainText('Mai Tran')
+  await page.keyboard.press('Escape')
+  await expect(box.getByRole('listbox')).toHaveCount(0)
+  await expect(box).toBeVisible()
+  await expect(box.getByLabel('To')).toHaveValue('mai')
+  await page.keyboard.press('Escape')
+  await expect(box).toHaveCount(0)
+})
+
 test('addresses become chips, and one still being typed goes too', async () => {
   run = await launch()
   const { page, smtp } = run
