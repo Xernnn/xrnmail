@@ -10,6 +10,8 @@ import { ageStart, firstTerms, parseQuery, type Field, type Term } from '@shared
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
 import type { Hold } from './batches'
 import type { Unsubscribe } from './parse'
+import type { RuleMail } from './rules'
+import { cleanRule, type MailRule, type RuleEdit } from '@shared/rules'
 
 /**
  * Everything on this laptop: one SQLite file. A message waiting for its batch is in here, but no
@@ -50,13 +52,31 @@ export interface StoredMail {
   warnings: SenderWarning[]
   /** What its headers say about where it came from, for its details. Null when they couldn't be read. */
   details?: HeaderDetails | null
+  /** What the mail rules did with it that only this laptop knows of: `RULE_QUIET` and the rest. */
+  byRule?: number
 }
+
+/** A rule said to announce nothing of it. */
+export const RULE_QUIET = 1
+/** A rule held it for the Summary. */
+export const RULE_SUMMARY = 2
+/** A rule let it straight through. */
+export const RULE_STRAIGHT = 4
 
 export interface HeldMail {
   account: string
   arrived: number
   fromAddress: string
   labels: string[]
+  /** What a rule said about when it lands, which a new timetable keeps to. */
+  rule: 'summary' | 'straight' | null
+}
+
+/** A message in the inbox, as a rule reads it. */
+export interface RuleRow {
+  id: number
+  account: string
+  mail: RuleMail
 }
 
 /** The Summary that landed last: when, and what of it is still waiting to be read in the inbox. */
@@ -302,6 +322,18 @@ export const MIGRATIONS = [
   // Recently Seen sees it, and a week unopened it goes.
   `
   CREATE TABLE outside(id INTEGER PRIMARY KEY, used INTEGER NOT NULL);
+  `,
+  // Mail rules, in their order, each kept as the page made it. Ids aren't given out twice, so a page
+  // still holding a rule that's gone can't change the one made after it. A message the rules have
+  // looked at is noted by the account and what names it on the server, so a sync finding it again
+  // (moved back to the inbox on a server that doesn't say where a move went, say) leaves it be. What
+  // they did that only this laptop knows of, kept quiet or let through or held for the Summary, is on
+  // the message, for the batch and the notices to read when it lands.
+  `
+  CREATE TABLE rules(id INTEGER PRIMARY KEY AUTOINCREMENT, place INTEGER NOT NULL, data TEXT NOT NULL);
+  CREATE TABLE rules_done(account TEXT NOT NULL, key TEXT NOT NULL, arrived INTEGER NOT NULL, PRIMARY KEY(account, key));
+  CREATE INDEX rules_done_arrived ON rules_done(account, arrived);
+  ALTER TABLE messages ADD COLUMN by_rule INTEGER NOT NULL DEFAULT 0;
   `
 ]
 
@@ -601,8 +633,8 @@ export class Store {
           `INSERT OR IGNORE INTO messages(account, box, uid, thread, gmail_id, message_id, subject, from_name, from_address,
              to_json, cc_json, reply_to, refs, unsubscribe, arrived, snippet, body_text, body_html, attachments,
              has_attachment, labels, in_inbox, bin, seen, flagged, hidden, truncated, files_cut, size, release_at,
-             summary, focus, kind, facts, warnings, details)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+             summary, focus, kind, facts, warnings, details, by_rule)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           mail.account, mail.box, mail.uid, mail.thread, mail.gmailId, mail.messageId, mail.subject, mail.from.name, mail.from.address,
@@ -615,7 +647,7 @@ export class Store {
           mail.seen ? 1 : 0, mail.flagged ? 1 : 0, mail.labels.includes(DRAFT) ? 1 : 0,
           mail.truncated ? 1 : 0, mail.truncated ? 1 : 0, mail.size, mail.releaseAt, mail.summary ? 1 : 0,
           mail.focused ? 1 : 0, mail.facts?.type ?? '', mail.facts ? JSON.stringify(mail.facts) : '', JSON.stringify(mail.warnings),
-          mail.details ? JSON.stringify(mail.details) : ''
+          mail.details ? JSON.stringify(mail.details) : '', mail.byRule ?? 0
         )
       if (Number(result.changes) === 0) return null
       this.db
@@ -672,6 +704,8 @@ export class Store {
       this.db.prepare('DELETE FROM sync_state WHERE account = ?').run(account)
       this.db.prepare('DELETE FROM box_state WHERE account = ?').run(account)
       this.db.prepare('DELETE FROM pending WHERE account = ?').run(account)
+      this.db.prepare('DELETE FROM rules_done WHERE account = ?').run(account)
+      this.db.prepare('DELETE FROM meta WHERE key = ?').run(`rules-floor:${account}`)
     })
   }
 
@@ -716,6 +750,7 @@ export class Store {
     this.inTransaction(() => {
       for (const row of old) this.dropMessage(Number(row['id']))
     })
+    this.forgetRuledBefore(account, before)
     return old.length
   }
 
@@ -1403,11 +1438,14 @@ export class Store {
 
   /** Who sent each message a delivery brought in (after, upto], one entry a message, whether it
    *  came with a Summary, and whether it's in Focused. */
-  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean; focused: boolean }[] {
+  landedFrom(after: number, upto: number): { from: string; name: string; summary: boolean; focused: boolean; quiet: boolean }[] {
     return this.all(
-      'SELECT from_address, from_name, summary, focus FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
+      'SELECT from_address, from_name, summary, focus, by_rule FROM messages WHERE release_at > ? AND release_at <= ? AND release_at > arrived AND in_inbox = 1 AND hidden = 0',
       after, upto
-    ).map((r) => ({ from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0, focused: Number(r['focus']) > 0 }))
+    ).map((r) => ({
+      from: String(r['from_address']), name: String(r['from_name']), summary: Number(r['summary']) > 0, focused: Number(r['focus']) > 0,
+      quiet: (Number(r['by_rule']) & RULE_QUIET) > 0
+    }))
   }
 
   landedBetween(after: number, upto: number): number {
@@ -1427,14 +1465,16 @@ export class Store {
   /** Moves waiting mail onto a new timetable, after the batch or Summary settings change, and into or
    *  out of the Summary. */
   retime(compute: (mail: HeldMail) => Hold, now: number): void {
-    const rows = this.all('SELECT id, account, arrived, from_address, labels FROM messages WHERE release_at > ?', now)
+    const rows = this.all('SELECT id, account, arrived, from_address, labels, by_rule FROM messages WHERE release_at > ?', now)
     this.inTransaction(() => {
       for (const row of rows) {
+        const byRule = Number(row['by_rule'])
         const hold = compute({
           account: String(row['account']),
           arrived: Number(row['arrived']),
           fromAddress: String(row['from_address']),
-          labels: parseList<string>(row['labels'])
+          labels: parseList<string>(row['labels']),
+          rule: byRule & RULE_SUMMARY ? 'summary' : byRule & RULE_STRAIGHT ? 'straight' : null
         })
         this.db.prepare('UPDATE messages SET release_at = ?, summary = ? WHERE id = ?').run(hold.at, hold.summary ? 1 : 0, Number(row['id']))
       }
@@ -1452,6 +1492,86 @@ export class Store {
       now
     )
     return rows.map((r) => ({ account: String(r['account']), label: String(r['label']), count: Number(r['n']) }))
+  }
+
+  /** The rules in their order. One the profile has that can't be read is left out. */
+  rules(): MailRule[] {
+    return this.all('SELECT id, data FROM rules ORDER BY place, id').flatMap((r) => {
+      try {
+        return [{ ...cleanRule(JSON.parse(String(r['data']))), id: Number(r['id']) }]
+      } catch {
+        return []
+      }
+    })
+  }
+
+  /** A new rule goes last. Returns its id; null when the one to change is gone. */
+  saveRule(rule: RuleEdit): number | null {
+    const { id, ...data } = rule
+    if (id === undefined) {
+      const place = Number(this.one('SELECT COALESCE(MAX(place), 0) + 1 AS p FROM rules')?.['p'] ?? 1)
+      return Number(this.db.prepare('INSERT INTO rules(place, data) VALUES(?,?)').run(place, JSON.stringify(data)).lastInsertRowid)
+    }
+    const changed = this.db.prepare('UPDATE rules SET data = ? WHERE id = ?').run(JSON.stringify(data), id)
+    return Number(changed.changes) > 0 ? id : null
+  }
+
+  deleteRule(id: number): void {
+    this.db.prepare('DELETE FROM rules WHERE id = ?').run(id)
+  }
+
+  /** Puts a rule at [to] in the order, counting from 0, and the others after it along. */
+  moveRule(id: number, to: number): void {
+    const ids = this.all('SELECT id FROM rules ORDER BY place, id').map((r) => Number(r['id']))
+    const from = ids.indexOf(id)
+    if (from < 0) return
+    ids.splice(from, 1)
+    ids.splice(Math.max(0, Math.min(to, ids.length)), 0, id)
+    this.inTransaction(() => ids.forEach((each, place) => this.db.prepare('UPDATE rules SET place = ? WHERE id = ?').run(place + 1, each)))
+  }
+
+  /** Whether the rules have looked at this message already, on this account. Mail from before the
+   *  oldest that's still noted, which the keeping window let go of, counts as looked at. */
+  ruledAlready(account: string, key: string, arrived: number): boolean {
+    if (arrived < Number(this.meta(`rules-floor:${account}`) ?? 0)) return true
+    return this.one('SELECT 1 AS y FROM rules_done WHERE account = ? AND key = ?', account, key) !== undefined
+  }
+
+  markRuled(account: string, key: string, arrived: number): void {
+    this.db.prepare('INSERT OR IGNORE INTO rules_done(account, key, arrived) VALUES(?,?,?)').run(account, key, arrived)
+  }
+
+  /** What the keeping window let go of needn't be remembered, and what comes back into it when the
+   *  window grows isn't new. */
+  private forgetRuledBefore(account: string, before: number): void {
+    this.db.prepare('DELETE FROM rules_done WHERE account = ? AND arrived < ?').run(account, before)
+    if (before > Number(this.meta(`rules-floor:${account}`) ?? 0)) this.setMeta(`rules-floor:${account}`, String(before))
+  }
+
+  /** The inbox mail kept here that can be seen, of one account or all, for a rule to read. Not what's
+   *  waiting for its moment, in Trash or Spam, or from before the window. */
+  *ruleRows(account: string, now: number): Generator<RuleRow> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, account, from_name, from_address, to_json, cc_json, subject, body_text, details, attachments FROM messages
+         WHERE in_inbox = 1 AND release_at <= ? AND hidden = 0 AND bin = 0 AND ${INSIDE} AND (? = '' OR account = ?) ORDER BY id`
+      )
+      .iterate(now, account, account) as Iterable<Row>
+    for (const r of rows) {
+      yield {
+        id: Number(r['id']),
+        account: String(r['account']),
+        mail: {
+          from: { name: String(r['from_name']), address: String(r['from_address']) },
+          to: parseList<Address>(r['to_json']),
+          cc: parseList<Address>(r['cc_json']),
+          subject: String(r['subject']),
+          text: String(r['body_text']),
+          list: detailsFrom(r['details'])?.list ?? null,
+          attachments: parseList<AttachmentInfo>(r['attachments']).map((a) => a.name)
+        }
+      }
+    }
   }
 
   meta(key: string): string | null {

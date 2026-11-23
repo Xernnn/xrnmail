@@ -1,5 +1,6 @@
 import type { KeyChanges, KeySet } from './keys'
 import type { LaterTimes } from './later'
+import type { MailRule, RuleApplied, RuleEdit } from './rules'
 import type { AccountConfig, Server } from './providers'
 import type { SidebarChoice } from './sidebar'
 
@@ -491,6 +492,15 @@ export interface MailApi {
   editSenders(list: SenderList, addresses: string[], on: boolean): Promise<void>
   /** The senders in the Summary, with what's here from each. Ones with no mail here come with a count of 0. */
   summarySenders(): Promise<Subscription[]>
+  /** The mail rules, in their order. */
+  mailRules(): Promise<MailRule[]>
+  /** A rule kept, new without an id; it comes back as kept. */
+  saveRule(rule: RuleEdit): Promise<MailRule>
+  deleteRule(id: number): Promise<void>
+  /** A rule to [to] in the order, counting from 0. */
+  moveRule(id: number, to: number): Promise<void>
+  /** Runs a rule over the inbox kept here now, with Undo. */
+  applyRule(id: number): Promise<RuleApplied>
   saveBackfill(days: number): Promise<void>
   connectHub(url: string, user: string, secret: string): Promise<void>
   disconnectHub(): Promise<void>

@@ -112,27 +112,36 @@ export function ruleHolds(rule: Pick<MailRule, 'match' | 'conditions'>, mail: Ru
 
 const NOTHING: Ruling = { file: [], archive: false, read: false, flag: false, trash: false, important: false, hold: null, mute: false, matched: 0 }
 
+/** What one rule that holds adds to what the ones before it said. */
+function gather(ruling: Ruling, rule: Pick<MailRule, 'actions'>): Ruling {
+  ruling.matched++
+  for (const action of rule.actions) {
+    switch (action.kind) {
+      case 'file':
+        if (!ruling.file.includes(action.to)) ruling.file.push(action.to)
+        break
+      case 'summary':
+      case 'straight':
+        ruling.hold ??= action.kind
+        break
+      case 'stop':
+        break
+      default:
+        ruling[action.kind] = true
+    }
+  }
+  return ruling
+}
+
+/** What a rule asks for, whatever the message, as Apply now does it. */
+export const rulingOf = (rule: Pick<MailRule, 'actions'>): Ruling => gather({ ...NOTHING, file: [] }, rule)
+
 /** The rules, in order, that hold for a message, until one that holds says to stop. */
 export function decide(rules: MailRule[], mail: RuleMail): Ruling {
   const ruling: Ruling = { ...NOTHING, file: [] }
   for (const rule of rules) {
     if (!ruleHolds(rule, mail)) continue
-    ruling.matched++
-    for (const action of rule.actions) {
-      switch (action.kind) {
-        case 'file':
-          if (!ruling.file.includes(action.to)) ruling.file.push(action.to)
-          break
-        case 'summary':
-        case 'straight':
-          ruling.hold ??= action.kind
-          break
-        case 'stop':
-          break
-        default:
-          ruling[action.kind] = true
-      }
-    }
+    gather(ruling, rule)
     if (rule.actions.some((a) => a.kind === 'stop')) break
   }
   return ruling
