@@ -1405,6 +1405,23 @@ test('a selection holds only threads in the list: a search that leaves one out l
   await expect(bar).toHaveCount(0)
 })
 
+// Select All picked only the 200 rows read in so far, and said "Select All (200)" of a list of 250.
+test('Select All picks every thread in the list, not only the ones read in so far', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  for (let i = 0; i < 250; i++) gmail.add(rawMail({ subject: `Notice ${i}` }), { arrived: earlier(30) })
+  await signIn(run)
+  await expect(page.locator('.sync-progress')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.locator('.threads .thread')).toHaveCount(200)
+  await page.getByLabel('Select Notice 0', { exact: true }).check({ force: true })
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  await bar.getByRole('button', { name: 'Select All (200+)' }).click()
+  await expect(bar.getByText('250 selected')).toBeVisible()
+  await bar.getByRole('button', { name: 'Archive selected' }).click()
+  await expect(page.getByText('Archived: 250 threads')).toBeVisible()
+  await expect(page.getByText('Nothing here')).toBeVisible()
+})
+
 test('selecting several and acting on them together', async () => {
   run = await launch()
   const { page, gmail } = run

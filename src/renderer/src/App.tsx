@@ -752,6 +752,19 @@ export function App(): ReactNode {
     }
   }
 
+  /** Every thread in the list, not only the ones read in so far: the rest are read in to be picked. */
+  const selectAll = async (): Promise<void> => {
+    if (list.length < limit) return setPicked(new Set(list.map(keyOf)))
+    try {
+      const all = await window.mail.list(query as ListQuery, WHOLE_LIST)
+      setLimit(Math.max(limit, all.length + PAGE))
+      setRows(all)
+      setPicked(new Set(all.map(keyOf)))
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
   const togglePick = (row: ThreadRow, index: number, range: boolean): void => {
     const from = anchor.current // read now: the update below runs later, after this has moved
     anchor.current = index
@@ -898,7 +911,7 @@ export function App(): ReactNode {
           const row = list[index]
           if (row) togglePick(row, index, false)
         },
-        selectAll: () => setPicked(new Set(list.map(keyOf))),
+        selectAll: () => void selectAll(),
         // As the toast's own Undo: the toast goes with it, and a window of its own waits for it.
         undo: () => { if (toast?.undo) undoNow(toast.undo) },
         help: () => setHelp(true)
@@ -1229,7 +1242,7 @@ export function App(): ReactNode {
               <div className="bulk" role="toolbar" aria-label="Selected threads">
                 <div className="bulk-top">
                   <strong className="grow">{picked.size} selected</strong>
-                  <button className="bulk-pill" onClick={() => setPicked(new Set(list.map(keyOf)))}>Select All ({list.length})</button>
+                  <button className="bulk-pill" onClick={() => void selectAll()}>Select All ({list.length >= limit ? `${list.length}+` : list.length})</button>
                   <button className="bulk-pill" onClick={() => setPicked(new Set())}>Cancel</button>
                 </div>
                 <div className="bulk-tools">
