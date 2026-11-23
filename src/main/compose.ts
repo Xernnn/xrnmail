@@ -24,6 +24,7 @@ export interface OutgoingMail {
   to: Address[]
   cc: Address[]
   bcc: Address[]
+  replyTo: Address[]
   subject: string
   html: string
   text: string
@@ -150,7 +151,7 @@ export function outgoing(draft: Draft, email: string, identity: Identity | undef
   const cc = parseRecipients(draft.cc)
   const bcc = parseRecipients(draft.bcc)
   if (to.length + cc.length + bcc.length === 0) throw new Error('Add someone to send this to.')
-  return whole(draft, email, identity, paths, date, { to, cc, bcc }, signature)
+  return whole(draft, email, identity, paths, date, { to, cc, bcc, replyTo: parseRecipients(draft.replyTo ?? '') }, signature)
 }
 
 /** What was typed into To, Cc or Bcc, as far as it's addresses yet: a draft is still being written. */
@@ -165,7 +166,8 @@ function typedRecipients(text: string): Address[] {
  *  carry on with it or send it as it is. Nobody has to be on it yet. */
 export function draftCopy(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
   signature?: SignedWith): OutgoingMail {
-  return whole(draft, email, identity, paths, date, { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc) }, signature)
+  return whole(draft, email, identity, paths, date,
+    { to: typedRecipients(draft.to), cc: typedRecipients(draft.cc), bcc: typedRecipients(draft.bcc), replyTo: typedRecipients(draft.replyTo ?? '') }, signature)
 }
 
 /** A picture an <img> names: one of the draft's own by its Content-ID, or one written into the
@@ -211,7 +213,7 @@ export function partsOf(mail: Pick<OutgoingMail, 'files' | 'pictures'>): { filen
 }
 
 function whole(draft: Draft, email: string, identity: Identity | undefined, paths: (file: DraftFile) => string, date: number,
-  people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc'>, signed?: SignedWith): OutgoingMail {
+  people: Pick<OutgoingMail, 'to' | 'cc' | 'bcc' | 'replyTo'>, signed?: SignedWith): OutgoingMail {
   const plain = identity?.signature.trim() ?? ''
   // One with nothing in it, not even a picture, is no signature.
   const blank = !signed || (!signed.text.trim() && !/<img\b/i.test(signed.html))

@@ -85,14 +85,15 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   await expect(box.getByLabel('From')).toBeDisabled() // one address to send from, shown all the same
   await expect(box.getByLabel('From')).toHaveValue(JSON.stringify([ME, ME]))
   await box.getByRole('button', { name: 'Cc Bcc' }).click()
-  expect(await fields()).toEqual(['To', 'Cc', 'Bcc', 'From', 'Subject'])
+  expect(await fields()).toEqual(['To', 'Cc', 'Bcc', 'Reply-To', 'From', 'Subject'])
   const tools = await box.getByRole('toolbar', { name: 'Formatting' }).getByRole('button').evaluateAll((all) => all.map((b) => b.getAttribute('aria-label')))
   expect(tools).toEqual(['Bold', 'Italic', 'Underline', 'Strikethrough', 'Clear formatting', 'Add link', 'Quote', 'Numbered list', 'List'])
   const send = box.getByRole('button', { name: 'Send', exact: true })
   await expect(send).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)') // words and a paper plane, not a filled button
   const [sendBox, barBox] = [await send.boundingBox(), await box.getByRole('toolbar', { name: 'Formatting' }).boundingBox()]
   expect(sendBox?.y ?? 0).toBeGreaterThan((barBox?.y ?? 0) + (barBox?.height ?? 0) - 1)
-  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('To', { exact: true }).fill('ada@example.com')
+  await box.getByLabel('Reply-To').fill('team@example.org')
   await box.getByLabel('Subject').fill('Formatted')
   await box.getByLabel('Message').click()
   await page.keyboard.type('struck')
@@ -101,6 +102,7 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   await send.click()
   await expect.poll(() => smtp.sent.length, LONG).toBe(1)
   expect(smtp.sent[0]?.raw).toMatch(/<(s|strike)>struck<\/(s|strike)>/)
+  expect(smtp.sent[0]?.raw).toContain('Reply-To: team@example.org')
 })
 
 test('Send & Archive: the thread leaves the inbox as the reply goes, and Undo brings both back', async () => {

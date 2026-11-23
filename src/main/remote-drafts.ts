@@ -27,7 +27,7 @@ export function isBlank(draft: Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject' | 'te
 /** Whether saving [edit] would change anything. A composer saves when it's closed, changed or not,
  *  and an unchanged draft needn't go up again. */
 export function changes(draft: Draft, edit: DraftEdit): boolean {
-  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'subject', 'html', 'text', 'signature', 'remind']
+  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'replyTo', 'subject', 'html', 'text', 'signature', 'remind']
   return keys.some((key) => draft[key] !== edit[key]) || JSON.stringify(draft.quote) !== JSON.stringify(edit.quote)
 }
 
@@ -42,6 +42,7 @@ export async function draftRaw(mail: OutgoingMail, messageId: string): Promise<B
     to: mail.to,
     cc: mail.cc,
     bcc: mail.bcc,
+    replyTo: mail.replyTo.length > 0 ? mail.replyTo : undefined,
     subject: mail.subject,
     html: mail.html,
     text: mail.text,
@@ -120,6 +121,7 @@ export function importedDraft(parsed: ParsedDraft, account: string, own: string[
     to: formatted(parsed.to),
     cc: formatted(parsed.cc),
     bcc: formatted(parsed.bcc),
+    replyTo: formatted(parsed.replyTo ?? []),
     subject: parsed.subject,
     text: placed.text,
     html: placed.html,

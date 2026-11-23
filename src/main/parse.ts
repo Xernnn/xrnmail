@@ -367,6 +367,7 @@ export interface ParsedDraft {
   to: Address[]
   cc: Address[]
   bcc: Address[]
+  replyTo: Address[]
   subject: string
   text: string
   inReplyTo: string
@@ -387,6 +388,7 @@ export async function parseDraft(source: Buffer, cut = false): Promise<ParsedDra
     to: addresses(mail.to),
     cc: addresses(mail.cc),
     bcc: addresses(mail.bcc),
+    replyTo: addresses(mail.replyTo),
     subject: mail.subject ?? '',
     text: text.slice(0, MAX_TEXT),
     inReplyTo: mail.inReplyTo ?? '',

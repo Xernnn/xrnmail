@@ -445,6 +445,8 @@ export interface Draft {
   to: string
   cc: string
   bcc: string
+  /** Where replies are to go, when not to the address it's from. */
+  replyTo?: string
   subject: string
   /** What the person wrote. */
   html: string
@@ -469,7 +471,7 @@ export interface Draft {
   updated: number
 }
 
-export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote' | 'signature' | 'remind'>
+export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'replyTo' | 'subject' | 'html' | 'text' | 'quote' | 'signature' | 'remind'>
 
 export type DraftStart =
   | { kind: 'new'; account?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string }

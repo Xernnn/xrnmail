@@ -252,8 +252,9 @@ export function Composer(props: {
   const [to, setTo] = useState(draft.to)
   const [cc, setCc] = useState(draft.cc)
   const [bcc, setBcc] = useState(draft.bcc)
+  const [replyTo, setReplyTo] = useState(draft.replyTo ?? '')
   const [subject, setSubject] = useState(draft.subject)
-  const [showCopies, setShowCopies] = useState(Boolean(draft.cc || draft.bcc))
+  const [showCopies, setShowCopies] = useState(Boolean(draft.cc || draft.bcc || draft.replyTo))
   const [files, setFiles] = useState(draft.files)
   const [error, setError] = useState(draft.error ?? '')
   const [quoteOpen, setQuoteOpen] = useState(false)
@@ -291,11 +292,11 @@ export function Composer(props: {
   }
 
   const collect = useCallback((): DraftEdit => ({
-    account, from, to, cc, bcc, subject, quote,
+    account, from, to, cc, bcc, replyTo, subject, quote,
     html: written(),
     text: textOf(editor.current),
     signature, remind
-  }), [account, from, to, cc, bcc, subject, quote, signature, remind])
+  }), [account, from, to, cc, bcc, replyTo, subject, quote, signature, remind])
 
   const latest = useRef(collect)
   latest.current = collect
@@ -339,7 +340,7 @@ export function Composer(props: {
     }
   }, [draft.id])
 
-  useEffect(soon, [account, from, to, cc, bcc, subject, signature, remind])
+  useEffect(soon, [account, from, to, cc, bcc, replyTo, subject, signature, remind])
 
   // While it's open here, what the server says about the draft leaves it as it is.
   useEffect(() => {
@@ -359,7 +360,7 @@ export function Composer(props: {
   const untouched = (edit: DraftEdit): boolean =>
     Boolean(props.fresh) && edit.account === draft.account && edit.from === draft.from && edit.to === draft.to && edit.cc === draft.cc &&
     edit.bcc === draft.bcc && edit.subject === draft.subject && edit.text === startText.current && files.length === draft.files.length &&
-    edit.signature === draft.signature && edit.remind === draft.remind
+    edit.signature === draft.signature && edit.remind === draft.remind && edit.replyTo === (draft.replyTo ?? '')
 
   // A window of its own can be closed around its composer. The app is asked first, and through this
   // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
@@ -579,6 +580,7 @@ export function Composer(props: {
       </div>
       {showCopies && <Recipients label="Cc" value={cc} change={setCc} />}
       {showCopies && <Recipients label="Bcc" value={bcc} change={setBcc} />}
+      {showCopies && <Recipients label="Reply-To" value={replyTo} change={setReplyTo} />}
       <label className="field">
         <span>From</span>
         <select aria-label="From" value={JSON.stringify([account, from || account])} disabled={senders.length < 2} onChange={(e) => {

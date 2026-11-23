@@ -74,6 +74,7 @@ export class SmtpSender implements MailSender {
       to: mail.to,
       cc: mail.cc,
       bcc: mail.bcc,
+      replyTo: mail.replyTo.length > 0 ? mail.replyTo : undefined,
       subject: mail.subject,
       html: mail.html,
       text: mail.text,

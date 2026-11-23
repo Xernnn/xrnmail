@@ -54,6 +54,16 @@ describe('a draft\'s copy on the server', () => {
     expect(importedDraft(parsed, ME, [ME], ['Regards']).text).toContain('The Shop')
   })
 
+  it('says where replies go, when the draft says, and comes back saying it', async () => {
+    const mail = draftCopy(draft({ to: 'ada@example.com', replyTo: 'Team <team@example.org>, half', subject: 'Hi', text: 'x', html: 'x' }), ME, identity, () => '', 0)
+    expect(mail.replyTo).toEqual([{ name: 'Team', address: 'team@example.org' }])
+    const raw = await draftRaw(mail, '<draft-4@example.com>')
+    expect(raw.toString()).toContain('Reply-To: Team <team@example.org>')
+    expect(importedDraft(await parseDraft(raw), ME, [ME], '').replyTo).toBe('"Team" <team@example.org>')
+    expect(() => outgoing(draft({ to: 'ada@example.com', replyTo: 'not one' }), ME, identity, () => '', 0)).toThrow('Check this address')
+    expect(outgoing(draft({ to: 'ada@example.com' }), ME, identity, () => '', 0).replyTo).toEqual([])
+  })
+
   it('keeps the words as text, so none of the HTML it came with reaches the composer', async () => {
     const raw = Buffer.from([
       `From: ${ME}`, 'To: ada@example.com', 'Subject: Pretty', 'Message-ID: <p@example.com>', 'MIME-Version: 1.0',

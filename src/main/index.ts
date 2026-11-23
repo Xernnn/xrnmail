@@ -319,6 +319,7 @@ function draftEdit(value: unknown): DraftEdit {
     to: text(d['to'], 8000),
     cc: text(d['cc'], 8000),
     bcc: text(d['bcc'], 8000),
+    replyTo: text(d['replyTo'] ?? '', 8000),
     subject: text(d['subject'], 2000),
     html: text(d['html'], MAX_BODY),
     text: text(d['text'], MAX_BODY),

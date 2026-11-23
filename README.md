@@ -44,7 +44,8 @@ kept on the laptop.
   written in Settings, Signatures with the composer's own toolbar, pictures and all (kept on this
   laptop and sent with the message, never hosted anywhere). Each address, an account's own or an
   alias, has its default; choosing another From in the composer brings its signature, and the
-  Signature button there picks another or none. A picture (PNG, JPEG, GIF or WebP)
+  Signature button there picks another or none. Cc Bcc shows a Reply-To field with them, for where
+  replies are to go. A picture (PNG, JPEG, GIF or WebP)
   pasted or dropped goes into the words where the caret is, and is sent as a part of the message the
   words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
   pictures of what it quotes in its words the same way. Replying starts from the buttons at
