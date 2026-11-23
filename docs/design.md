@@ -466,7 +466,10 @@ Each lookup tells someone something, so the rules are about when and how:
   limit, and the body counted as it comes and dropped past its limit. The answer's type is taken
   from its bytes. BIMI is SVG only; Gravatar and icons are never SVG.
 - **Showing.** The page gets a data: address, so it needs no network. PNG and JPEG are drawn again
-  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. An
+  by `nativeImage` first, smaller and with nothing but pixels; one it can't read is no picture. Their
+  size is read from their header before that (`pictureSize`), and one of more than four million
+  pixels (a chosen photo, a hundred million) isn't drawn at all, since a few kilobytes of JPEG can
+  say it's 60,000 pixels square and take gigabytes to decode in the main process. An
   SVG is shown only as an `<img>`, where scripts don't run and nothing loads, never placed in the
   page. A picture that fails to draw shows initials.
 - **Testing.** The sources are passed in. Unit tests answer from lists, and the UI tests from files

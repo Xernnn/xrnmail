@@ -18,7 +18,7 @@ import { DraftFiles } from './draft-files'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
-import { Avatars, sniff, webSources, type Picture, type PictureSources } from './avatars'
+import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { openAttachment, xdgFiletype } from './opening'
 import { isSafeExternalUrl, safeFileName } from './safe-url'
@@ -132,8 +132,11 @@ function testSources(spec: string): PictureSources {
 
 /** PNG and JPEG are drawn again here, by Chromium's own decoder: smaller, and with nothing in them
  *  but pixels. One it can't read is no picture. The other kinds are left for the page's <img>. */
-function redraw(picture: Picture, side = 128, square = false): Picture | null {
+function redraw(picture: Picture, side = 128, square = false, most = MOST_LOOKED_UP): Picture | null {
   if (picture.type !== 'image/png' && picture.type !== 'image/jpeg') return picture
+  // Measured first: a stranger's picture is drawn only if its header says a size worth drawing.
+  const measured = pictureSize(picture.bytes)
+  if (!measured || measured.width === 0 || measured.height === 0 || measured.width * measured.height > most) return null
   let image = nativeImage.createFromBuffer(picture.bytes)
   if (image.isEmpty()) return null
   const { width, height } = image.getSize()
@@ -148,6 +151,10 @@ function redraw(picture: Picture, side = 128, square = false): Picture | null {
 
 /** A chosen photo can be large, but not this large. */
 const MOST_CHOSEN = 10 * 1024 * 1024
+/** The most pixels a picture may have to be drawn: one looked up is a face, 96 pixels asked for;
+ *  one chosen can be a phone camera's. */
+const MOST_LOOKED_UP = 2048 * 2048
+const MOST_CHOSEN_PIXELS = 12_000 * 9_000
 
 /** Something new was found; with [again], Faces was turned off or on, and every face is asked anew. */
 const tellFaces = (again = false): void => {
@@ -533,7 +540,7 @@ function register(service: MailService, avatars: Avatars): void {
     if (statSync(path).size > MOST_CHOSEN) throw new Error('Pick a picture under 10 MB.')
     const bytes = readFileSync(path)
     const type = sniff(bytes)
-    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true) : null
+    const drawn = type === 'image/png' || type === 'image/jpeg' ? redraw({ type, bytes }, 256, true, MOST_CHOSEN_PIXELS) : null
     if (!drawn) throw new Error("That picture couldn't be read. Pick a PNG or JPEG.")
     avatars.choose(email, drawn)
     tellFaces()

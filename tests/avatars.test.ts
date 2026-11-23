@@ -4,8 +4,9 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import {
-  Avatars, bimiLogo, gravatarHash, isFreeMail, MAX_RASTER, MAX_SVG, organization, sniff, webSources, type Picture, type PictureSources
+  Avatars, bimiLogo, gravatarHash, isFreeMail, MAX_RASTER, MAX_SVG, organization, pictureSize, sniff, webSources, type Picture, type PictureSources
 } from '@main/avatars'
+import { png as realPng } from './files'
 
 /** Nothing here reaches the network: every source and every answer is made up. */
 
@@ -43,6 +44,24 @@ describe('what a picture is', () => {
     expect(sniff(SVG, true)).toBe('image/svg+xml')
     expect(sniff(Buffer.from('<!-- logo --><svg viewBox="0 0 1 1"></svg>'), true)).toBe('image/svg+xml')
     expect(sniff(Buffer.from('<html><svg></svg><script>alert(1)</script></html>'), true)).toBeNull()
+  })
+
+  // A few kilobytes of PNG can say it's 30,000 pixels square, and drawing it in the main process
+  // to make it smaller would take gigabytes. Its size is read from its header first.
+  it('reads a picture\'s size from its header, before anything draws it', () => {
+    expect(pictureSize(realPng())).toEqual({ width: 1, height: 1 })
+    const bomb = Buffer.from(realPng())
+    bomb.writeUInt32BE(30_000, 16)
+    bomb.writeUInt32BE(30_000, 20)
+    expect(pictureSize(bomb)).toEqual({ width: 30_000, height: 30_000 })
+    const jpeg = Buffer.concat([
+      Buffer.from('ffd8', 'hex'),
+      Buffer.from('ffe000104a46494600010100000100010000', 'hex'), // APP0
+      Buffer.from('ffc0001108', 'hex'), Buffer.from([0x0b, 0xb8, 0x0f, 0xa0]), Buffer.from('03012200021101031101', 'hex') // 4000 wide, 3000 high
+    ])
+    expect(pictureSize(jpeg)).toEqual({ width: 4000, height: 3000 })
+    expect(pictureSize(Buffer.from('ffd8ff', 'hex'))).toBeNull()
+    expect(pictureSize(ICO)).toBeNull()
   })
 
   it('hashes an address the way Gravatar does: SHA-256 of it trimmed and lower-cased', () => {

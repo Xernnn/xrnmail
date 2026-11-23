@@ -72,6 +72,35 @@ const domainOf = (address: string): string => {
   return HOST.test(domain) ? domain : ''
 }
 
+/** A PNG's or JPEG's width and height, as its header says, read before anything decodes it: a
+ *  picture of a few kilobytes can say it's 30,000 pixels square and take gigabytes to draw. */
+export function pictureSize(bytes: Buffer): { width: number; height: number } | null {
+  if (sniff(bytes) === 'image/png') {
+    if (bytes.length < 24 || bytes.subarray(12, 16).toString('latin1') !== 'IHDR') return null
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  }
+  if (sniff(bytes) !== 'image/jpeg') return null
+  let at = 2
+  for (let segments = 0; segments < 1000 && at + 9 <= bytes.length; segments++) {
+    if (bytes[at] !== 0xff) return null
+    const marker = bytes[at + 1] ?? 0
+    if (marker === 0xff) {
+      at++
+      continue
+    }
+    // Start of a frame, of any kind but the tables that share its numbers.
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { width: bytes.readUInt16BE(at + 7), height: bytes.readUInt16BE(at + 5) }
+    }
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      at += 2
+      continue
+    }
+    at += 2 + bytes.readUInt16BE(at + 2)
+  }
+  return null
+}
+
 /** What a picture's bytes are, by their first few: a server's word for it isn't taken. SVG only
  *  where it's allowed, and only an SVG document, not markup that merely contains one. */
 export function sniff(bytes: Buffer, svg = false): PictureType | null {
