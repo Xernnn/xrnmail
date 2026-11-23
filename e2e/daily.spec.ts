@@ -2729,6 +2729,17 @@ test('settings keep who you are, and it signs what you send', async () => {
   expect(smtp.sent[0]?.from).toBe(ME)
 })
 
+// A signature just added, with nothing written in it yet, put a lone "--" under every message.
+test('a signature with nothing in it shows nothing under the message', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.evaluate((me) => window.mail.saveProfile({ signatures: [{ id: 'blank', name: 'Signature', html: '', text: '' }], signatureFor: { [me]: 'blank' } }), ME)
+  await page.keyboard.press('c')
+  await expect(composer(page).getByRole('button', { name: 'Signature', exact: true })).toBeVisible()
+  await expect(composer(page).locator('.signature')).toHaveCount(0)
+})
+
 test('several signatures, written with the toolbar: each address has its own, and the composer can pick another', async () => {
   run = await launch()
   const { page, smtp } = run

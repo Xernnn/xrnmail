@@ -42,18 +42,18 @@ kept on the laptop.
 - **Writing:** reply, reply all, forward with attachments, formatting, signatures, templates, drafts
   that survive a restart, and addresses suggested from your mail. Signatures are as many as you like,
   written in Settings, Signatures with the composer's own toolbar, pictures and all (kept on this
-  laptop and sent with the message, never hosted anywhere). Each address, an account's own or an
-  alias, has its default; choosing another From in the composer brings its signature, and the
-  Signature button there picks another or none. Cc Bcc shows a Reply-To field with them, for where
-  replies are to go. A template can have a subject, which it gives a message that has none yet. A picture (PNG, JPEG, GIF or WebP)
-  pasted or dropped goes into the words where the caret is, and is sent as a part of the message the
-  words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
-  pictures of what it quotes in its words the same way. Replying starts from the buttons at
-  the foot of a thread, in the composer, or the one beside each message, which replies to everyone on
-  it if Settings, General say so. A reply quotes the message it answers, unless Settings, General say
-  not to; a forward always carries it. A reply or forward closed as it opened, with nothing written,
-  leaves no draft behind. Starting another closes the one open the same way, so what was written in
-  it is in Drafts.
+  laptop and sent with the message, never hosted anywhere). Each address, an account's own or an alias,
+  has its default; choosing another From in the composer brings its signature, and the Signature button
+  there picks another or none. Cc Bcc shows a Reply-To field with them, for where replies are to go. A
+  template can have a subject, which it gives a message that has none yet. A picture (PNG, JPEG, GIF or
+  WebP) pasted or dropped goes into the words where the caret is, and is sent as a part of the message
+  the words name, as mail apps send them; any other file is attached. A forward or a reply keeps the
+  pictures of what it quotes in its words the same way. Replying starts from the buttons at the foot of
+  a thread, in the composer, or the one beside each message, which replies to everyone on it if
+  Settings, General say so. A reply quotes the message it answers, unless Settings, General say not to;
+  a forward always carries it. A reply or forward closed as it opened, with nothing written, leaves no
+  draft behind. Starting another closes the one open the same way, so what was written in it is in
+  Drafts.
 - **Drafts in your service's Drafts:** a draft is kept on this laptop at once and in the account's
   Drafts a few seconds after you stop typing, so the phone has it, and one started on the phone turns
   up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away

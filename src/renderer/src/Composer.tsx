@@ -603,7 +603,7 @@ export function Composer(props: {
         <div ref={editor} className="editor" role="textbox" aria-multiline="true" aria-label="Message" contentEditable
           suppressContentEditableWarning onInput={soon} onPaste={paste} onDrop={dropText}
           onDragStart={() => (ownDrag.current = true)} onDragEnd={() => (ownDrag.current = false)} />
-        {signedWith && <div className="signature muted" dangerouslySetInnerHTML={{ __html: `-- <br>${signatureMarkup(signedWith.html)}` }} />}
+        {signedWith && (signedWith.text.trim() || /<img\b/i.test(signedWith.html)) && <div className="signature muted" dangerouslySetInnerHTML={{ __html: `-- <br>${signatureMarkup(signedWith.html)}` }} />}
         {quote && (
           <div className="quote">
             <button type="button" className="quiet" aria-expanded={quoteOpen} onClick={() => setQuoteOpen(!quoteOpen)}>
