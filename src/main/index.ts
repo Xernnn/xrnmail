@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
   Rsvp, SenderList, Server, SummarySettings, SwipeAction, Template, ThreadRef
@@ -400,12 +400,28 @@ function rsvp(value: unknown): Rsvp {
 const SAVING: ('showOverwriteConfirmation' | 'createDirectory')[] = ['showOverwriteConfirmation', 'createDirectory']
 
 let openedFiles: string | null = null
+/** Where the profile notes the folder, so one a crash left behind is found at the next start. */
+const OPENED_KEY = 'openedFolder'
+let noteOpened: ((path: string) => void) | null = null
 
-/** A private folder for attachments being looked at, gone when the app quits. */
+/** A private folder for attachments being looked at, gone when the app quits. Its name can't be
+ *  guessed, so nothing else can make it first, and the profile keeps it. */
 function openedFolder(): string {
-  openedFiles ??= join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+  if (!openedFiles) {
+    openedFiles = join(app.getPath('temp'), `xrnmail-${randomUUID()}`)
+    noteOpened?.(openedFiles)
+  }
   mkdirSync(openedFiles, { recursive: true, mode: 0o700 })
   return openedFiles
+}
+
+/** Takes away the folder of opened attachments the last run left, if it didn't quit: only one this
+ *  profile noted, and named as this app names them. */
+function clearOpened(store: Store): void {
+  const left = store.meta(OPENED_KEY)
+  if (left && /^xrnmail-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(basename(left))) rmSync(left, { recursive: true, force: true })
+  store.deleteMeta(OPENED_KEY)
+  noteOpened = (path) => store.setMeta(OPENED_KEY, path)
 }
 
 function register(service: MailService, avatars: Avatars): void {
@@ -733,6 +749,7 @@ app.on('window-all-closed', () => { if (quitting || !tray) app.quit() })
 void app.whenReady().then(() => {
   lockDownNetwork()
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
+  clearOpened(store)
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
   // The UI tests look nothing up unless they hand over pictures of their own.
   const sources = test['XRNMAIL_PICTURES'] ? testSources(test['XRNMAIL_PICTURES']) : test['XRNMAIL_DATA'] ? null : webSources(fetch, txt, addressesOf)

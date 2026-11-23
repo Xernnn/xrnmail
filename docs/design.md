@@ -410,8 +410,10 @@ Writing and acting on mail gave strangers new things to aim at, so:
   written file is, run without a shell, and opens it only if that's a type of the same kind. With no
   `xdg-mime` the bytes decide alone, except for old Office files, whose container is also an
   installer's. Anything refused says "Save it to open", and a name that can't be opened saves
-  straight away. File names are cleaned before they're suggested, so `../../.ssh/authorized_keys`
-  can't climb out.
+  straight away. What's opened is written to a folder of its own in the temporary folder, named so it
+  can't be guessed and noted in the profile, and taken away when the app quits, or at the next start
+  if it didn't get to. Saving asks before writing over a file. File names are cleaned before they're
+  suggested, so `../../.ssh/authorized_keys` can't climb out.
 - **Unsubscribing makes one fixed request.** The address comes from a stranger's header, so the app sends
   only the POST that RFC 8058 defines, without credentials or redirects, to https on a public name, and
   only when the button is pressed. Anything else opens in the browser. A mail-only sender gets a draft

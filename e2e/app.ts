@@ -17,6 +17,8 @@ export interface Running {
   openedFiles: () => Promise<string[]>
   /** Where a "Save" lands. */
   savedTo: string
+  /** The profile, for starting the app on it again. */
+  data: string
   stop(): Promise<void>
 }
 
@@ -29,12 +31,14 @@ const HEADLESS = process.env['E2E_HEADLESS'] ? ['--ozone-platform=headless', '--
  *  finds none. Either way nothing is looked up on the network. */
 export async function launch(options: {
   colorScheme?: 'light' | 'dark'; gmail?: FakeGmail; size?: [number, number]; pictures?: Record<string, Buffer | string>
+  /** A profile an earlier run left, instead of a new one. */
+  data?: string
 } = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
   const port = await gmail.listen()
   const smtp = new FakeSmtp(gmail.secret)
   const smtpPort = await smtp.listen()
-  const data = mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
+  const data = options.data ?? mkdtempSync(join(tmpdir(), 'xrnmail-e2e-'))
   const faces: Record<string, string> = options.pictures ? { XRNMAIL_PICTURES: writePictures(mkdtempSync(join(data, 'faces-')), options.pictures) } : {}
   const app = await _electron.launch({
     args: ['.', '--no-sandbox', ...HEADLESS],
@@ -79,6 +83,7 @@ export async function launch(options: {
     opened: () => app.evaluate(() => (globalThis as unknown as { openedLinks: string[] }).openedLinks),
     openedFiles: () => app.evaluate(() => (globalThis as unknown as { openedFiles: string[] }).openedFiles),
     savedTo: join(data, 'saved-attachment'),
+    data,
     stop: async () => {
       await app.close()
       await gmail.stop()

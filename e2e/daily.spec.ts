@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { jar, pdf } from '../tests/files'
 import { launch, ME, signIn, type Running } from './app'
@@ -1315,6 +1315,29 @@ test('attachments: saved exactly, opened only when safe', async () => {
   const dialogs = await run.app.evaluate(() => (globalThis as unknown as { saveDialogs: { properties?: string[] }[] }).saveDialogs)
   expect(dialogs).toHaveLength(2)
   for (const options of dialogs) expect(options.properties).toContain('showOverwriteConfirmation')
+})
+
+// Opened files waited in the temporary folder until a clean quit, and a crash left them for good.
+test('an attachment opened isn\'t left on disk by a crash: the next start takes it away', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Files', attachment: { name: 'report.pdf', type: 'application/pdf', body: pdf() } }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.locator('.threads').getByText('Files').click()
+  await page.getByRole('button', { name: /^report\.pdf/ }).click()
+  await expect.poll(run.openedFiles).toHaveLength(1)
+  const [opened = ''] = await run.openedFiles()
+  expect(readFileSync(opened).equals(pdf())).toBe(true)
+  // Ended the way a crash ends it, with nothing let to tidy up.
+  const ended = new Promise((resolve) => run.app.process().once('exit', resolve))
+  run.app.process().kill('SIGKILL')
+  await ended
+  await gmail.stop()
+  await smtp.stop()
+  expect(existsSync(opened)).toBe(true)
+  run = await launch({ data: run.data })
+  await run.page.waitForLoadState()
+  expect(existsSync(dirname(opened))).toBe(false)
 })
 
 test('View original shows a message as the server has it, as text, and saves it as .eml', async () => {
