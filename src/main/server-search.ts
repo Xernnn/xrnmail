@@ -323,8 +323,10 @@ export class OldMail {
       const going = this.bringing.get(key)
       if (going) waits.push(going)
       else if (this.found.has(key) && !this.brought.has(key)) {
-        const account = this.found.get(key)?.[0]?.account ?? ''
-        wanted.set(account, [...(wanted.get(account) ?? []), key])
+        const hits = this.found.get(key) ?? []
+        // Kept from an earlier day: it's here, and the server isn't asked again.
+        if (hits.every((hit) => this.deps.store.kept(hit.account, hit.box, [hit.uid], true).has(hit.uid))) this.brought.add(key)
+        else wanted.set(hits[0]?.account ?? '', [...(wanted.get(hits[0]?.account ?? '') ?? []), key])
       }
     }
     for (const [account, keys] of wanted) {

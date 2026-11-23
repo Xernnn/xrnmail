@@ -34,12 +34,13 @@ let folder: string
 let store: Store
 let clock: number
 let changed: Mock<() => void>
+let secrets: MemorySecrets
 let service: MailService
 
 const eventually = (check: () => void): Promise<void> => vi.waitFor(check, { timeout: 15_000, interval: 15 })
 
 const make = (): MailService => new MailService({
-  store, secrets: new MemorySecrets(), changed,
+  store, secrets, changed,
   now: () => clock,
   files: new DraftFiles(folder),
   searchSettleMs: 0,
@@ -95,6 +96,7 @@ beforeEach(async () => {
   folder = mkdtempSync(join(tmpdir(), 'xrnmail-old-'))
   store = new Store(':memory:')
   changed = vi.fn()
+  secrets = new MemorySecrets()
   service = make()
   service.saveBatch({ ...service.settings().batch, times: [] })
 })
@@ -254,6 +256,19 @@ describe('opening what a search found', () => {
     expect(yahoo.box('Archive').mails.map((m) => m.raw.toString())).toEqual([expect.stringContaining('Boat club dues')])
     expect(yahoo.box('Sent').mails).toHaveLength(1) // your own reply stays where it is
     expect(yahoo.writes().filter((c) => /MOVE|COPY/.test(c))).toEqual([expect.stringMatching(/^UID MOVE 1 "?Archive"?$/)])
+  })
+
+  it('a thread kept from an earlier day opens without asking the server for it again', async () => {
+    gmail.add(rawMail({ subject: 'Maple notes', text: 'Kept' }), { arrived: ago(400) })
+    await add(G, gmail)
+    const ref = await opened('maple')
+    service.list({ kind: 'inbox' })
+    service = make() // the app started again, on the same profile
+    await eventually(() => expect(search('maple')).toMatchObject([{ subject: 'Maple notes', older: true }]))
+    const asked = gmail.commands.length
+    await service.reach([ref])
+    expect(service.thread(G, ref.thread).map((m) => m.text.trim())).toEqual(['Kept'])
+    expect(gmail.commands.slice(asked).filter((c) => /X-GM-THRID|BODY\.PEEK\[\]/.test(c))).toEqual([])
   })
 
   it('a week unopened, what was fetched goes; opened since, or pinned, it stays', async () => {

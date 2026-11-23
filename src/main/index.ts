@@ -449,7 +449,11 @@ function register(service: MailService, avatars: Avatars): void {
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
-  handle('pin', (refs: unknown, on: unknown) => service.pin(targets(refs), on === true))
+  handle('pin', async (refs: unknown, on: unknown) => {
+    const chosen = targets(refs)
+    await service.reach(chosen)
+    service.pin(chosen, on === true)
+  })
   handle('block', (address: unknown) => service.block(text(address, 320)))
   handle('unsubscribe', async (message: unknown) => {
     const { url, ...result } = await service.unsubscribe(number(message))
