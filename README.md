@@ -169,7 +169,8 @@ kept on the laptop.
   four lines of preview, and Settings you can search.
 - **Stays with you:** new mail is announced as it lands, and clicking the notice for a message opens it
   in the inbox. A notice for one message has Archive and Mark read on it too, where the desktop's
-  notification server shows buttons, and they work with the window closed. With Focused and Other,
+  notification server shows buttons, and they work with the window closed. Settings, Notifications,
+  Sound adds a soft two-note chime to each notice (off to start with). With Focused and Other,
   mail in Other can arrive unannounced (Settings, Notifications).
   The tray shows what's unread, closing the window keeps it running there, and it can start at login
   (both in Settings, General). Spell check knows your language, plus English and Vietnamese.

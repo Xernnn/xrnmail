@@ -43,7 +43,7 @@ const TABS: [Tab, string, TabIcon][] = [
 /** What each page holds, for the search box. */
 const TAB_WORDS: Record<Tab, string> = {
   general: 'focused other inbox layout archived deleted next previous back list undo how long seconds move send default reply all quote original include mark read seen thread conversation order oldest newest first snooze send later today evening tomorrow weekend next week pictures images faces photos logos gravatar tray background start login',
-  notifications: 'new mail tell account focused other only mute muted senders unmute quiet',
+  notifications: 'new mail tell account focused other only mute muted senders unmute quiet sound chime',
   accounts: 'add remove service name alias sends as colour color keep laptop days photo picture avatar gravatar face',
   appearance: 'theme look dark light darken mail colours colors white page icons sidebar edit menu entries order hide show preview lines attachment cards files important importance markers gmail clock 24-hour time',
   actions: 'quick actions hover pointer swipe left right short long archive flag delete read snooze',
@@ -398,6 +398,7 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
         {settings.focused && (
           <Check label="Only mail in Focused" on={settings.notifyFocusedOnly} set={(notifyFocusedOnly) => save({ notifyFocusedOnly })} />
         )}
+        <Check label="Sound" on={settings.sound} set={(sound) => save({ sound })} />
       </section>
       <section>
         <h3>Muted senders</h3>

@@ -391,7 +391,7 @@ function profile(value: unknown): ProfilePatch {
   if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
   if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
   if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces'] as const) {
+  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces', 'sound'] as const) {
     if (p[key] !== undefined) patch[key] = p[key] === true
   }
   if (isKeySet(p['keys'])) patch.keys = p['keys']
@@ -809,6 +809,8 @@ void app.whenReady().then(() => {
     runner: systemRunner,
     platform: process.platform,
     icon: resourceFile('icon.png'),
+    chime: resourceFile('new-mail.wav'),
+    sound: () => mail?.settings().sound === true,
     plain: notify,
     plainSummary: notifySummary,
     act: (ref, action) => {

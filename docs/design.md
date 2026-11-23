@@ -365,6 +365,12 @@ the window. Both programs run without a shell, the words after `--`, and the bod
 escaped, since a server may read it as markup. At most six notices wait on a button; the oldest stops
 waiting, and quitting stops them all.
 
+With Sound on, each notice plays `resources/new-mail.wav` through `pw-play`, or `paplay` where that
+fails, so it's heard with the window closed. It's two bell notes made from sine waves by
+`scripts/make-chime.mjs`, so no one else's recording is in the app, and it's unpacked from the archive
+with the icon so a player outside the app can read it. Only mail that's announced makes it: a muted
+sender's, an account with its notices off, and Other while only Focused is announced make none.
+
 ## The Assistant
 
 `assistant.ts` decides Focused or Other, and finds parcels, travel, bills and events. It runs as mail is

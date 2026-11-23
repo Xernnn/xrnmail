@@ -132,3 +132,19 @@ test('finding words in a thread in a window of its own, and with Gmail\'s keys',
   await expect(bar).toHaveCount(0)
   await expect(solo.getByRole('toolbar', { name: 'Thread' })).toBeVisible()
 })
+
+test('Sound for new mail: a switch with the notices, off to start with', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  expect((await page.evaluate(() => window.mail.settings())).sound).toBe(false)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByRole('button', { name: 'Notifications' }).click()
+  const sound = settings.getByRole('checkbox', { name: 'Sound', exact: true })
+  await expect(sound).not.toBeChecked()
+  await sound.check()
+  await expect.poll(() => page.evaluate(async () => (await window.mail.settings()).sound)).toBe(true)
+  await settings.getByLabel('Search settings').fill('sound')
+  await expect(settings.getByRole('button', { name: 'Notifications' })).toBeVisible()
+})

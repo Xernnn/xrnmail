@@ -35,6 +35,8 @@ function notices(runner: Runner, extra: Partial<NoticeDeps> = {}) {
     runner,
     platform: 'linux',
     icon: '/opt/xrnmail/resources/app.asar.unpacked/resources/icon.png',
+    chime: '/opt/xrnmail/resources/app.asar.unpacked/resources/new-mail.wav',
+    sound: () => false,
     plain: vi.fn<NoticeDeps['plain']>(),
     plainSummary: vi.fn<NoticeDeps['plainSummary']>(),
     act: vi.fn<NoticeDeps['act']>(),
@@ -159,5 +161,42 @@ describe('notices with no buttons', () => {
     expect(hasActions(CAPABILITIES)).toBe(true)
     expect(hasActions("(['body', 'body-hyperlinks'],)")).toBe(false)
     expect(hasActions("(['action-icons'],)")).toBe(false)
+  })
+})
+
+describe('the sound', () => {
+  const players = (ran: [string, string[]][]): [string, string[]][] => ran.filter(([file]) => file !== 'gdbus')
+
+  it('is off unless Settings turn it on', async () => {
+    const { runner, ran } = fakeRunner()
+    const { notices: shown } = notices(runner)
+    shown.landed(1, preview)
+    shown.landed(5)
+    shown.summarized(2, ['Weekly Digest'])
+    await settle()
+    expect(players(ran)).toEqual([])
+  })
+
+  it('plays once for each notice, through PipeWire, or PulseAudio where that fails', async () => {
+    const { runner, ran } = fakeRunner(async (file) => {
+      if (file === 'pw-play') throw new Error('spawn pw-play ENOENT')
+      return CAPABILITIES
+    })
+    const { deps, notices: shown } = notices(runner, { sound: () => true })
+    shown.landed(1, preview)
+    shown.landed(5)
+    shown.summarized(2, ['Weekly Digest'])
+    await settle()
+    const chime = [deps.icon.replace('icon.png', 'new-mail.wav')]
+    expect(players(ran)).toEqual([['pw-play', chime], ['pw-play', chime], ['pw-play', chime], ['paplay', chime], ['paplay', chime], ['paplay', chime]])
+  })
+
+  it('is new-mail.wav: a short mono WAV made here', async () => {
+    const { readFileSync } = await import('node:fs')
+    const wav = readFileSync(new URL('../resources/new-mail.wav', import.meta.url))
+    expect([wav.toString('ascii', 0, 4), wav.toString('ascii', 8, 12), wav.readUInt16LE(20), wav.readUInt16LE(22)]).toEqual(['RIFF', 'WAVE', 1, 1])
+    const seconds = wav.readUInt32LE(40) / wav.readUInt32LE(28)
+    expect(seconds).toBeLessThan(1)
+    expect(wav.length).toBeLessThan(64 * 1024)
   })
 })

@@ -2,7 +2,7 @@ import { execFile, type ChildProcess } from 'node:child_process'
 import type { ThreadRef } from '@shared/types'
 
 /**
- * New-mail notices on Linux with Archive and Mark read on them. Electron's Notification
+ * New-mail notices on Linux with Archive and Mark read on them, and the sound. Electron's Notification
  * has no actions on Linux, so a notice for one message goes to the desktop's notification server
  * through notify-send, which waits on the bus for the button pressed and says which. It's the one
  * connection that asked, so servers that tell only that connection (dunst, Plasma) are heard as well
@@ -29,6 +29,10 @@ export interface NoticeDeps {
   platform: string
   /** The app's icon, as a file the notification server can read. */
   icon: string
+  /** The chime, as a file a player can read. */
+  chime: string
+  /** Whether new mail makes a sound (Settings, Notifications). */
+  sound(): boolean
   /** Electron's notice, as there always was: for several messages, or where actions can't be had. */
   plain(count: number, preview: Preview | undefined, open: () => void): void
   /** Electron's notice for a Summary that landed. */
@@ -82,6 +86,7 @@ export class Notices {
 
   /** New mail: one message's notice has Archive and Mark read where the desktop shows them. */
   landed(count: number, preview?: Preview): void {
+    this.ring()
     const open = (): void => this.deps.open(preview && { account: preview.account, thread: preview.thread })
     if (!preview || count !== 1 || this.deps.platform !== 'linux') return this.deps.plain(count, preview, open)
     void this.withActions().then((yes) => {
@@ -91,12 +96,20 @@ export class Notices {
   }
 
   summarized(count: number, senders: string[]): void {
+    this.ring()
     this.deps.plainSummary(count, senders, () => this.deps.openSummary())
   }
 
   /** No more waiting on buttons: the app is going. A notice still up stays, and does nothing. */
   stop(): void {
     for (const each of this.waiting.splice(0)) each.stop()
+  }
+
+  private ring(): void {
+    if (!this.deps.sound() || this.deps.platform !== 'linux') return
+    // PipeWire's player, or PulseAudio's where that's what there is.
+    this.deps.runner.run('pw-play', [this.deps.chime], 5_000).catch(() =>
+      this.deps.runner.run('paplay', [this.deps.chime], 5_000)).catch(() => undefined)
   }
 
   /** Whether the server shows actions, asked again once the last answer is old. */

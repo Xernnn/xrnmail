@@ -8,6 +8,7 @@ files:
   - package.json
   - resources/icon.png
   - resources/tray.png
+  - resources/new-mail.wav
 asarUnpack:
   - resources/**
 
