@@ -1834,6 +1834,7 @@ export class MailService {
       this.store.saveDraft(e instanceof NeverLeft
         ? { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' }
         : { ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+      if (!(e instanceof NeverLeft)) this.note(draft.account, SEND_FAILED)
       this.deps.changed()
       return null
     }

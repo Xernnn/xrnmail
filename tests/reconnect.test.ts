@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
-import { describeFailure, MailService, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
+import { describeFailure, MailService, SEND_FAILED, WATCH_SETTLE_MS, type ServiceDeps } from '@main/service'
 import { ImapSource, ImapWatcher, type ImapTimeouts } from '@main/source'
 import { Store } from '@main/store'
 import { SyncLog } from '@main/sync-log'
@@ -444,6 +444,7 @@ describe('sending', () => {
     await service.tick()
     expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'The mail server refused this password.' })
     expect(smtp.received).toBe(0)
+    expect(service.accounts()[0]?.error).toBe(SEND_FAILED) // said beside the account, like any other failed send
   })
 })
 
