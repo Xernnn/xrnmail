@@ -6,6 +6,7 @@ import type {
   Subscription, ThreadRef, ThreadRow
 } from '@shared/types'
 import { authenticated } from '@shared/images'
+import { ageStart, firstTerms, parseQuery, type Field, type Term } from '@shared/query'
 import { binOf, DRAFT, INBOX, type MailState } from './actions'
 import type { Hold } from './batches'
 import type { Unsubscribe } from './parse'
@@ -382,53 +383,98 @@ export const RECENT_KEPT = 100
 const RECENT_ORDER = `(SELECT r.at FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC,
   (SELECT r.rowid FROM recent r WHERE r.account = t.account AND r.thread = t.thread) DESC`
 
-const SEARCH_FLAGS: Record<string, string> = {
-  'has:attachment': 'has_attachment = 1',
-  'is:unread': 'seen = 0',
-  'is:read': 'seen = 1',
-  'is:flagged': 'flagged = 1',
-  'is:starred': 'flagged = 1',
-  'in:inbox': 'in_inbox = 1'
-}
-
 const likeEscape = (text: string): string => text.replace(/[\\%_]/g, (c) => `\\${c}`)
 
 export interface SearchParts {
-  /** For FTS5. Quoted terms, each matching as a prefix: what's typed is never read as its syntax. */
+  /** For FTS5. Quoted terms, each matching as a prefix, or as written for a quoted phrase: what's
+   *  typed is never read as its syntax. */
   match: string
   filters: string[]
   /** For the `?` in [filters], in order. */
   params: SQLInputValue[]
 }
 
-/** Plain words, `from:`, `subject:`, `to:`, `after:` and `before:`, and the handful of flags above. */
-export function searchParts(text: string): SearchParts {
+const FTS_COLUMNS: Partial<Record<Field, string>> = { any: '', from: 'sender', subject: 'subject' }
+
+/** A word for FTS5, in quotes so nothing in it is syntax. */
+const ftsOf = (term: Extract<Term, { kind: 'word' }>): string => {
+  const column = FTS_COLUMNS[term.field]
+  return `${column ? `${column} : ` : ''}"${term.text}"${term.exact ? '' : '*'}`
+}
+
+/** Whether any of a message's labels, or on other services its folder, is [place]: as typed, or as
+ *  Gmail writes a label in a search, with dashes for spaces and slashes. */
+const LABELLED = `EXISTS (SELECT 1 FROM json_each(labels) WHERE lower(json_each.value) = ? OR replace(replace(lower(json_each.value), ' ', '-'), '/', '-') = ?)`
+const SENT_LABEL = "EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Sent')"
+const SNOOZED = 'EXISTS (SELECT 1 FROM snoozes z WHERE z.account = messages.account AND z.thread = messages.thread AND z.until > ?)'
+const PINNED_THREAD = 'EXISTS (SELECT 1 FROM pins q WHERE q.account = messages.account AND q.thread = messages.thread)'
+
+/** One term as SQL over `messages`, with what its `?` stand for. */
+function sqlOf(term: Term, now: number): { sql: string; params: SQLInputValue[] } {
+  const like = (value: string): string => `%${likeEscape(value.toLowerCase())}%`
+  switch (term.kind) {
+    case 'word':
+      if (term.field === 'to') return { sql: "lower(to_json || cc_json) LIKE ? ESCAPE '\\'", params: [like(term.text)] }
+      if (term.field === 'filename') {
+        return { sql: "EXISTS (SELECT 1 FROM json_each(attachments) WHERE lower(json_extract(json_each.value, '$.name')) LIKE ? ESCAPE '\\')", params: [like(term.text)] }
+      }
+      return { sql: 'id IN (SELECT rowid FROM search WHERE search MATCH ?)', params: [ftsOf(term)] }
+    case 'is':
+      switch (term.what) {
+        case 'unread': return { sql: 'seen = 0', params: [] }
+        case 'read': return { sql: 'seen = 1', params: [] }
+        case 'starred': return { sql: 'flagged = 1', params: [] }
+        case 'important': return { sql: "EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Important')", params: [] }
+        case 'snoozed': return { sql: SNOOZED, params: [now] }
+        case 'pinned': return { sql: PINNED_THREAD, params: [] }
+      }
+      break
+    case 'has':
+      return { sql: 'has_attachment = 1', params: [] }
+    case 'in': {
+      const place = term.place.toLowerCase()
+      if (place === 'inbox') return { sql: 'in_inbox = 1', params: [] }
+      if (place === 'sent') return { sql: SENT_LABEL, params: [] }
+      if (place === 'archive') return { sql: `(in_inbox = 0 AND NOT ${SENT_LABEL})`, params: [] }
+      if (place === 'starred' || place === 'flagged') return { sql: 'flagged = 1', params: [] }
+      if (place === 'snoozed') return { sql: SNOOZED, params: [now] }
+      if (place === 'anywhere' || place === 'all') return { sql: '1', params: [] }
+      return { sql: LABELLED, params: [place, place.replace(/[\s/]+/g, '-')] }
+    }
+    case 'after':
+      return { sql: 'arrived >= ?', params: [term.at] }
+    case 'before':
+      return { sql: 'arrived < ?', params: [term.at] }
+    case 'newer':
+      return { sql: 'arrived >= ?', params: [ageStart(term, now)] }
+    case 'older':
+      return { sql: 'arrived < ?', params: [ageStart(term, now)] }
+    case 'larger':
+      return { sql: 'size > ?', params: [term.bytes] }
+    case 'smaller':
+      return { sql: 'size < ?', params: [term.bytes] }
+  }
+  return { sql: '1', params: [] }
+}
+
+/** A search as Gmail reads one (`shared/query.ts`): words and "phrases", OR, -word and NOT word,
+ *  from:, to:, subject:, filename:, in: and label:, is:, has:attachment, after: and before:,
+ *  newer_than: and older_than:, larger: and smaller:, the first twelve terms of it. Plain words that
+ *  must all be there go to FTS5 together, each once; the rest are filters. */
+export function searchParts(text: string, now = Date.now()): SearchParts {
   const terms: string[] = []
   const filters: string[] = []
   const params: SQLInputValue[] = []
-  for (const raw of foldForSearch(text).split(/\s+/).filter(Boolean).slice(0, 12)) {
-    const flag = SEARCH_FLAGS[raw.toLowerCase()]
-    if (flag) {
-      filters.push(flag)
+  for (const { not, any } of firstTerms(parseQuery(foldForSearch(text)))) {
+    const [only] = any
+    if (any.length === 1 && !not && only?.kind === 'word' && FTS_COLUMNS[only.field] !== undefined) {
+      if (!terms.includes(ftsOf(only))) terms.push(ftsOf(only))
       continue
     }
-    const person = /^to:(.+)$/i.exec(raw)
-    if (person) {
-      filters.push("lower(to_json || cc_json) LIKE ? ESCAPE '\\'")
-      params.push(`%${likeEscape(person[1]?.toLowerCase() ?? '')}%`)
-      continue
-    }
-    const dated = /^(after|before):(\d{4}-\d{1,2}(?:-\d{1,2})?)$/i.exec(raw)
-    const day = dated ? Date.parse(`${dated[2]}${dated[2]?.split('-').length === 2 ? '-01' : ''}`.replace(/-(\d)(?=-|$)/g, '-0$1')) : NaN
-    if (!Number.isNaN(day)) {
-      filters.push(dated?.[1]?.toLowerCase() === 'after' ? 'arrived >= ?' : 'arrived < ?')
-      params.push(day)
-      continue
-    }
-    const scoped = /^(from|subject):(.+)$/i.exec(raw)
-    const column = scoped ? (scoped[1]?.toLowerCase() === 'from' ? 'sender' : 'subject') : ''
-    const word = (scoped?.[2] ?? raw).replace(/"/g, '')
-    if (word) terms.push(column ? `${column} : "${word}"*` : `"${word}"*`)
+    const parts = any.map((term) => sqlOf(term, now))
+    const sql = parts.length === 1 ? (parts[0]?.sql ?? '1') : `(${parts.map((part) => part.sql).join(' OR ')})`
+    filters.push(not ? `NOT (${sql})` : sql)
+    params.push(...parts.flatMap((part) => part.params))
   }
   return { match: terms.join(' '), filters, params }
 }
@@ -743,7 +789,7 @@ export class Store {
       )
     }
     if (query.kind === 'search') {
-      const { match, filters, params } = searchParts(query.text)
+      const { match, filters, params } = searchParts(query.text, now)
       if (!match && filters.length === 0) return []
       const where = [...filters, ...(match ? ['id IN (SELECT rowid FROM search WHERE search MATCH ?)'] : [])].join(' AND ')
       try {

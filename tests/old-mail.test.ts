@@ -304,6 +304,7 @@ describe('what a server is asked', () => {
     expect(imapPlan('tax return', keepFrom, keepFrom)?.searches).toEqual([{ text: 'tax', before: new Date(keepFrom + DAY) }, { text: 'return' }])
     expect(imapPlan('a OR b -c', keepFrom, keepFrom)?.searches).toEqual([{ or: [{ text: 'a' }, { text: 'b' }], not: { text: 'c' }, before: new Date(keepFrom + DAY) }])
     expect(imapPlan('is:important', keepFrom, keepFrom)).toBeNull() // only Gmail marks it
+    expect(imapPlan(Array.from({ length: 40 }, (_, i) => `w${i}`).join(' '), keepFrom, keepFrom)?.searches).toHaveLength(12) // a search each
     const filed = imapPlan('has:attachment in:work', keepFrom, keepFrom)
     expect(filed?.searches).toEqual([{ before: new Date(keepFrom + DAY) }])
     expect(filed?.wants({ id: 'Work', path: 'Work', role: 'folder' })).toBe(true)

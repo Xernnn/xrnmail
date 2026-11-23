@@ -1,6 +1,6 @@
 import type { SearchObject } from 'imapflow'
 import type { Address, ThreadRef, ThreadRow } from '@shared/types'
-import { ageStart, parseQuery, termOf, tokensOf, type Term } from '@shared/query'
+import { ageStart, firstTerms, parseQuery, termOf, tokensOf, type Term } from '@shared/query'
 import { INBOX, labelsOf, SENT } from './actions'
 import { MAX_SOURCE, type ParsedMail } from './parse'
 import { threadOf, type MailboxRef, type MailSource } from './source'
@@ -155,7 +155,7 @@ export function imapPlan(text: string, before: number, now: number): ImapPlan | 
   const asks: SearchObject[] = []
   const here: ((hit: OldHit) => boolean)[] = []
   const folders: ((box: MailboxRef) => boolean)[] = []
-  for (const clause of parseQuery(text)) {
+  for (const clause of firstTerms(parseQuery(text))) {
     const asked = clause.any.map((term) => askedOf(term, now))
     if (clause.any.length === 1) {
       const [term] = clause.any

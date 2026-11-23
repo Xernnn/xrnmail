@@ -180,6 +180,25 @@ export function parseQuery(text: string): Clause[] {
   return clauses
 }
 
+/** The most terms a search takes, here and in IMAP SEARCH (Gmail is given the whole of it). The
+ *  search here runs on the main process, and each word that starts many others costs a pass over all
+ *  of them: on 30,000 messages, twelve one-letter words took twelve seconds, the 250 that fit in the
+ *  search box four minutes. Elsewhere each word is a SEARCH of its own in every folder. */
+export const MOST_TERMS = 12
+
+/** The clauses that fit in [MOST_TERMS], in order. One that doesn't fit whole is left out, rather
+ *  than cut into one that asks something else. */
+export function firstTerms(clauses: Clause[]): Clause[] {
+  let left = MOST_TERMS
+  const kept: Clause[] = []
+  for (const clause of clauses) {
+    if (clause.any.length > left) break
+    left -= clause.any.length
+    kept.push(clause)
+  }
+  return kept
+}
+
 /** The moment an age reaches back to: newer_than:2w is after two weeks ago. Months and years are the
  *  calendar's, as Gmail counts them. */
 export function ageStart(term: Extract<Term, { kind: 'newer' | 'older' }>, now: number): number {
