@@ -96,8 +96,9 @@ export interface MailSource {
   changesSince(modseq: string): AsyncIterable<RemoteHeader>
   /** Flags as they are now, for servers that can't say what changed. */
   flagsOf(uids: number[]): AsyncIterable<RemoteHeader>
-  /** One message with nothing cut, for its attachments. */
-  whole(uid: number): Promise<Buffer | null>
+  /** One message with nothing cut, for its attachments: [TooBig] past [maxBytes], of which no more
+   *  is read. */
+  whole(uid: number, maxBytes: number): Promise<Buffer | null>
   /** One message's header alone, for its details. */
   header(uid: number): Promise<Buffer | null>
   done(): void
@@ -218,6 +219,13 @@ class SearchRefused extends Error {
   readonly responseStatus = 'NO'
 }
 
+/** A message bigger than a mail service takes, which isn't fetched whole. */
+export class TooBig extends Error {
+  constructor() {
+    super('Too big to open here.')
+  }
+}
+
 export class ImapSource implements MailSource {
   private client: ImapFlow
   private lock: { release(): void } | null = null
@@ -322,9 +330,11 @@ export class ImapSource implements MailSource {
     }
   }
 
-  async whole(uid: number): Promise<Buffer | null> {
-    const found = await this.client.fetchOne(String(uid), { uid: true, source: true }, { uid: true })
-    return found ? (found.source ?? null) : null
+  async whole(uid: number, maxBytes: number): Promise<Buffer | null> {
+    const found = await this.client.fetchOne(String(uid), { uid: true, size: true, source: { maxLength: maxBytes } }, { uid: true })
+    if (!found) return null
+    if ((found.size ?? 0) > maxBytes || (found.source?.length ?? 0) > maxBytes) throw new TooBig()
+    return found.source ?? null
   }
 
   /** BODY.PEEK[HEADER]: reading it leaves the message unread. */

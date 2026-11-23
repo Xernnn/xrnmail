@@ -22,7 +22,7 @@ import { changes, DRAFT_MOST_MS, DRAFT_QUIET_MS, draftMessageId, draftRaw, impor
 import { gmailThreadUrl, isPrivateAddress, isPublicHttps, isSafeHubUrl, safeFileName } from './safe-url'
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
-import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import { cleanSecret, TooBig, type MailSource, type MailWatcher } from './source'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
@@ -1113,9 +1113,11 @@ export class MailService {
       const box = source.mailboxes().find((b) => b.id === message.box)
       if (box) {
         await source.open(box)
-        whole = await source.whole(message.uid)
+        // As much as a service takes in one message, and no more, whatever a server would send.
+        whole = await source.whole(message.uid, MAX_DRAFT_SOURCE)
       }
     } catch (e) {
+      if (e instanceof TooBig) throw e
       throw new Error(describeFailure(e, this.serviceName(message.account)))
     } finally {
       await source?.close().catch(() => undefined)

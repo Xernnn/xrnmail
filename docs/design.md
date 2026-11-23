@@ -209,7 +209,9 @@ stopping the rest.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
-- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
+- Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`:
+  36 MB of a message at most, as much as a service takes in one, so a server can't have the laptop
+  hold more. A message bigger than that says it's too big to open here.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
   and made again from the whole message the first time it's opened. A forward takes the files of the
   whole message, whatever the list says.

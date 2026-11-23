@@ -45,7 +45,7 @@ const make = (over: Partial<ServiceDeps> = {}): MailService =>
     addresses: over.addresses ?? (async () => ['203.0.113.7']),
     now: () => clock,
     files: new DraftFiles(folder),
-    openSource: (account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
+    openSource: over.openSource ?? ((account, login) => new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts })),
     openWriter: (account, login) => new ImapWriter({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login, timeouts }),
     openWatcher: over.openWatcher ?? ((account, login) => new ImapWatcher({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })),
     openSender: (account, login) => new SmtpSender({ host: '127.0.0.1', port: smtp.port, security: 'none', user: account.user, ...login })
@@ -1053,6 +1053,29 @@ describe('attachments', () => {
     const forward = await service.startDraft({ kind: 'forward', message: cut?.id ?? 0 })
     expect(forward.files.map((f) => f.name)).toEqual(['a.pdf', 'b.pdf', 'c.pdf'])
     expect(forward.error).toBeNull()
+  })
+
+  // A message was fetched whole with nothing to stop it, so a server could have the laptop hold as
+  // much as it cared to send.
+  it('fetches no more of a message than a mail service takes, and says when it is bigger', async () => {
+    gmail.add(rawMail({ subject: 'Huge', attachment: { name: 'big.bin', type: 'application/octet-stream', body: Buffer.alloc(6000, 7) } }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Huge')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    // The limit is a mail service's, 36 MB; here it's made small, so the test needn't be that big.
+    service = make({
+      openSource: (account, login) => {
+        const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })
+        const whole = source.whole.bind(source)
+        source.whole = (uid) => whole(uid, 4000)
+        return source
+      }
+    })
+    await expect(service.attachment(message?.id ?? 0, 0)).rejects.toThrow('Too big to open here.')
+    await expect(service.original(message?.id ?? 0)).rejects.toThrow('Too big to open here.')
+    const asked = gmail.commands.filter((c) => /BODY\.PEEK\[\]/i.test(c))
+    expect(asked.length).toBeGreaterThan(0)
+    for (const command of asked) expect(command).toMatch(/BODY\.PEEK\[\]<0\.\d+>/i) // only ever a part, never all of it
   })
 })
 
