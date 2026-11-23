@@ -15,11 +15,11 @@ type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 const NOTE_MS = 5000
 
-const fresh = (account: string): RuleEdit => ({
-  name: '', account, on: true, match: 'all',
+const FRESH: RuleEdit = {
+  name: '', account: '', on: true, match: 'all',
   conditions: [{ field: 'from', op: 'contains', value: '' }],
   actions: [{ kind: 'read' }]
-})
+}
 
 /** What Apply now's note says: "12 moved". */
 export const appliedWords = (done: RuleApplied): string => (done.count === 0 || !done.did ? 'None matched' : `${done.count} ${RULE_DONE[done.did]}`)
@@ -202,7 +202,7 @@ export function Rules(props: { accounts: AccountView[]; version: number; undoSec
         </div>
       ))}
       {error && <p className="error">{error}</p>}
-      <button className="quiet" onClick={() => setEditing(fresh(props.accounts.length === 1 ? props.accounts[0]?.email ?? '' : ''))}>New rule</button>
+      <button className="quiet" onClick={() => setEditing(FRESH)}>New rule</button>
       {note && (
         <div className="toast" role="status">
           <span>{note.text}</span>
