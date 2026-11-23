@@ -121,7 +121,8 @@ kept on the laptop.
   the next day, Saturday and Monday to start with), for snoozing and sending later alike. Later
   today is offered only while it's still today, and This evening only before it comes. Snoozed shows
   when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
-  it back now.
+  it back now. Snoozing a thread from Archive, or one a search found under Older, puts it back in the
+  inbox, to come back to.
 - **Remind if no reply:** beside Send, or on a message you sent from its ⋮, with snooze's times. If
   nobody else has written in the thread by then, it comes back to the top of the inbox, unread, with
   a bell on its row, and the notice says so; a reply from anyone else calls it off, and one of your

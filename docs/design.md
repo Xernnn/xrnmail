@@ -87,6 +87,10 @@ away.
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+  - A snooze comes back to the inbox, so a thread that isn't in it (archived, or found on the server
+    from before the window) is moved there first, an action Undo calls back with the snooze. A thread
+    from before the window is fetched first, as for any action, and is ordinary mail from then on
+    (`keepOutside`): the keeping step leaves a snoozed thread whatever its age.
 - A reminder is kept here only too (`reminders`): a thread comes back at `until` if nobody but you
   has written in it since `at`, when the message was sent. One set as a message goes knows only that
   message's Message-ID until its copy in Sent is here, and then its thread. Each tick puts them

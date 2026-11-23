@@ -571,7 +571,8 @@ export interface MailApi {
    *  time, as what takes mail away always does. Returns what undoes it. */
   act(targets: ThreadRef[], action: MailAction, undoable?: boolean): Promise<number>
   undo(token: number): Promise<void>
-  snooze(targets: ThreadRef[], until: number): Promise<void>
+  /** Puts a thread that isn't in the inbox back in it, to come back to: what undoes that, if so. */
+  snooze(targets: ThreadRef[], until: number): Promise<number | null>
   unsnooze(targets: ThreadRef[]): Promise<void>
   /** Brings a message you sent, and its thread, back to the inbox at [until] if nobody else has
    *  written in it by then. */

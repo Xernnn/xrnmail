@@ -315,6 +315,41 @@ describe('opening what a search found', () => {
     expect(subjects(service.list({ kind: 'pinned' }))).toEqual(['Cedar notes'])
   })
 
+  // Snoozed from its row, nothing was fetched, and an archived thread had no inbox to come back to:
+  // it showed under no list, then or later.
+  it('snoozed, it is listed as Snoozed, comes back to the inbox at its time, and is kept till then', async () => {
+    const uid = gmail.add(rawMail({ subject: 'Old invoice' }), { arrived: ago(300), labels: [] })
+    await add(G, gmail)
+    await eventually(() => expect(search('invoice')).toMatchObject([{ subject: 'Old invoice', older: true }]))
+    const row = search('invoice')[0] as ThreadRow
+    const ref = { account: row.account, thread: row.thread }
+    await service.reach([ref]) // as the main process does before a snooze, now as before any action
+    expect(service.snooze([ref], clock + 10 * DAY)).toEqual(expect.any(Number))
+    expect(subjects(service.list({ kind: 'snoozed' }))).toEqual(['Old invoice'])
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual([])
+    await flushed()
+    expect(gmail.mails.find((m) => m.uid === uid)?.labels).toEqual(['\\Inbox']) // in the inbox there, to come back to
+    clock += 10 * DAY
+    await service.syncAll() // the keeping step, more than a week after it was opened
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Old invoice'])
+    expect(subjects(service.list({ kind: 'snoozed' }))).toEqual([])
+  })
+
+  it('an archived thread snoozed and undone at once goes back to the archive, the server never told', async () => {
+    gmail.add(rawMail({ subject: 'Filed last week' }), { arrived: ago(7), labels: [] })
+    await add(G, gmail)
+    const [row] = service.list({ kind: 'all' })
+    const ref = { account: G, thread: (row as ThreadRow).thread }
+    const back = service.snooze([ref], clock + DAY)
+    expect(subjects(service.list({ kind: 'snoozed' }))).toEqual(['Filed last week'])
+    service.unsnooze([ref])
+    service.undo(back as number)
+    await flushed()
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual([])
+    expect(subjects(service.list({ kind: 'archive' }))).toEqual(['Filed last week'])
+    expect(gmail.writes().filter((c) => !c.startsWith('SELECT'))).toEqual([])
+  })
+
   it('once the window grows to take it in, it is ordinary mail', async () => {
     gmail.add(rawMail({ subject: 'Spruce notes' }), { arrived: ago(120) })
     await add(G, gmail)

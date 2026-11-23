@@ -454,9 +454,15 @@ export function App(): ReactNode {
       setRowSnooze(null)
       try {
         if (!SOLO) leave(refs)
-        await window.mail.snooze(refs, at)
+        const back = await window.mail.snooze(refs, at)
         setPicked(new Set())
-        setToast({ text: `Snoozed until ${longTime(at)}`, undo: () => window.mail.unsnooze(refs) })
+        setToast({
+          text: `Snoozed until ${longTime(at)}`,
+          undo: async () => {
+            await window.mail.unsnooze(refs)
+            if (back !== null) await window.mail.undo(back)
+          }
+        })
       } catch (e) {
         say(problem(e))
       }
