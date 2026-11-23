@@ -46,7 +46,9 @@ const KEYRING_SHUT = 'Unlock your system keyring, then restart xrnmail.'
 const SIGN_IN_AGAIN = 'Sign in to this account again.'
 /** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
 const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
-const TOKEN_MARGIN_MS = 60_000
+/** A token is renewed with this much left: Exchange ends a session when its token runs out, so one
+ *  handed to a watch with a minute left had it cut off within the minute. */
+const TOKEN_MARGIN_MS = 5 * 60_000
 const DAY_MS = 86_400_000
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
