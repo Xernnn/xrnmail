@@ -662,6 +662,15 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .shortcut-actions .quiet { padding: 4px 10px; }
 .shortcuts > .quiet { justify-self: start; margin-top: 14px; }
 
+/* Settings, Rules: a rule a line, and in the editor a condition or an action a line. */
+.rule-row { min-height: 40px; border-bottom: 1px solid var(--line-soft); }
+.rule-move { display: inline-flex; }
+.rule-part select { flex: none; width: auto; padding-block: 6px; }
+.rule-part select.grow { flex: 1; }
+.rule-part input { padding-block: 6px; }
+.rule-buttons { display: flex; gap: 8px; }
+.rule-editor > .row-end { max-width: 620px; padding: 4px 0 18px; }
+
 /* The Summary's schedule, in Settings and on first use: Daily or Weekly, then the time. */
 .schedule { display: grid; gap: 10px; max-width: 380px; }
 .schedule-row { display: flex; align-items: center; gap: 16px; font-size: 14px; }
