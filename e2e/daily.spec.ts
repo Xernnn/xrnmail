@@ -1430,6 +1430,9 @@ test('Mark all as read and Empty Trash work on more than a thousand threads', as
   const syncing = page.locator('.sync-progress')
   await expect(page.locator('.threads .thread').first()).toBeVisible({ timeout: 60_000 })
   await expect(syncing).toHaveCount(0, { timeout: 60_000 })
+  // The progress line goes between folders too: the first pass is over only once Sync stops spinning,
+  // and Trash is read after the inbox. Emptying before that found 720 of the 1001.
+  await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeVisible({ timeout: 60_000 })
   await page.locator('.sidebar').getByRole('button', { name: /^Inbox/ }).click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Mark all as read' }).click()
   await expect(page.getByText('Marked as read: 1001 threads')).toBeVisible()
