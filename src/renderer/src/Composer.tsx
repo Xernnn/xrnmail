@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode, type RefObject } from 'react'
 import {
-  Archive, Bold, Check, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Signature, Strikethrough, Trash2,
+  Archive, BellRing, Bold, Check, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Signature, Strikethrough, Trash2,
   SquareArrowOutUpRight, Underline, Upload, X
 } from 'lucide-react'
 import { plainName } from '@shared/names'
@@ -8,7 +8,7 @@ import { hintFor, keyName, keysFor } from '@shared/keys'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings, type ThreadRef } from '@shared/types'
 import { Avatar } from './Common'
-import { fileSize, problem } from './format'
+import { fileSize, longTime, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
 import { IconButton, Popover, TimeMenu } from './Menus'
 
@@ -261,6 +261,9 @@ export function Composer(props: {
   const [templates, setTemplates] = useState(false)
   const [signature, setSignature] = useState(draft.signature)
   const [signing, setSigning] = useState(false)
+  /** Once it's gone, the thread comes back at this time if nobody else has written. */
+  const [remind, setRemind] = useState(draft.remind)
+  const [reminding, setReminding] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -291,8 +294,8 @@ export function Composer(props: {
     account, from, to, cc, bcc, subject, quote,
     html: written(),
     text: textOf(editor.current),
-    signature
-  }), [account, from, to, cc, bcc, subject, quote, signature])
+    signature, remind
+  }), [account, from, to, cc, bcc, subject, quote, signature, remind])
 
   const latest = useRef(collect)
   latest.current = collect
@@ -336,7 +339,7 @@ export function Composer(props: {
     }
   }, [draft.id])
 
-  useEffect(soon, [account, from, to, cc, bcc, subject, signature])
+  useEffect(soon, [account, from, to, cc, bcc, subject, signature, remind])
 
   // While it's open here, what the server says about the draft leaves it as it is.
   useEffect(() => {
@@ -356,7 +359,7 @@ export function Composer(props: {
   const untouched = (edit: DraftEdit): boolean =>
     Boolean(props.fresh) && edit.account === draft.account && edit.from === draft.from && edit.to === draft.to && edit.cc === draft.cc &&
     edit.bcc === draft.bcc && edit.subject === draft.subject && edit.text === startText.current && files.length === draft.files.length &&
-    edit.signature === draft.signature
+    edit.signature === draft.signature && edit.remind === draft.remind
 
   // A window of its own can be closed around its composer. The app is asked first, and through this
   // it keeps what's typed, or takes away a draft with nothing in it, as closing the composer would.
@@ -628,6 +631,14 @@ export function Composer(props: {
         <div className="anchor">
           <IconButton icon={Clock} label="Send later" click={() => setLater(!later)} />
           {later && <TimeMenu title="Send" up pick={(at) => void send(at)} close={() => setLater(false)} />}
+        </div>
+        <div className="anchor">
+          <IconButton icon={BellRing} label="Remind if no reply" hint={remind !== undefined ? longTime(remind) : undefined} on={remind !== undefined}
+            click={() => setReminding(!reminding)} />
+          {reminding && (
+            <TimeMenu title="Remind if no reply" up pick={(at) => { setReminding(false); setRemind(at) }} close={() => setReminding(false)}
+              none={remind !== undefined ? { label: 'No reminder', pick: () => { setReminding(false); setRemind(undefined) } } : undefined} />
+          )}
         </div>
         <span className="tool-gap" />
         <IconButton icon={Paperclip} label="Attach files" click={() => void pick()} />

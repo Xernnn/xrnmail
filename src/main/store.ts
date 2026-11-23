@@ -302,6 +302,17 @@ export const MIGRATIONS = [
   // Recently Seen sees it, and a week unopened it goes.
   `
   CREATE TABLE outside(id INTEGER PRIMARY KEY, used INTEGER NOT NULL);
+  `,
+  // Reminders: a thread comes back to the inbox at `until` if nobody else has written in it since
+  // `at`. One set as a message is sent knows only its Message-ID until the copy in Sent is here, and
+  // then its thread. `fired` once it has come back, and `seen` once it has been opened since. Kept
+  // here only, as snoozes are. Finding the thread is by Message-ID, which has an index for it.
+  `
+  CREATE TABLE reminders(
+    id INTEGER PRIMARY KEY, account TEXT NOT NULL, thread TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL DEFAULT '',
+    at INTEGER NOT NULL, until INTEGER NOT NULL, fired INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0);
+  CREATE INDEX reminders_thread ON reminders(account, thread);
+  CREATE INDEX messages_message_id ON messages(account, message_id);
   `
 ]
 
@@ -356,6 +367,13 @@ export const foldForSearch = (text: string): string => text.replace(/[đĐ]/g, '
 /** Leaves out mail from before the window that was fetched for a search. Only the row id is read, so
  *  a count answered from an index still is. */
 const INSIDE = 'id NOT IN (SELECT id FROM outside)'
+
+/** A thread a reminder has brought back to the inbox here, for a query over `messages`, and one of
+ *  those not opened since. */
+const REMINDED = '(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 1)'
+const REMINDED_UNSEEN = '(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 1 AND seen = 0)'
+/** When a thread came back from a reminder, for ordering a list: it's on top from then. */
+const CAME_BACK = 'CASE WHEN r.fired = 1 THEN r.until ELSE 0 END'
 
 /** Whether a message's thread is pinned, for a query over `messages`. */
 const PINNED = 'EXISTS (SELECT 1 FROM pins p WHERE p.account = messages.account AND p.thread = messages.thread) AS pinned'
@@ -697,6 +715,7 @@ export class Store {
     this.db.prepare('DELETE FROM drafts WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM draft_copies WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM snoozes WHERE account = ?').run(account)
+    this.db.prepare('DELETE FROM reminders WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM pins WHERE account = ?').run(account)
     this.db.prepare('DELETE FROM recent WHERE account = ?').run(account)
     return drafts
@@ -723,11 +742,12 @@ export class Store {
    *  there at all and hidden mail is on its way out, so both stay out of every clause; [bin] says
    *  which of Trash, Spam or neither is being looked at. */
   private threadRows(where: string, params: SQLInputValue[], now: number, limit: number, options: ThreadOptions = {}): ThreadRow[] {
-    const { outer = '1', outerParams = [], order = 'MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END) DESC', bin = 0, outside = false } = options
+    const { outer = '1', outerParams = [], order = `MAX(t.latest, CASE WHEN s.until <= ? THEN s.until ELSE 0 END, ${CAME_BACK}) DESC`, bin = 0, outside = false } = options
     const inside = outside ? '' : `AND ${INSIDE}`
     const rows = this.all(
       `SELECT m.account, m.thread, m.subject, m.from_name, m.from_address, m.snippet, m.facts, m.warnings, t.latest AS date,
-              t.n, t.unread, t.attachment, t.starred, t.important, t.delivered, s.until AS snoozed, p.at AS pinned
+              t.n, t.unread, t.attachment, t.starred, t.important, t.delivered, s.until AS snoozed, p.at AS pinned,
+              r.until AS remind, r.fired AS reminded, r.seen AS remind_seen
        FROM (SELECT account, thread, MAX(arrived) AS latest, COUNT(*) AS n,
                     SUM(seen = 0) AS unread, MAX(has_attachment) AS attachment, MAX(flagged) AS starred,
                     MAX(EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = '\\Important')) AS important,
@@ -737,6 +757,7 @@ export class Store {
                       AND m.release_at <= ? AND m.hidden = 0 AND m.bin = ? ${outside ? '' : 'AND m.id NOT IN (SELECT id FROM outside)'}
        LEFT JOIN snoozes s ON s.account = t.account AND s.thread = t.thread
        LEFT JOIN pins p ON p.account = t.account AND p.thread = t.thread
+       LEFT JOIN reminders r ON r.account = t.account AND r.thread = t.thread
        WHERE ${outer}
        GROUP BY m.account, m.thread
        ORDER BY ${order} LIMIT ?`,
@@ -752,11 +773,13 @@ export class Store {
       snippet: String(r['snippet']),
       date: Number(r['date']),
       count: Number(r['n']),
-      unread: Number(r['unread']),
+      // Back from a reminder and not opened since, it reads as unread, though nothing new came.
+      unread: Number(r['unread']) + (Number(r['reminded']) === 1 && Number(r['remind_seen']) === 0 ? 1 : 0),
       attachment: Number(r['attachment']) > 0,
       starred: Number(r['starred']) > 0,
       important: Number(r['important']) > 0,
       snoozedUntil: r['snoozed'] == null ? null : Number(r['snoozed']),
+      remind: r['remind'] == null ? null : { at: Number(r['remind']), fired: Number(r['reminded']) === 1 },
       facts: factsFrom(r['facts']),
       pinned: r['pinned'] != null,
       summaryAt: r['delivered'] == null ? null : Number(r['delivered']),
@@ -810,11 +833,14 @@ export class Store {
     const params = query.account ? [query.account] : []
     const by = (clause: string): string => [clause, ...scope].join(' AND ')
     const away = 's.until > ? AND s.at >= t.latest'
+    // Asked only while a reminder has brought one back, so the inbox's own query is as it always was.
+    const back = this.one('SELECT 1 AS yes FROM reminders WHERE fired = 1 LIMIT 1') !== undefined
+    const inbox = back ? `(in_inbox = 1 OR ${REMINDED})` : 'in_inbox = 1'
     switch (query.kind) {
       case 'inbox': {
         // What a Summary brought is kept apart from the rest of the inbox, under Summary.
         const side = query.focus ? ` AND focus = ${query.focus === 'focused' ? 1 : 0}` : ''
-        return this.threadRows(by(`in_inbox = 1 AND summary = 0${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+        return this.threadRows(by(`${inbox} AND summary = 0${side}`), params, now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
       }
       case 'summary':
         // Each Summary together, the last to land first.
@@ -823,6 +849,9 @@ export class Store {
         })
       case 'snoozed':
         return this.threadRows(by('in_inbox = 1'), params, now, limit, { outer: away, outerParams: [now], order: 's.until ASC' })
+      case 'reminders':
+        // Waiting to come back, the soonest first.
+        return this.threadRows(by('(account, thread) IN (SELECT account, thread FROM reminders WHERE fired = 0)'), params, now, limit, { order: 'r.until ASC', outside: true })
       case 'starred':
         return this.threadRows(by('flagged = 1'), params, now, limit)
       case 'pinned':
@@ -844,7 +873,8 @@ export class Store {
         // The open thread stays while it's read, in its place, until another is opened.
         const keep = query.keep ? [query.keep.account, query.keep.thread] : []
         const unread = query.keep ? '(seen = 0 OR (account = ? AND thread = ?))' : 'seen = 0'
-        return this.threadRows(by(`in_inbox = 1 AND ${unread}`), [...keep, ...params], now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
+        const fresh = back ? `((in_inbox = 1 AND ${unread}) OR ${REMINDED_UNSEEN})` : `in_inbox = 1 AND ${unread}`
+        return this.threadRows(by(fresh), [...keep, ...params], now, limit, { outer: `NOT (s.until IS NOT NULL AND ${away})`, outerParams: [now] })
       }
       case 'attachments':
         return this.threadRows(by('has_attachment = 1'), params, now, limit)
@@ -1126,6 +1156,61 @@ export class Store {
   /** Recently Seen starts again, empty. */
   forgetSeen(): void {
     this.db.exec('DELETE FROM recent')
+  }
+
+  /** A reminder for a thread, or for the message with [messageId] until its thread is here. One
+   *  for a thread takes the place of any it had. */
+  remind(where: { account: string; thread: string; messageId: string }, at: number, until: number): void {
+    this.inTransaction(() => {
+      if (where.thread) this.db.prepare('DELETE FROM reminders WHERE account = ? AND thread = ?').run(where.account, where.thread)
+      this.db.prepare('INSERT INTO reminders(account, thread, message_id, at, until) VALUES(?,?,?,?,?)')
+        .run(where.account, where.thread, where.messageId, at, until)
+    })
+  }
+
+  unremind(ref: ThreadRef): void {
+    this.db.prepare('DELETE FROM reminders WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
+  }
+
+  /** The thread's reminder, waiting or come back. */
+  reminder(ref: ThreadRef): { at: number; fired: boolean } | null {
+    const row = this.one('SELECT until, fired FROM reminders WHERE account = ? AND thread = ? ORDER BY id DESC LIMIT 1', ref.account, ref.thread)
+    return row ? { at: Number(row['until']), fired: Number(row['fired']) === 1 } : null
+  }
+
+  /** Opened since it came back, it isn't unread any more. */
+  seeReminder(ref: ThreadRef): void {
+    this.db.prepare('UPDATE reminders SET seen = 1 WHERE account = ? AND thread = ? AND fired = 1').run(ref.account, ref.thread)
+  }
+
+  /** Reminders put right as time passes: each finds its thread once the message it was set on is
+   *  here, one that someone else has written in since goes, and those whose time has come with
+   *  nobody having written come back. [own] is an account's own addresses, whose mail is no answer.
+   *  Returns how many came back. */
+  settleReminders(now: number, own: (account: string) => string[]): number {
+    return this.inTransaction(() => {
+      this.db.exec(`UPDATE reminders SET thread = (SELECT m.thread FROM messages m WHERE m.account = reminders.account AND m.message_id = reminders.message_id LIMIT 1)
+        WHERE thread = '' AND message_id != '' AND EXISTS (SELECT 1 FROM messages m WHERE m.account = reminders.account AND m.message_id = reminders.message_id)`)
+      this.db.exec(`DELETE FROM reminders WHERE thread != '' AND id NOT IN (SELECT MAX(id) FROM reminders WHERE thread != '' GROUP BY account, thread)`)
+      for (const row of this.all("SELECT DISTINCT account FROM reminders WHERE thread != ''")) {
+        const account = String(row['account'])
+        this.db.prepare(`DELETE FROM reminders WHERE account = ? AND thread != '' AND EXISTS (
+            SELECT 1 FROM messages m WHERE m.account = reminders.account AND m.thread = reminders.thread AND m.arrived > reminders.at
+              AND m.hidden = 0 AND m.bin = 0 AND lower(m.from_address) NOT IN (SELECT value FROM json_each(?)))`)
+          .run(account, JSON.stringify(own(account).map((a) => a.toLowerCase())))
+      }
+      return Number(this.db.prepare("UPDATE reminders SET fired = 1, seen = 0 WHERE fired = 0 AND thread != '' AND until <= ?").run(now).changes)
+    })
+  }
+
+  /** Back from a reminder and not opened since, in an account, with no unread mail in its inbox
+   *  besides, which counts it already. */
+  remindedUnseen(account: string): number {
+    return Number(this.one(
+      `SELECT COUNT(*) AS n FROM reminders q WHERE q.account = ? AND q.fired = 1 AND q.seen = 0
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.account = q.account AND m.thread = q.thread AND m.in_inbox = 1 AND m.seen = 0 AND m.hidden = 0 AND m.bin = 0)`,
+      account
+    )?.['n'] ?? 0)
   }
 
   /** Whether any of a thread's mail is in the inbox, for anyone to see. */

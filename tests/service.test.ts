@@ -1012,6 +1012,92 @@ describe('snoozing', () => {
   })
 })
 
+describe('reminders', () => {
+  beforeEach(signedIn)
+
+  /** A message you sent, alone in its thread, as Gmail keeps it: in Sent and not the inbox. */
+  const sentOne = async (subject: string): Promise<{ id: number; thread: bigint }> => {
+    gmail.add(rawMail({ subject, from: `Me <${ME}>`, to: 'ada@example.com' }), { arrived: past(30), labels: ['\\Sent'], flags: ['\\Seen'] })
+    await service.syncAll()
+    const row = service.list({ kind: 'sent' }).find((r) => r.subject === subject)
+    const [message] = store.thread(ME, row?.thread ?? '', clock)
+    return { id: message?.id ?? 0, thread: gmail.mails.at(-1)?.thread ?? 0n }
+  }
+
+  it('brings a sent message\'s thread back to the top of the inbox, unread and marked, if nobody has written by then', async () => {
+    gmail.add(rawMail({ subject: 'Newer' }), { arrived: past(1) })
+    const { id } = await sentOne('Any news?')
+    expect(() => service.remind(id, clock - 1)).toThrow('Pick a time in the future.')
+    service.remind(id, clock + 3_600_000)
+    expect(ids()).toEqual(['Newer'])
+    expect(service.list({ kind: 'reminders' }).map((r) => [r.subject, r.remind])).toEqual([['Any news?', { at: clock + 3_600_000, fired: false }]])
+    service = make() // and it survives a restart
+    await later(3_600_000 + 1000)
+    expect(landed).toHaveBeenCalledWith(1)
+    expect(ids()).toEqual(['Any news?', 'Newer'])
+    const [back] = service.list({ kind: 'inbox' })
+    expect(back).toMatchObject({ unread: 1, remind: { fired: true } })
+    expect(service.list({ kind: 'unread' }).map((r) => r.subject)).toContain('Any news?')
+    expect(service.accounts()[0]?.unread).toBe(2)
+    expect(service.list({ kind: 'reminders' })).toEqual([])
+    // Opened, it's read, and stays in the inbox, marked, until it's archived.
+    const ref = { account: ME, thread: back?.thread ?? '' }
+    expect(service.thread(ME, ref.thread)[0]?.remind).toEqual({ at: clock - 1000, fired: true })
+    expect(service.list({ kind: 'inbox' })[0]).toMatchObject({ subject: 'Any news?', unread: 0 })
+    expect(service.accounts()[0]?.unread).toBe(1)
+    service.act([ref], { kind: 'archive' })
+    expect(ids()).toEqual(['Newer'])
+    await later(UNDO_MS + 1000)
+    expect(gmail.writes().filter((c) => /STORE|MOVE/.test(c))).toEqual([]) // it was only here that it came back
+    expect(store.reminder(ref)).toBeNull()
+  })
+
+  it('goes when someone else writes in the thread, and not when you do', async () => {
+    const { id, thread } = await sentOne('Plans')
+    service.remind(id, clock + 3_600_000)
+    gmail.add(rawMail({ subject: 'Re: Plans', from: `Me <${ME}>` }), { arrived: new Date(clock + 60_000), labels: ['\\Sent'], thread })
+    clock += 120_000
+    await service.syncAll()
+    await later(1000)
+    expect(service.list({ kind: 'reminders' }).map((r) => r.subject)).toHaveLength(1)
+    gmail.add(rawMail({ subject: 'Re: Plans', from: 'Ada <ada@example.com>' }), { arrived: new Date(clock + 60_000), thread })
+    clock += 120_000
+    await service.syncAll()
+    await later(1000)
+    expect(service.list({ kind: 'reminders' })).toEqual([])
+    await later(3_600_000)
+    expect(ids()).toEqual([]) // nothing came back: Ada's reply waits for the next delivery, as any mail does
+  })
+
+  it('is only for what you sent, and is cancelled from the reader', async () => {
+    gmail.add(rawMail({ subject: 'From Ada' }), { arrived: past(2) })
+    await service.syncAll()
+    const [theirs] = store.thread(ME, ref('From Ada').thread, clock)
+    expect(() => service.remind(theirs?.id ?? 0, clock + 60_000)).toThrow('Only for mail you sent.')
+    const { id } = await sentOne('Ping')
+    service.remind(id, clock + 60_000)
+    const sent = service.list({ kind: 'sent' }).find((r) => r.subject === 'Ping')
+    service.unremind([{ account: ME, thread: sent?.thread ?? '' }])
+    await later(120_000)
+    expect(ids()).toEqual(['From Ada'])
+  })
+
+  it('can be set as a message is sent, and finds its thread once the copy in Sent is here', async () => {
+    const draft = await service.startDraft({ kind: 'new' })
+    const edit = { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Quote please', html: 'Hi', text: 'Hi', quote: null }
+    service.saveDraft(draft.id, { ...edit, remind: clock + 5_000 })
+    expect(() => service.send(draft.id)).toThrow('Pick a reminder after it goes.')
+    service.saveDraft(draft.id, { ...edit, remind: clock + 86_400_000 })
+    service.send(draft.id)
+    await later(10_000)
+    expect(smtp.sent).toHaveLength(1)
+    await later(1000)
+    expect(service.list({ kind: 'reminders' }).map((r) => r.subject)).toEqual(['Quote please'])
+    await later(86_400_000)
+    expect(ids()).toEqual(['Quote please'])
+  })
+})
+
 describe('blocking', () => {
   beforeEach(signedIn)
 

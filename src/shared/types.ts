@@ -210,6 +210,13 @@ export interface Face {
   logo: boolean
 }
 
+/** A thread comes back to the inbox at [at] if nobody else has written in it by then. [fired] once
+ *  it has. */
+export interface Reminder {
+  at: number
+  fired: boolean
+}
+
 export interface ThreadRow {
   account: string
   thread: string
@@ -226,6 +233,8 @@ export interface ThreadRow {
   important: boolean
   /** Set while it's away, and for a while after it comes back. */
   snoozedUntil: number | null
+  /** When it comes back to the inbox if nobody else writes, and whether it has. */
+  remind?: Reminder | null
   facts: Facts | null
   /** Who wrote in it, oldest first, each once. */
   people: Address[]
@@ -339,6 +348,8 @@ export interface MessageView {
   replyTo: Address[]
   /** Its thread is kept under Pinned. */
   pinned: boolean
+  /** Its thread's reminder. */
+  remind?: Reminder | null
 }
 
 export interface LabelCount {
@@ -375,7 +386,7 @@ export interface SummaryOverview {
 
 export type ListQuery =
   | { kind: 'inbox'; account?: string; focus?: 'focused' | 'other' }
-  | { kind: 'starred' | 'pinned' | 'snoozed' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
+  | { kind: 'starred' | 'pinned' | 'snoozed' | 'reminders' | 'sent' | 'all' | 'archive' | 'trash' | 'spam' | 'attachments' | 'today' | 'recent' | 'summary'; account?: string }
   /** [keep] is the open thread, which stays listed while it's read. */
   | { kind: 'unread'; account?: string; keep?: ThreadRef }
   | { kind: 'label'; account: string; label: string }
@@ -446,6 +457,8 @@ export interface Draft {
   signature?: string
   /** The thread a reply or forward was started from. */
   about?: ThreadRef
+  /** Once it has gone, it comes back to the inbox at this time if nobody else has written. */
+  remind?: number
   /** Not kept: that thread is in the inbox now, so Send & Archive is offered. */
   archivable?: boolean
   /** An answer to a calendar invitation, sent as one. */
@@ -456,7 +469,7 @@ export interface Draft {
   updated: number
 }
 
-export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote' | 'signature'>
+export type DraftEdit = Pick<Draft, 'account' | 'from' | 'to' | 'cc' | 'bcc' | 'subject' | 'html' | 'text' | 'quote' | 'signature' | 'remind'>
 
 export type DraftStart =
   | { kind: 'new'; account?: string; to?: string; cc?: string; bcc?: string; subject?: string; text?: string }
@@ -540,6 +553,10 @@ export interface MailApi {
   undo(token: number): Promise<void>
   snooze(targets: ThreadRef[], until: number): Promise<void>
   unsnooze(targets: ThreadRef[]): Promise<void>
+  /** Brings a message you sent, and its thread, back to the inbox at [until] if nobody else has
+   *  written in it by then. */
+  remind(message: number, until: number): Promise<void>
+  unremind(targets: ThreadRef[]): Promise<void>
   /** Keeps threads under Pinned, or lets them go. It's kept on this laptop: mail servers have no such mark. */
   pin(targets: ThreadRef[], on: boolean): Promise<void>
   block(address: string): Promise<void>

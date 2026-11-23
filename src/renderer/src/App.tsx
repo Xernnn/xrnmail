@@ -68,7 +68,7 @@ const SWIPES: Record<Exclude<SwipeAction, 'none' | 'snooze' | 'read' | 'star'>, 
 }
 
 const TITLES: Record<string, string> = {
-  today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
+  today: 'Today', starred: 'Flagged', pinned: 'Pinned', unread: 'Unread', snoozed: 'Snoozed', reminders: 'Reminders', attachments: 'Attachments', spam: 'Spam', all: 'All Mail',
   drafts: 'Drafts', sent: 'Sent', archive: 'Archive', trash: 'Trash', subscriptions: 'Subscriptions', search: 'Search', recent: 'Recently Seen',
   summary: 'Summary'
 }
@@ -478,6 +478,26 @@ export function App(): ReactNode {
     },
     [leave, say, list, active.kind]
   )
+
+  /** A message you sent: its thread comes back if nobody has written by then. */
+  const remind = async (message: number, at: number): Promise<void> => {
+    try {
+      await window.mail.remind(message, at)
+      const ref = open
+      setToast({ text: `Reminder ${longTime(at)}`, undo: ref ? () => window.mail.unremind([ref]) : undefined })
+    } catch (e) {
+      say(problem(e))
+    }
+  }
+
+  const unremind = async (refs: ThreadRef[]): Promise<void> => {
+    try {
+      await window.mail.unremind(refs)
+      say('Reminder cancelled')
+    } catch (e) {
+      say(problem(e))
+    }
+  }
 
   const compose = useCallback(
     async (start: DraftStart) => {
@@ -1059,6 +1079,7 @@ export function App(): ReactNode {
       act={(action, label) => void run(open ? [open] : [], action, label)}
       snooze={(at) => void snooze(open ? [open] : [], at)}
       unsnooze={openSnoozed ? () => void unsnooze(open ? [open] : []) : undefined}
+      remind={(message, at) => void remind(message, at)} unremind={() => void unremind(open ? [open] : [])}
       reply={reply} unsubscribe={(message) => void unsubscribe(message)} block={(address) => void block(address, open ? [open] : [])} say={say}
       rsvp={(message, reply) => void answer(message, reply)} setFocus={(address, focused) => void keepSender(address, focused)}
       trust={(address) => void trustImages(address)} straight={(address, on) => void straight(address, on)}
@@ -1248,7 +1269,7 @@ export function App(): ReactNode {
                 <Fragment key={keyOf(row)}>
                 {active.kind === 'summary' && row.summaryAt !== null && row.summaryAt !== list[index - 1]?.summaryAt && summaryHead(row.summaryAt)}
                 {row.older && !list[index - 1]?.older && <div className="summary-head older-head"><strong>Older</strong></div>}
-                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'} snoozed={active.kind === 'snoozed'}
+                <Row row={row} many={many} own={own} bins={bins} assistant={active.kind === 'assistant'} snoozed={active.kind === 'snoozed'} reminders={active.kind === 'reminders'}
                   account={accounts.find((a) => a.email === row.account)}
                   on={open?.account === row.account && open.thread === row.thread} picked={picked.has(keyOf(row))}
                   swipe={swipes} quick={quick} cards={profile?.attachmentCards ?? true} importance={profile?.importanceMarks ?? true}

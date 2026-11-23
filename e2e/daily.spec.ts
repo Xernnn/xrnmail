@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { jar, pdf, png } from '../tests/files'
-import { launch, ME, signIn, type Running } from './app'
+import { later, launch, ME, signIn, type Running } from './app'
 
 const LONG = { timeout: 15_000 }
 const earlier = (hours: number): Date => new Date(Date.now() - hours * 3_600_000)
@@ -133,6 +133,58 @@ test('Send & Archive: the thread leaves the inbox as the reply goes, and Undo br
   // A new message answers no thread, so there's nothing to archive.
   await page.keyboard.press('c')
   await expect(composer(page).getByRole('button', { name: 'Send & Archive' })).toHaveCount(0)
+})
+
+test('remind if no reply: a sent thread waits under Reminders, and comes back to the inbox unread and marked', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Any news?', from: `Me <${ME}>`, to: 'ada@example.com' }), { arrived: earlier(5), labels: ['\\Sent'], flags: ['\\Seen'] })
+  await signIn(run)
+  const threads = page.locator('.threads')
+  await page.getByRole('button', { name: 'Sent', exact: true }).click()
+  await threads.getByText('Any news?').click()
+  await page.getByRole('button', { name: 'Message actions' }).click()
+  await page.getByRole('button', { name: 'Remind if no reply' }).click()
+  await page.getByRole('button', { name: /^Tomorrow/ }).click()
+  await expect(page.getByRole('status')).toContainText('Reminder')
+  await expect(page.locator('.thread-head .remind-tag')).toBeVisible()
+  await page.getByRole('button', { name: 'Reminders', exact: true }).click()
+  await expect(threads.locator('.thread')).toHaveCount(1)
+  await expect(threads.locator('time.back')).toBeVisible()
+  await page.getByRole('button', { name: /^Inbox/ }).first().click()
+  await expect(threads.getByText('Any news?')).toHaveCount(0)
+  await later(run, 2 * 86_400_000)
+  await expect(threads.getByText('Any news?')).toBeVisible(LONG)
+  const row = threads.locator('.thread', { hasText: 'Any news?' })
+  await expect(row).toHaveClass(/unread/)
+  await expect(row.getByLabel('No reply')).toBeVisible()
+  await row.getByText('Any news?').click()
+  await expect(row).not.toHaveClass(/unread/)
+  await expect(page.locator('.thread-head .remind-tag')).toContainText('No reply')
+  await page.getByRole('button', { name: 'Cancel reminder' }).click()
+  await expect(page.locator('.thread-head .remind-tag')).toHaveCount(0)
+  await expect(threads.getByText('Any news?')).toHaveCount(0)
+})
+
+test('remind if no reply, chosen as a message is written, is kept with the draft', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.keyboard.press('c')
+  let box = composer(page)
+  await box.getByLabel('Subject').fill('Quote please')
+  const bell = box.getByRole('button', { name: 'Remind if no reply' })
+  await bell.click()
+  await page.getByRole('button', { name: /^Next week/ }).click()
+  await expect(bell).toHaveClass(/\bon\b/)
+  await box.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Quote please').click()
+  box = composer(page)
+  await expect(box.getByRole('button', { name: 'Remind if no reply' })).toHaveClass(/\bon\b/)
+  await box.getByRole('button', { name: 'Remind if no reply' }).click()
+  await page.getByRole('button', { name: 'No reminder' }).click()
+  await expect(box.getByRole('button', { name: 'Remind if no reply' })).not.toHaveClass(/\bon\b/)
 })
 
 test('undoing a send calls it back with everything intact', async () => {
@@ -714,7 +766,7 @@ test('the window: a title and search over list and reader, and the sidebar in it
     (await side.locator('.nav-group').nth(group).locator('.nav-item .grow').allInnerTexts()).map((name) => name.trim())
   expect(await names(0)).toEqual(['Inbox'])
   expect(await names(1)).toEqual([ME, 'All Mail'])
-  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: `Folders of ${ME}` }).click()
   await expect(side.getByRole('button', { name: 'All Mail' })).toHaveCount(0)
@@ -2122,19 +2174,19 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('menuitem', { name: 'Mark all as read' })).toBeVisible() // a place keeps its own entry
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await expect(side.getByRole('button', { name: 'Compose' })).toHaveCount(0)
-  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Today', 'Unread', 'Flagged', 'Pinned', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Sent', 'Recently Seen'])
   await expect(folders.getByRole('button', { name: 'Move Today up' })).toBeDisabled()
   await expect(folders.getByRole('button', { name: 'Move Recently Seen down' })).toBeDisabled()
   await folders.getByLabel('Show Snoozed').uncheck()
   await folders.getByRole('button', { name: 'Move Pinned up' }).click()
   await folders.getByRole('button', { name: 'Move Today down' }).click()
   await folders.getByRole('listitem').filter({ hasText: 'Sent' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Unread' }))
-  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  await expect(folders.getByRole('listitem')).toHaveText(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await assistant.getByLabel('Show Events').uncheck()
   await assistant.getByRole('listitem').filter({ hasText: 'Packages' }).dragTo(folders.getByRole('listitem').filter({ hasText: 'Trash' })) // not into the other list
   await expect(assistant.getByRole('listitem')).toHaveText(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts', 'Events'])
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
   await side.getByRole('button', { name: 'Pinned', exact: true }).click() // and they still go where they went
   await expect(page.locator('.view-title')).toHaveText('Pinned')
@@ -2146,13 +2198,13 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(folders.getByLabel('Show Snoozed')).not.toBeChecked()
   await folders.getByLabel('Show Unread').uncheck()
   await side.getByRole('button', { name: 'Cancel' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   await side.getByRole('button', { name: 'Drafts', exact: true }).click({ button: 'right' })
   await expect(page.getByRole('menuitem')).toHaveText(['Edit Menu'])
   await page.getByRole('menuitem', { name: 'Edit Menu' }).click()
   await folders.getByLabel('Show Unread').uncheck()
   await page.keyboard.press('Escape')
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
 
   // Settings leads to the same place, and what was hidden comes back where it was put.
   await page.getByRole('button', { name: 'Settings' }).click()
@@ -2161,13 +2213,13 @@ test('Edit Menu: the sidebar\'s entries are hidden, moved by button and by dragg
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
   await folders.getByLabel('Show Snoozed').check()
   await side.getByRole('button', { name: 'Done' }).click()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   const saved = await page.evaluate(async () => (await window.mail.settings()).sidebar)
   expect(saved.hidden).toEqual(['events'])
   expect(saved.order.slice(0, 5)).toEqual(['sent', 'unread', 'today', 'pinned', 'starred'])
   await page.reload()
   await expect(side.getByRole('button', { name: 'Sent', exact: true })).toBeVisible()
-  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
+  expect(await names(2)).toEqual(['Sent', 'Unread', 'Today', 'Pinned', 'Flagged', 'Summary', 'Snoozed', 'Reminders', 'Attachments', 'Drafts', 'Spam', 'Trash', 'Archive', 'Recently Seen'])
   expect(await names(3)).toEqual(['Subscriptions', 'Travel', 'Packages', 'Bills & Receipts'])
 })
 

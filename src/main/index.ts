@@ -215,7 +215,7 @@ const number = (value: unknown): number => {
 /** How much of a message's source View original shows; Save as .eml keeps all of it. */
 const ORIGINAL_SHOWN = 2 * 1024 * 1024
 
-const SCOPED = ['starred', 'pinned', 'snoozed', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
+const SCOPED = ['starred', 'pinned', 'snoozed', 'reminders', 'sent', 'all', 'archive', 'trash', 'spam', 'unread', 'attachments', 'today', 'recent', 'summary'] as const
 const SECTIONS: AssistantSection[] = ['packages', 'travel', 'money', 'events']
 
 function listQuery(value: unknown): ListQuery {
@@ -324,7 +324,8 @@ function draftEdit(value: unknown): DraftEdit {
     text: text(d['text'], MAX_BODY),
     quote: quote(d['quote']),
     // Not given, it's its From address's.
-    signature: d['signature'] === undefined || d['signature'] === null ? undefined : text(d['signature'], 64)
+    signature: d['signature'] === undefined || d['signature'] === null ? undefined : text(d['signature'], 64),
+    remind: d['remind'] === undefined || d['remind'] === null ? undefined : number(d['remind'])
   }
 }
 
@@ -514,6 +515,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
+  handle('remind', (message: unknown, until: unknown) => service.remind(number(message), number(until)))
+  handle('unremind', (refs: unknown) => service.unremind(targets(refs)))
   handle('pin', async (refs: unknown, on: unknown) => {
     const chosen = targets(refs)
     await service.reach(chosen)

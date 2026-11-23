@@ -53,7 +53,11 @@ export const setLaterTimes = (times: LaterTimes | undefined): void => {
 }
 
 /** "When?", for snoozing and for sending later. */
-export function TimeMenu(props: { title: string; extra?: [string, number][]; up?: boolean; right?: boolean; pick(at: number): void; close(): void }): ReactNode {
+export function TimeMenu(props: {
+  title: string; extra?: [string, number][]; up?: boolean; right?: boolean; pick(at: number): void; close(): void
+  /** A choice of no time at all, last: "No reminder". */
+  none?: { label: string; pick(): void }
+}): ReactNode {
   const [custom, setCustom] = useState('')
   const choices = [...(props.extra ?? []), ...laterChoices(new Date(), laterTimes)].filter(
     ([, at], i, all) => all.findIndex(([, other]) => other === at) === i // on a Friday, tomorrow is the weekend
@@ -76,6 +80,7 @@ export function TimeMenu(props: { title: string; extra?: [string, number][]; up?
         <input type="datetime-local" aria-label="Pick a time" value={custom} onChange={(e) => setCustom(e.target.value)} />
         <button type="button" className="quiet" disabled={Number.isNaN(when)} onClick={() => props.pick(when)}>Set</button>
       </div>
+      {props.none && <button type="button" className="menu-item" onClick={props.none.pick}><span className="grow">{props.none.label}</span></button>}
     </Popover>
   )
 }

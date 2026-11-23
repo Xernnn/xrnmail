@@ -87,6 +87,15 @@ away.
   does held ones.
 - Snoozing is kept here only (`snoozes`), and Gmail isn't told. A thread is away while `until` is ahead
   and nothing newer has landed in it, so a reply wakes it. It sorts by `until` once it's back.
+- A reminder is kept here only too (`reminders`): a thread comes back at `until` if nobody but you
+  has written in it since `at`, when the message was sent. One set as a message goes knows only that
+  message's Message-ID until its copy in Sent is here, and then its thread. Each tick puts them
+  right: one whose thread has mail from someone else since goes, and one whose time has come is
+  marked `fired` and told of as a woken snooze is. A fired one puts its thread in the inbox's list,
+  on top from its time, as unread until it's opened (`seen`), and in the account's count; the inbox's
+  query is the one it always was while none has fired. Archiving a thread that's there only because
+  of its reminder lets the reminder go and sends nothing: on a folder service, archiving would move
+  your own copy out of Sent. Archiving, deleting and moving end one, as they end a snooze.
 - A pin is kept here only as well (`pins`, by thread). IMAP has no mark for it, and a flag already
   means something on the server. Pinned lists pinned threads from everywhere but Trash and Spam, and
   a pinned thread keeps its place in every other list.

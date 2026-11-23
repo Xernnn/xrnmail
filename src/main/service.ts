@@ -506,7 +506,7 @@ export class MailService {
         providerName: provider(config.provider).name,
         labels: config.gmail,
         folders: this.folders(email),
-        unread: this.store.unreadThreads(now, 'm.account = ?', email),
+        unread: this.store.unreadThreads(now, 'm.account = ?', email) + this.store.remindedUnseen(email),
         otherUnread: this.store.unreadThreads(now, 'm.account = ? AND m.focus = 0', email),
         color: this.identity(email).color
       }
@@ -967,7 +967,8 @@ export class MailService {
     const senders = landed.filter((mail) => !mail.summary)
     const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
-    const woken = this.store.wokenBetween(this.lastTick, now)
+    // Back as a snooze comes back, and told of the same way.
+    const woken = this.store.wokenBetween(this.lastTick, now) + this.store.settleReminders(now, (email) => this.ownAddresses(email))
     this.lastTick = now
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
@@ -1017,9 +1018,16 @@ export class MailService {
       const { gmail } = this.config(email)
       if (action.kind === 'label' && !gmail) throw new Error('Only Gmail has labels. Use Move instead.')
       if (action.kind === 'move' && !this.folders(email).includes(action.to)) throw new Error("That folder isn't there any more.")
-      const states = mine.flatMap((ref) => touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail))
+      const states = mine.flatMap((ref) => {
+        const found = touched(action, this.store.visibleMail(ref, now, reachesBins(action)), gmail)
+        // In the inbox only because a reminder brought it back, it's archived by letting the reminder
+        // go: on a service with folders, archiving would move your own copy out of Sent.
+        return action.kind === 'archive' && this.store.reminder(ref)?.fired && !found.some((s) => s.labels.includes(INBOX)) ? [] : found
+      })
       this.change(email, states, action, group, wait)
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
+      if (endsSnooze(action)) mine.forEach((ref) => this.store.unremind(ref))
+      if (action.kind === 'read') mine.forEach((ref) => this.store.seeReminder(ref))
     }
     return group
   }
@@ -1127,6 +1135,23 @@ export class MailService {
     this.deps.changed()
   }
 
+  /** A message you sent, and its thread, come back to the inbox at [until] if nobody else has
+   *  written in it since. All kept here, as a snooze is: the server isn't told. */
+  remind(id: number, until: number): void {
+    const now = this.deps.now()
+    if (until <= now) throw new Error('Pick a time in the future.')
+    const message = this.store.message(id, now)
+    if (!message) throw new Error("That message isn't here any more.")
+    if (!this.ownAddresses(message.account).includes(message.from.address.toLowerCase())) throw new Error('Only for mail you sent.')
+    this.store.remind({ account: message.account, thread: message.thread, messageId: message.messageId }, message.date, until)
+    this.deps.changed()
+  }
+
+  unremind(targets: ThreadRef[]): void {
+    targets.forEach((ref) => this.store.unremind(ref))
+    this.deps.changed()
+  }
+
   /** Only this laptop ever knew what was opened, so this is all there is to forget. */
   clearRecent(): void {
     this.store.forgetSeen()
@@ -1217,9 +1242,11 @@ export class MailService {
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
     if (messages.length > 0) this.store.useOutside({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
+    if (read) this.store.seeReminder({ account, thread })
     const cut = this.store.filesCut(messages.map((m) => m.id))
     if (cut.length > 0) background(this.listFiles(cut))
-    return messages
+    const remind = this.store.reminder({ account, thread })
+    return remind ? messages.map((m) => ({ ...m, remind })) : messages
   }
 
   /** A message cut short when it was stored lists only the files in the part that was kept. Once
@@ -1850,6 +1877,7 @@ export class MailService {
     const now = this.deps.now()
     if (at !== undefined && at <= now) throw new Error('Pick a time in the future.')
     const sendAt = at ?? now + this.settings().undoSeconds * 1000
+    if (draft.remind !== undefined && draft.remind <= sendAt) throw new Error('Pick a reminder after it goes.')
     this.store.saveDraft({ ...draft, files: this.shownFiles(draft), state: 'queued', sendAt, error: null, updated: now })
     // A message on its way isn't a draft: left in Drafts, another device could send it as well.
     this.letCopyGo(id)
@@ -1984,6 +2012,11 @@ export class MailService {
     const config = this.config(draft.account)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
+      if (draft.remind !== undefined) {
+        // A reply's thread is known; anything else's is, once its copy in Sent is here.
+        const thread = draft.inReplyTo && draft.about?.account === draft.account ? draft.about.thread : ''
+        this.store.remind({ account: draft.account, thread, messageId: copy.messageId }, this.deps.now(), draft.remind)
+      }
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
       this.sendFailureDealt(draft.account)

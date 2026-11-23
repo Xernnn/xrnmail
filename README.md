@@ -121,6 +121,12 @@ kept on the laptop.
   today is offered only while it's still today, and This evening only before it comes. Snoozed shows
   when each thread comes back, and Unsnooze, over the thread, on its row or under a selection, brings
   it back now.
+- **Remind if no reply:** beside Send, or on a message you sent from its ⋮, with snooze's times. If
+  nobody else has written in the thread by then, it comes back to the top of the inbox, unread, with
+  a bell on its row, and the notice says so; a reply from anyone else calls it off, and one of your
+  own doesn't. Reminders lists what's waiting and when, and the thread shows it over its subject,
+  with Cancel reminder. It's kept on this laptop, as snoozes are: your mail service isn't told, and
+  archiving a thread that's in the inbox only because of a reminder changes nothing there.
 - **Clearing out:** one-click unsubscribe, and blocking a sender or a whole @domain.
 - **Muted senders:** their mail arrives as usual and nothing announces it. From a message's menu, or
   Settings, Notifications.
@@ -338,7 +344,7 @@ has withdrawn its desktop app, so the reference is the pictures in its Mac help 
 
 Kept from xrnmail, where Edison has nothing: batches and straight-through senders (As it arrives,
 which is how Edison always works, is one switch away), the delivery line
-over the list, Snoozed and Attachments in the sidebar, search without Vietnamese marks, sender
+over the list, Snoozed, Reminders and Attachments in the sidebar, search without Vietnamese marks, sender
 warnings, xrnhub, and the one-thing-at-a-time layout.
 
 Not here, though Edison has them:

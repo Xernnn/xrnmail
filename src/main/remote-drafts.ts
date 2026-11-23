@@ -27,7 +27,7 @@ export function isBlank(draft: Pick<Draft, 'to' | 'cc' | 'bcc' | 'subject' | 'te
 /** Whether saving [edit] would change anything. A composer saves when it's closed, changed or not,
  *  and an unchanged draft needn't go up again. */
 export function changes(draft: Draft, edit: DraftEdit): boolean {
-  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'subject', 'html', 'text', 'signature']
+  const keys: (keyof DraftEdit)[] = ['account', 'from', 'to', 'cc', 'bcc', 'subject', 'html', 'text', 'signature', 'remind']
   return keys.some((key) => draft[key] !== edit[key]) || JSON.stringify(draft.quote) !== JSON.stringify(edit.quote)
 }
 
