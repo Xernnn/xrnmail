@@ -186,6 +186,17 @@ describe('searching the server', () => {
 })
 
 describe('opening what a search found', () => {
+  it("checks old mail against the account's own server, as the window's mail is", async () => {
+    // Claims to be from this account, and Gmail's own line says nothing proves it: the same "self"
+    // warning a message in the window gets, on the row and in the thread.
+    const checked = ['Authentication-Results: mx.google.com; spf=softfail smtp.mailfrom=gmail.com']
+    gmail.add(rawMail({ subject: 'Password reset', from: `Me <${G}>`, text: 'Click here', headers: checked }), { arrived: ago(400) })
+    await add(G, gmail)
+    await eventually(() => expect(search('reset')).toMatchObject([{ subject: 'Password reset', older: true }]))
+    const ref = await opened('reset')
+    expect(service.thread(G, ref.thread, false, true, false)[0]?.warnings).toContain('self')
+  })
+
   it('fetches the whole thread, shows it like any other, and keeps it out of every other list and count', async () => {
     const thread = 7_000_000_000_000_000_900n
     gmail.add(rawMail({ subject: 'Harbour lease', from: 'Mai Tran <mai@example.com>', text: 'Draft lease attached' }), { arrived: ago(400), thread })

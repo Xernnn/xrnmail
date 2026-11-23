@@ -2,7 +2,7 @@ import type { SearchObject } from 'imapflow'
 import type { Address, ThreadRef, ThreadRow } from '@shared/types'
 import { ageStart, firstTerms, parseQuery, termOf, tokensOf, type Term } from '@shared/query'
 import { INBOX, labelsOf, SENT } from './actions'
-import { MAX_SOURCE, type ParsedMail } from './parse'
+import { checkedBy, MAX_SOURCE, type ParsedMail, type Receiver } from './parse'
 import { threadOf, type MailboxRef, type MailSource } from './source'
 import type { Store } from './store'
 import { toStored, type SyncOptions } from './sync'
@@ -253,6 +253,8 @@ export interface OldMailDeps {
   now(): number
   changed(): void
   parse(source: Buffer): Promise<ParsedMail>
+  /** Whose checks an account's mail is read by, as a sync reads the window's. */
+  receiver(account: string): Receiver
   settleMs: number
 }
 
@@ -373,7 +375,7 @@ export class OldMail {
     const keepFrom = this.deps.keepFrom()
     const holdFrom = this.deps.store.holdFrom(account) ?? now
     // Mail from before the window was never held: it's stored as it came.
-    const options: SyncOptions = { account, email: account, backfillDays: 0, rules: { times: [], vip: [] }, now, parse: this.deps.parse }
+    const options: SyncOptions = { account, email: account, backfillDays: 0, rules: { times: [], vip: [] }, now, parse: this.deps.parse, receiver: this.deps.receiver(account) }
     const roots = [...new Set(hits.map((hit) => hit.root).filter(Boolean))]
     const boxes = source.mailboxes().filter((box) => (source.gmail ? box.role === 'all' : box.role !== 'trash' && box.role !== 'junk'))
     for (const box of boxes) {
@@ -490,11 +492,13 @@ export class OldMail {
   private async read(asking: Asking, source: MailSource, account: string, box: MailboxRef, uids: number[], keepFrom: number): Promise<OldHit[]> {
     if (asking.stopped) return []
     const kept = this.deps.store.kept(account, box.id, uids)
+    const receiver = this.deps.receiver(account)
     const wanted = uids.filter((uid) => !kept.has(uid)).sort((a, b) => b - a).slice(0, SERVER_HITS)
     const hits: OldHit[] = []
     for await (const found of source.headers(wanted)) {
       if (asking.stopped || found.arrived >= keepFrom) continue
-      const mail = await this.deps.parse(Buffer.concat([found.header, Buffer.from('\r\n')]))
+      const read = await this.deps.parse(Buffer.concat([found.header, Buffer.from('\r\n')]))
+      const mail = { ...read, ...checkedBy(read, receiver) }
       const root = /<[^<>]+>/.exec(mail.references)?.[0] ?? /<[^<>]+>/.exec(mail.inReplyTo)?.[0] ?? mail.messageId
       hits.push({
         account,

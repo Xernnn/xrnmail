@@ -350,6 +350,7 @@ export class MailService {
       now: () => this.deps.now(),
       changed: () => this.deps.changed(),
       parse: (source) => (this.deps.parse ?? parseMail)(source),
+      receiver: (email) => receiverOf(this.config(email), this.ownAddresses(email)),
       settleMs: deps.searchSettleMs ?? SEARCH_SETTLE_MS
     })
   }
