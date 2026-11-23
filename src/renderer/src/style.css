@@ -336,6 +336,8 @@ select { appearance: none; padding-right: 30px; background: var(--surface) var(-
 .bulk .icon { color: var(--on-primary); }
 .bulk .icon:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); color: var(--on-primary); }
 .bulk .popover { color: var(--text); }
+/* A menu from the bar opens over the whole bar, clear of its count, Select All and Cancel. */
+.bulk-tools .anchor { position: static; }
 .bulk :focus-visible { outline-color: var(--on-primary); }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12.5px; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
 .pill:hover { background: var(--hover-solid); border-color: var(--outline); }

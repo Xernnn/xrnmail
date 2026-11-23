@@ -1477,6 +1477,9 @@ test('the ⋮ on the bar under a selection labels, pins and moves to Other every
   await pickTwo()
   await bar.getByRole('button', { name: 'More for the selected' }).click()
   await bar.getByRole('button', { name: /^Labels/ }).click()
+  // Over the whole bar: it covered the count, Select All and Cancel.
+  const [menuBox, barBox] = [await bar.locator('.popover').boundingBox(), await bar.boundingBox()]
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(barBox?.y ?? 0)
   await bar.getByRole('button', { name: 'Receipts', exact: true }).click()
   await expect(page.getByText('Labelled Receipts: 2 threads')).toBeVisible()
   await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('Receipts')).length, LONG).toBe(3)
