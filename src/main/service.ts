@@ -23,6 +23,7 @@ import { gmailThreadUrl, isPublicHttps, isSafeHubUrl, safeFileName } from './saf
 import type { Secrets } from './secrets'
 import { describeSendFailure, NeverLeft, Unmade, type MailSender } from './sender'
 import { cleanSecret, type MailSource, type MailWatcher } from './source'
+import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
@@ -45,7 +46,9 @@ const KEYRING_SHUT = 'Unlock your system keyring, then restart xrnmail.'
 const SIGN_IN_AGAIN = 'Sign in to this account again.'
 /** Sends and receives the same 25 MB or so on every big service, once it's encoded. */
 const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
-const TOKEN_MARGIN_MS = 60_000
+/** A token is renewed with this much left: Exchange ends a session when its token runs out, so one
+ *  handed to a watch with a minute left had it cut off within the minute. */
+const TOKEN_MARGIN_MS = 5 * 60_000
 const DAY_MS = 86_400_000
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
@@ -154,6 +157,8 @@ export interface ServiceDeps {
   records?: DomainRecords
   /** How synced mail is read, when not on this thread. */
   parse?: (source: Buffer) => Promise<ParsedMail>
+  /** A connection failed: for the log of failures, which keeps its codes and never its words. */
+  failed?(failure: Failure): void
   earlyWaitSeconds?: number
 }
 
@@ -194,15 +199,26 @@ export function cleanBatch(batch: BatchSettings): BatchSettings {
   }
 }
 
-/** Fixed words: what a server says is never shown, and can't carry anything back to the page. */
+/** What's said while a service can't be reached, which a pass that gets through takes away. */
+const unreachable = (service: string): string => `Couldn't reach ${service}.`
+
+/** What a server turns a sign-in away with when it's busy, not when the password is wrong: RFC 5530's
+ *  codes for that, and Gmail's words for too many connections at once, which come as an [ALERT]. */
+const BUSY_CODES = new Set(['UNAVAILABLE', 'INUSE', 'LIMIT', 'SERVERBUG'])
+const BUSY_WORDS = /too many (simultaneous )?connections|try again later/i
+
+/** Fixed words: what a server says is never shown, and can't carry anything back to the page. It's
+ *  only read for whether a sign-in turned away was busy, which is waited out like a lost connection
+ *  and tried again: told "refused this password", people changed a password that was right. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
-  const e = error as { authenticationFailed?: boolean; message?: string }
+  const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
-  if (e?.authenticationFailed) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
+  if (e?.authenticationFailed && !busy) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
-  return `Couldn't reach ${service}.`
+  return unreachable(service)
 }
 
 const HOST = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i
@@ -244,8 +260,13 @@ type AccountStatus = Pick<AccountView, 'syncedAt' | 'syncing' | 'error' | 'progr
 
 /** How many messages have to be coming before it's worth saying so. */
 const WORTH_SHOWING = 40
-/** How long a lost watch on the inbox waits before trying again. Syncs carry on regardless. */
-const WATCH_RETRY_MS = 60_000
+/** How long a lost watch on the inbox waits before trying again, longer each time it's lost again
+ *  without having opened, and then the last each time. Syncs carry on regardless. */
+const WATCH_RETRY_MS = [2_000, 10_000, 30_000, 60_000]
+/** How long an account waits to try again after a pass that couldn't reach its server, longer each
+ *  time it fails again: the network is often back within seconds of waking or of a VPN reconnecting.
+ *  After the last, the three-minute passes carry on as usual. */
+export const PASS_RETRY_MS = [5_000, 15_000, 30_000, 60_000]
 /** How many previews are remade at a time, so the app stays quick while it happens. */
 const SNIPPET_STEP = 50
 /** How long a watch waits after the server's last word before syncing, so a burst of them (a
@@ -281,9 +302,12 @@ export class MailService {
    *  entry is taken out when it ends: a newer one may have it by then. */
   private watchers = new Map<string, Watch>()
   private watching = false
-  private rewatch: NodeJS.Timeout | null = null
-  /** Something arrived during a sync, too late for it to have seen. */
+  /** Accounts whose watch was lost: how many times in a row, and the try waiting to replace it. */
+  private rewatches = new Map<string, { losses: number; timer: NodeJS.Timeout | null }>()
+  /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
+  private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
    *  changes, even if the account has been added back since. */
   private removals = new Map<string, number>()
@@ -567,6 +591,10 @@ export class MailService {
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    this.stopRetrying(email)
     this.deps.secrets.remove(`account:${email}`)
     this.store.deleteMeta(`config:${email}`)
     this.store.deleteMeta(`folders:${email}`)
@@ -590,10 +618,59 @@ export class MailService {
     await Promise.all(this.emails().map((email) => this.syncOne(email)))
   }
 
+  /** After waking from sleep, or when the network changes: every connection may be dead, so each
+   *  watch starts again, the waits between tries start over, and every account syncs. A pass that
+   *  runs before the network is back is tried again within seconds. */
+  async reconnect(): Promise<void> {
+    for (const email of [...this.retries.keys()]) this.stopRetrying(email)
+    if (this.watching) {
+      this.stopWatching()
+      this.watchAll()
+    }
+    await this.syncAll()
+  }
+
+  /** Soon after a pass that couldn't get through, and a little later each time it fails again. */
+  private retrySoon(email: string): void {
+    const retry = this.retries.get(email) ?? { tries: 0, timer: null }
+    this.retries.set(email, retry)
+    const wait = PASS_RETRY_MS[retry.tries]
+    if (retry.timer || wait === undefined) return
+    retry.tries++
+    retry.timer = setTimeout(() => {
+      retry.timer = null
+      background(this.syncOne(email))
+    }, wait)
+    retry.timer.unref?.()
+  }
+
+  /** The server answered, so saying it can't be reached is out of date. Anything else it said stays
+   *  until a pass shows otherwise. */
+  private reached(email: string): void {
+    const status = this.status.get(email)
+    if (!status?.error || status.error !== unreachable(this.serviceName(email))) return
+    status.error = null
+    this.deps.changed()
+  }
+
+  /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
+  private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
+    this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
+  }
+
+  private stopRetrying(email: string): void {
+    const retry = this.retries.get(email)
+    if (retry?.timer) clearTimeout(retry.timer)
+    this.retries.delete(email)
+  }
+
   private async syncOne(email: string): Promise<void> {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
-    if (status.syncing) return
+    // Asked for while one runs, by waking, the window coming back or the button, it goes again once
+    // that one ends: the one running may be stuck on a connection that died, and dropping this left
+    // its error up until the next three-minute pass.
+    if (status.syncing) return void this.syncAgain.add(email)
     status.syncing = true
     this.deps.changed()
     await this.inLane(email, async () => {
@@ -614,8 +691,8 @@ export class MailService {
 
   stopWatching(): void {
     this.watching = false
-    if (this.rewatch) clearTimeout(this.rewatch)
-    this.rewatch = null
+    for (const { timer } of this.rewatches.values()) if (timer) clearTimeout(timer)
+    this.rewatches.clear()
     for (const watch of this.watchers.values()) this.endWatch(watch)
     this.watchers.clear()
   }
@@ -632,6 +709,8 @@ export class MailService {
     if (!open || !this.watching || this.watchers.has(email)) return
     const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
+    const started = performance.now()
+    let up = false
     // Mail landing, leaving the inbox, or read or flagged elsewhere: each is a reason to look, and
     // what's said in one burst is one look.
     const changed = (): void => {
@@ -648,7 +727,16 @@ export class MailService {
       const login = await this.login(email)
       if (mine.stopped || !this.emails().includes(email)) return
       mine.watcher = open(this.config(email), login)
-      await mine.watcher.watch(changed)
+      await mine.watcher.watch(changed, () => {
+        up = true
+        if (mine.stopped) return
+        // Back after being lost: the server only tells of what happens from now on, so what landed
+        // meanwhile is looked for now rather than at the next pass.
+        const again = this.rewatches.has(email)
+        this.rewatches.delete(email)
+        this.reached(email)
+        if (again) changed()
+      })
     }
     const lost = (): void => {
       // A watch that failed partway, signed in but unable to open the inbox say, still holds its
@@ -657,14 +745,22 @@ export class MailService {
       if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email) || this.rewatch) return
-      this.rewatch = setTimeout(() => {
-        this.rewatch = null
-        this.emails().forEach((each) => this.watch(each))
-      }, WATCH_RETRY_MS)
-      this.rewatch.unref?.()
+      if (!this.watching || !this.emails().includes(email)) return
+      const rewatch = this.rewatches.get(email) ?? { losses: 0, timer: null }
+      this.rewatches.set(email, rewatch)
+      if (rewatch.timer) return
+      const wait = WATCH_RETRY_MS[Math.min(rewatch.losses, WATCH_RETRY_MS.length - 1)]
+      rewatch.losses++
+      rewatch.timer = setTimeout(() => {
+        rewatch.timer = null
+        if (this.emails().includes(email)) this.watch(email)
+      }, wait)
+      rewatch.timer.unref?.()
     }
-    void run().catch(() => undefined).finally(lost)
+    const ended = (error: unknown): void => {
+      if (!mine.stopped && (up || error)) this.logFailure(email, 'watch', error, started, up)
+    }
+    void run().then(() => ended(null), ended).finally(lost)
   }
 
   private async pass(email: string): Promise<void> {
@@ -694,6 +790,7 @@ export class MailService {
     const senders: string[] = []
     const blocked: number[] = []
     let source: MailSource | null = null
+    const started = performance.now()
     try {
       source = this.deps.openSource(config, await this.login(email))
       await source.connect()
@@ -731,8 +828,12 @@ export class MailService {
       await this.readDrafts(email, source, this.deps.now() - settings.backfillDays * DAY_MS, removed)
       status.syncedAt = this.deps.now()
       status.error = null
+      this.stopRetrying(email)
     } catch (e) {
-      status.error = describeFailure(e, this.serviceName(email))
+      const service = this.serviceName(email)
+      status.error = describeFailure(e, service)
+      if (!removed()) this.logFailure(email, 'sync', e, started)
+      if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
     } finally {
       await source?.close().catch(() => undefined)
       status.syncing = false
@@ -875,11 +976,14 @@ export class MailService {
     const due = this.store.dueActions(email, this.deps.now())
     if (due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const item of due) await this.perform(writer, email, item)
     } catch (e) {
+      this.logFailure(email, 'changes', e, started)
       // Not reached, so nothing is lost: it all goes again later, in the same order.
       this.statusOf(email).error = describeFailure(e, this.serviceName(email))
       const later = this.deps.now() + RETRY_MS
@@ -1022,21 +1126,28 @@ export class MailService {
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
-    for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
+    const cut = this.store.filesCut(messages.map((m) => m.id))
+    if (cut.length > 0) background(this.listFiles(cut))
     return messages
   }
 
   /** A message cut short when it was stored lists only the files in the part that was kept. Once
    *  it's opened, the list is made again from the whole message, so each file can be opened, saved
-   *  and forwarded. Failing says nothing: the next look tries again. */
-  private async listFiles(id: number): Promise<void> {
-    if (this.listing.has(id)) return
-    this.listing.add(id)
-    try {
-      await this.wholeAttachments(id)
-      this.deps.changed()
-    } finally {
-      this.listing.delete(id)
+   *  and forwarded. Failing says nothing: the next look tries again. One message at a time: each
+   *  opens a connection, and a thread of scans opening them all at once came near the fifteen
+   *  Gmail allows, past which it turns sign-ins away. */
+  private async listFiles(ids: number[]): Promise<void> {
+    const mine = ids.filter((id) => !this.listing.has(id))
+    for (const id of mine) this.listing.add(id)
+    for (const id of mine) {
+      try {
+        await this.wholeAttachments(id)
+        this.deps.changed()
+      } catch {
+        // Tried again the next time it's opened.
+      } finally {
+        this.listing.delete(id)
+      }
     }
   }
 
@@ -1359,13 +1470,16 @@ export class MailService {
     const due = this.dueDrafts(email, all)
     if (copies.length === 0 && due.length === 0) return
     let writer: MailWriter | null = null
+    const started = performance.now()
     try {
       writer = this.deps.openWriter(this.config(email), await this.login(email))
       await writer.connect()
+      this.reached(email)
       for (const copy of copies) await this.deleteCopy(writer, email, copy)
       for (const { id } of due) await this.pushDraft(writer, email, id)
       this.draftsRetryAt.delete(email)
-    } catch {
+    } catch (e) {
+      this.logFailure(email, 'drafts', e, started)
       this.draftsRetryAt.set(email, this.deps.now() + RETRY_MS)
     } finally {
       await writer?.close().catch(() => undefined)
@@ -1634,10 +1748,12 @@ export class MailService {
     }
     const account = due()?.account
     if (!account) return null
+    const started = performance.now()
     let login: Login
     try {
       login = await this.login(account)
     } catch (e) {
+      this.logFailure(account, 'send', e, started)
       const draft = due()
       if (!draft) return null
       // Nothing has left. A lost connection or a keyring not open yet can wait; a sign-in that's gone
@@ -1650,13 +1766,33 @@ export class MailService {
       this.deps.changed()
       return null
     }
+    // Signed in before it's marked as sending, since failing that proves nothing left: it stays as it
+    // was, queued for the next try. Marked first, a quit during a slow connect came back as "check
+    // Sent" with nothing sent. The same connection sends it.
+    const sender = this.deps.openSender(this.config(account), login)
+    try {
+      await sender.check()
+    } catch (e) {
+      sender.close()
+      this.logFailure(account, 'send', e, started)
+      const draft = due()
+      if (!draft) return null
+      this.store.saveDraft(e instanceof NeverLeft
+        ? { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' }
+        : { ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+      this.deps.changed()
+      return null
+    }
+    this.reached(account)
     // Written down first: if the app dies here, this comes back as "check Sent", not sent twice. Moved
     // to another account meanwhile, it waits for the next turn and a sign-in of its own.
     const draft = this.store.claimDraft(id, account, this.deps.now())
-    if (!draft) return null
+    if (!draft) {
+      sender.close()
+      return null
+    }
     this.deps.changed()
     const config = this.config(draft.account)
-    const sender = this.deps.openSender(config, login)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
       this.store.deleteDraft(draft.id)
@@ -1664,6 +1800,7 @@ export class MailService {
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)
       return draft.account
     } catch (e) {
+      if (!(e instanceof Unmade)) this.logFailure(draft.account, 'send', e, started)
       if (e instanceof NeverLeft) {
         this.store.saveDraft({ ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' })
       } else if (e instanceof Unmade) {
@@ -1683,11 +1820,14 @@ export class MailService {
   private async fileCopy(email: string, raw: Buffer, messageId: string): Promise<void> {
     await this.inLane(email, async () => {
       let writer: MailWriter | null = null
+      const started = performance.now()
       try {
         writer = this.deps.openWriter(this.config(email), await this.login(email))
         await writer.connect()
+        this.reached(email)
         await writer.fileSent(raw, messageId)
-      } catch {
+      } catch (e) {
+        this.logFailure(email, 'sent', e, started)
         this.note(email, 'Sent, but no copy could be kept in Sent.')
       } finally {
         await writer?.close().catch(() => undefined)

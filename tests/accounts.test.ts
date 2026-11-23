@@ -627,6 +627,20 @@ describe('Outlook sign-in', () => {
     expect(secrets.get(`account:${O}`)).toBe('renew-2')
   })
 
+  // Exchange ends a session when its token runs out, so a watch opened on one with a minute left
+  // was cut off within the minute.
+  it('renews a token with five minutes left, not one', async () => {
+    microsoft({ refresh: json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 }) })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    outlook.options.token = 'token-2'
+    clock += 3_600_000 - 4 * 60_000
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBeNull()
+    expect(secrets.get(`account:${O}`)).toBe('renew-2')
+  })
+
   /** As Microsoft does: a renewal works only with the application ID the sign-in was given to. */
   const onlyFor = (clientId: string) => (body: string): unknown => body.includes(`client_id=${clientId}&`)
     ? json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 })

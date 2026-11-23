@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { randomUUID } from 'node:crypto'
 import { promises as dns } from 'node:dns'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { join } from 'node:path'
 import type {
   AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
@@ -15,6 +16,7 @@ import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
+import { watchNetwork } from './network'
 import { passwordStoreSwitch } from './password-store'
 import { Parser } from './parser'
 import readMail from './parse-worker?nodeWorker'
@@ -24,8 +26,9 @@ import { canOpenDirectly, isSafeExternalUrl, safeFileName } from './safe-url'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
 import { background, MailService, type DomainRecords, type Login } from './service'
-import { ImapSource, ImapWatcher, type ImapConfig } from './source'
+import { ADDRESS_ATTEMPT_MS, ImapSource, ImapWatcher, type ImapConfig } from './source'
 import { Store } from './store'
+import { SyncLog } from './sync-log'
 import { ImapWriter } from './writer'
 
 const SYNC_MS = 3 * 60_000 // what's missed while the inbox is being watched, and the rest of the account
@@ -49,6 +52,10 @@ if (app.isPackaged && DEBUG_SWITCHES.some((name) => app.commandLine.hasSwitch(na
 // other Wayland compositors), where it would otherwise fall back to basic_text and refuse.
 const passwordStore = passwordStoreSwitch(process.platform, process.env.XDG_CURRENT_DESKTOP, (s) => app.commandLine.hasSwitch(s))
 if (passwordStore) app.commandLine.appendSwitch('password-store', passwordStore)
+
+// The same patience for everything else this side opens, signing in to Microsoft and fetching
+// pictures among them: they go through fetch, which tries addresses the way IMAP's sockets do.
+setDefaultAutoSelectFamilyAttemptTimeout(ADDRESS_ATTEMPT_MS)
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
@@ -743,6 +750,7 @@ void app.whenReady().then(() => {
     ownerOf: (address) => mail?.ownerOf(address) ?? null
   })
   const parser = new Parser(() => readMail({}))
+  const syncLog = new SyncLog(join(app.getPath('userData'), 'sync.log'))
   const service = new MailService({
     store,
     secrets,
@@ -766,7 +774,8 @@ void app.whenReady().then(() => {
       showWindow()
       tellCommand('summary')
     }),
-    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined
+    earlyWaitSeconds: test['XRNMAIL_EARLY_WAIT'] ? Number(test['XRNMAIL_EARLY_WAIT']) : undefined,
+    failed: (failure) => syncLog.write(failure)
   })
   mail = service
   register(service, avatars)
@@ -793,11 +802,10 @@ void app.whenReady().then(() => {
   service.watchAll()
   const syncing = setInterval(() => background(service.syncAll()), SYNC_MS)
   const ticking = setInterval(() => background(service.tick()), TICK_MS)
-  powerMonitor.on('resume', () => {
-    service.stopWatching()
-    service.watchAll()
-    background(service.syncAll())
-  })
+  powerMonitor.on('resume', () => background(service.reconnect()))
+  // A VPN reconnecting, its kill switch, another Wi-Fi: the same as waking for every connection,
+  // and nothing else notices until the next pass.
+  const stopNetwork = watchNetwork(() => background(service.reconnect()))
   let finished = false
   app.on('before-quit', (event) => {
     quitting = true
@@ -816,6 +824,7 @@ void app.whenReady().then(() => {
     }
     // Mail waiting out Undo would otherwise sit here until the next launch.
     event.preventDefault()
+    stopNetwork()
     service.stopWatching()
     const giveUp = new Promise((resolve) => setTimeout(resolve, FINISH_WAIT_MS))
     void Promise.race([service.finishUp().catch(() => undefined), giveUp]).finally(() => {

@@ -235,12 +235,15 @@ to wait for.
   elsewhere. Within a second xrnmail runs its ordinary sync for that account, so what you see is
   what the server has. A burst of changes, like a phone marking thirty messages read, is one sync.
 - **The rest of the account** (Sent, labels, folders) is read every three minutes, on waking from
-  sleep, and when the window comes back after a minute away. A watch that drops is opened again
-  after a minute, and the three-minute passes go on regardless, so nothing is missed meanwhile.
+  sleep, when the network changes (a VPN reconnecting, another Wi-Fi), and when the window comes
+  back after a minute away. A watch that drops is opened again
+  after 2 seconds, then 10, 30 and every minute, and syncs once it's back; the three-minute passes
+  go on regardless, so nothing is missed meanwhile.
 - **A server gone quiet** is given up on rather than waited for: 30 seconds to connect, 20 to be
   greeted, and a minute with a command out and nothing heard. The status line says it couldn't reach
-  the service, and the next sync goes as usual. A change that was on its way then waits and goes
-  again; it isn't counted as refused.
+  the service, and it tries again after 5 seconds, then 15, 30 and 60, and from then on with the
+  three-minute passes; waking from sleep starts that over. A change that was on its way then waits
+  and goes again; it isn't counted as refused.
 - **Why not Gmail's own push:** Gmail's [push notifications](https://developers.google.com/workspace/gmail/api/guides/push)
   go through Google Cloud Pub/Sub and the Gmail API, which need an OAuth sign-in and a Google Cloud
   project of your own. xrnmail signs in to Gmail with an app password over IMAP, and IMAP has IDLE,
@@ -421,9 +424,12 @@ so it works offline and survives a restart. [docs/design.md](docs/design.md) exp
 why it's built that way.
 
 The profile is `~/.config/xrnmail`: `mail.sqlite` (the mail kept here, the queue of changes, drafts,
-snoozes, pins and settings), `drafts` (files attached to drafts) and `faces`. It's readable only by
-you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're in the
-keyring.
+snoozes, pins and settings), `drafts` (files attached to drafts), `faces`, and `sync.log`, a line for
+each connection that failed: when, which service (with a short hash, never the address), what it was
+doing, how far it got, the error's code, how long it took and the server addresses tried, never what
+a server said or anything of the mail. It keeps 256 KB and the 256 KB before. The profile is readable
+only by you and isn't encrypted, so full-disk encryption covers it. Passwords aren't there: they're
+in the keyring.
 
 ## Building and installing
 

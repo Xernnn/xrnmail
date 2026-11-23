@@ -106,10 +106,16 @@ is all Undo and "send later" are. `tick()` sends what's due.
 - `SmtpSender` connects and signs in as its own step first, since that's the one failure that proves
   nothing left. nodemailer reports a connection lost after the message was handed over the same way as
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
+  The message goes on that same connection (nodemailer's `SMTPConnection`, not its transport, which
+  opened one connection to check and another to send, so the network going between the two failed a
+  message that never left as "check Sent"). A sign-in answered with a 4xx is that first step failing
+  too: SMTP's "not now".
 - A message that can't be put together, an attachment gone from the profile say, fails before
   anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
-- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
-  attempt, so a crash comes back the same way instead of as a retry.
+- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` once
+  signed in, before the message is handed over, so a crash comes back the same way instead of as a
+  retry. Until then it's still `queued`: a quit during a slow connect, which finishing up gives up on
+  after eight seconds, leaves it to go next time rather than to be checked for.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
   changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
@@ -185,9 +191,27 @@ message that loses the label (the phone sending a draft it saved can do that) sh
 
 ## Sync
 
-Every three minutes, and on waking, each account connects, syncs and logs out. Batching means nothing
+Every three minutes, on waking, and when the network changes, each account connects, syncs and logs
+out. Batching means nothing
 depends on being fast, so these passes are what the app relies on; watching the inbox, below, only
 brings the next one forward.
+
+A pass that can't reach the server is tried again after 5 seconds, then 15, 30 and 60 (`PASS_RETRY_MS`),
+and after that the three-minute passes carry on as usual. Waking from sleep is often seconds ahead of
+the Wi-Fi and the VPN, so the pass it starts fails as often as not; without the quick tries, "Couldn't
+reach" stayed up for minutes after the network was back. Waking starts the tries over, and a pass
+that gets through ends them. A refused password isn't tried again this way: asking again won't help.
+A sign-in turned away because the server is busy isn't a refused password, though imapflow marks
+any NO to LOGIN as one: RFC 5530's `[UNAVAILABLE]`, `[INUSE]`, `[LIMIT]` and `[SERVERBUG]`, and
+Gmail's "Too many simultaneous connections", are waited out like a lost connection, and so is an
+SMTP sign-in answered with a 4xx. Only that is read of what the server said; none of it is shown.
+Anything else that gets through to the server (a change, a draft going up, a copy filed in Sent, a
+message sent, a watch opening) takes "Couldn't reach" away too; any other error waits for a pass.
+
+A sync asked for while one is running (waking, the window coming back, F5, the button) goes once
+more when that one ends, however many times it was asked. The one running may be stuck on a
+connection that died with the lid shut, and turning the asks away left its error up until the next
+three-minute pass.
 
 A pass goes through each folder in turn, inbox first. For each it fetches what's missing, newest first,
 then applies label and flag changes, then forgets what's gone. A folder the server has stopped listing
@@ -209,9 +233,15 @@ stopping the rest.
 - IMAP `SINCE` compares dates in the server's zone, so mail within two days of the window's edge is
   neither taken for deleted nor refetched.
 - A message over 4 MB is cut at that length, which usually loses only attachments, and says so.
+- Mail is read on a thread of its own (`parser.ts`), so a long backfill doesn't make the window
+  stutter. A message that takes over 20 seconds to read is kept as one that can't be read, as any
+  other that fails is, and the thread, stuck on it, is replaced; left alone it held the account's
+  pass, and so its changes, drafts and Sent copies, until the app restarted. It isn't tried again
+  on the main process, where it would hang the window too.
 - Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
-  and made again from the whole message the first time it's opened. A forward takes the files of the
+  and made again from the whole message the first time it's opened, one message of a thread at a
+  time, since each takes a connection. A forward takes the files of the
   whole message, whatever the list says.
 - Gmail's own unsent drafts are in All Mail too. They're kept hidden, so a thread doesn't show them.
 
@@ -224,9 +254,11 @@ so there's still one way into the store and the batches apply as usual. It waits
 been quiet for 750 ms first, so a burst of news is one sync. If the sync is already running it's asked
 to go again afterwards, because what changed may have missed it. The watch has its own connection, so
 a sync never interrupts its IDLE; imapflow breaks IDLE every five minutes (`maxIdleTime`) and starts
-it again, as it does after anything else on that connection. A lost connection is retried after a
-minute, and the three-minute passes carry on regardless, so watching can fail without anything being
-missed. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
+it again, as it does after anything else on that connection. A lost connection is retried after 2
+seconds, then 10 and 30, then every minute, and the three-minute passes carry on regardless, so
+watching can fail without anything being missed. A watch that opens again after being lost asks for
+a sync at once, since IDLE only tells of what happens from then on, and takes away "Couldn't reach",
+since the server has just answered. A watch that fails partway, signed in but turned away at the inbox, closes its connection:
 left open, every minute's try added one, until the service refused the account for having too many.
 
 Live or in batches is one setting (`BatchSettings.live`). Live, the rules a sync and `retime` use have
@@ -235,9 +267,39 @@ line and Deliver now; the Summary keeps its own time. The batch times stay saved
 Settings saved before the switch existed are live exactly when they have no times, which is how they
 behaved; batches always have a time, so taking the last one away is going live.
 
-There's one watch per account, counted from when it starts signing in. Waking from sleep replaces
-them all, and an old one finishing its goodbye only ever clears its own place, so a wake can't leave a
-connection running that nothing will close. Gmail allows fifteen at once.
+There's one watch per account, counted from when it starts signing in. Waking from sleep, or the
+network changing, replaces them all, and an old one finishing its goodbye only ever clears its own
+place, so a wake can't leave a connection running that nothing will close. Gmail allows fifteen at
+once.
+
+### The log of failures
+
+Every connection that fails (a pass, a watch, a change, drafts, a copy for Sent, a message sent)
+adds a line to `sync.log` in the profile, so "Couldn't reach" can be looked into afterwards:
+
+```
+2026-11-23T01:02:03.456Z gmail:3f2a9c sync connect CONNECT_TIMEOUT 30012ms ipv4 142.250.4.108:993 timeout, ipv6 [2404:6800:4003:c00::6c]:993 no answer
+```
+
+The account is its service and the first six hex of a SHA-256 of its address. The stage is how far
+the connection got (`dns`, `connect`, `tls`, `greeting`, `login`, `command`, `idle` for a watch
+that had opened, `smtp`). Only codes are kept, Node's (`ECONNREFUSED`), imapflow's
+(`GREETING_TIMEOUT`), the IMAP status and response code (`NO [UNAVAILABLE]`) or an SMTP reply's
+number, each checked to be a short code: a server's words, which could carry anything, never go in.
+The addresses tried come from Node itself: `imapClient` and `SmtpSender` connect inside
+`noteAttempts`, and every socket opened meanwhile is followed through the `net.client.socket`
+diagnostics channel, each address with what came of it (`up`, `timeout` for Node's per-address
+wait, an error code, or `no answer` when the whole connection gave up first). That's the line that
+would have shown the VPN's IPv4 tries dropped after 250 ms and the IPv6 one swallowed. Past 256 KB
+the file becomes `sync.log.1` and a new one starts. A log that can't be written changes nothing.
+
+### Noticing the network change
+
+Linux tells an app nothing when a VPN reconnects, its kill switch comes up or the Wi-Fi changes, and
+a socket on the old route can take a minute to find out. So `network.ts` reads the interfaces and
+their addresses every 5 seconds (one system call) and, when they've changed and held for 2 seconds,
+does what waking does: every watch starts again, the quick tries start over, and every account
+syncs. The loopback isn't counted, nor the order the system lists them in.
 
 ## Staying open
 
