@@ -287,6 +287,8 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (!open) return setMessages([])
+    // A thread a search found on the server is fetched first: the one before doesn't stay on show meanwhile.
+    if (messages[0]?.thread !== open.thread && rows?.some((row) => row.older && row.account === open.account && row.thread === open.thread)) setMessages([])
     void (async () => {
       const epoch = undoEpoch.current
       const read = readAfter === 0

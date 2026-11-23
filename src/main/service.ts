@@ -1048,6 +1048,12 @@ export class MailService {
     return [...found, ...this.old.rows(query.text, found, found.length < limit)]
   }
 
+  /** Threads a search found on the server, from before the keeping window, are fetched before
+   *  they're opened or acted on. Anything else is here already, and this does nothing. */
+  reach(targets: ThreadRef[]): Promise<void> {
+    return this.old.bring(targets)
+  }
+
   /** Opening a thread reads it, here and on the server, unless [read] is false (Settings can ask for a
    *  wait first, or for nothing until it's marked read). Only what could be seen counts. It goes to the
    *  top of Recently Seen too, unless it was opened from there: that list keeps still while it's read. */
@@ -1055,6 +1061,7 @@ export class MailService {
     const now = this.deps.now()
     const messages = this.store.thread(account, thread, now, bins)
     if (remember && messages.length > 0) this.store.saw({ account, thread }, now)
+    if (messages.length > 0) this.store.useOutside({ account, thread }, now)
     if (read) this.change(account, this.store.unreadMail({ account, thread }, now, bins), { kind: 'read' }, this.nextGroup(), 0)
     for (const id of this.store.filesCut(messages.map((m) => m.id))) background(this.listFiles(id))
     return messages

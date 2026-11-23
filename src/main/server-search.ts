@@ -1,10 +1,11 @@
 import type { SearchObject } from 'imapflow'
-import type { Address, ThreadRow } from '@shared/types'
+import type { Address, ThreadRef, ThreadRow } from '@shared/types'
 import { ageStart, parseQuery, termOf, tokensOf, type Term } from '@shared/query'
 import { INBOX, labelsOf, SENT } from './actions'
-import type { ParsedMail } from './parse'
+import { MAX_SOURCE, type ParsedMail } from './parse'
 import { threadOf, type MailboxRef, type MailSource } from './source'
 import type { Store } from './store'
+import { toStored, type SyncOptions } from './sync'
 
 /**
  * Mail from before the keeping window, found by asking the server. The search box shows what's kept
@@ -19,6 +20,8 @@ import type { Store } from './store'
 export const SERVER_HITS = 200
 /** How long after the last change to a search the servers are asked, so typing isn't a search a key. */
 export const SEARCH_SETTLE_MS = 500
+/** How many threads found by searches are remembered, to be opened from the rows that showed them. */
+const REMEMBERED = 2000
 
 /** A message a server found, from before the window: what its row shows, and what finds its thread. */
 export interface OldHit {
@@ -263,8 +266,22 @@ interface Asking {
   timer: ReturnType<typeof setTimeout> | null
 }
 
+/**
+ * Opening a row it found fetches the thread, whole, and keeps it here: on Gmail all of its X-GM-THRID
+ * in All Mail, elsewhere the messages that name its first Message-ID, in every folder sync reads. Its
+ * messages are ordinary rows from then on, so the reader, every action and the writer work on them as
+ * on any, by folder and UID. The store keeps them apart (`outside`): no list or count but their own
+ * thread's sees them, and the keeping step lets them go a week after they were last opened. What's
+ * in the window, a sync brings.
+ */
 export class OldMail {
   private asking: Asking | null = null
+  /** What each thread found lately was found as, to be fetched when it's opened. */
+  private readonly found = new Map<string, OldHit[]>()
+  /** Threads fetched whole: the store says how they are now. */
+  private readonly brought = new Set<string>()
+  /** Fetches under way, so opening a thread twice fetches it once. */
+  private readonly bringing = new Map<string, Promise<void>>()
 
   constructor(private readonly deps: OldMailDeps) {}
 
@@ -283,7 +300,103 @@ export class OldMail {
         threads.set(key, [...(threads.get(key) ?? []), hit])
       }
     }
-    return [...threads.values()].map(rowOf).sort((a, b) => b.date - a.date)
+    // A thread here already, fetched now or on an earlier day, shows as it is here: read, flagged or
+    // archived since. One that's gone to Trash or Spam since isn't shown, as a search here wouldn't.
+    const here = [...threads.entries()].filter(([key, hits]) => this.brought.has(key) || hits.every((hit) => this.deps.store.kept(hit.account, hit.box, [hit.uid], true).has(hit.uid)))
+    const kept = new Map(this.deps.store.olderRows(here.map(([, hits]) => hits[0] as OldHit), this.deps.now()).map((row) => [keyOf(row), row]))
+    const fetched = new Set(here.map(([key]) => key))
+    const rows: ThreadRow[] = []
+    for (const [key, hits] of threads) {
+      const row = fetched.has(key) ? kept.get(key) : rowOf(hits)
+      if (row) rows.push({ ...row, older: true })
+    }
+    return rows.sort((a, b) => b.date - a.date)
+  }
+
+  /** Fetches the threads of these that a search found and that aren't here yet, each account's on
+   *  one connection. Not being able to says nothing: the thread opens empty, and the next look
+   *  tries again. */
+  async bring(refs: ThreadRef[]): Promise<void> {
+    const waits: Promise<void>[] = []
+    const wanted = new Map<string, string[]>()
+    for (const key of new Set(refs.map(keyOf))) {
+      const going = this.bringing.get(key)
+      if (going) waits.push(going)
+      else if (this.found.has(key) && !this.brought.has(key)) {
+        const account = this.found.get(key)?.[0]?.account ?? ''
+        wanted.set(account, [...(wanted.get(account) ?? []), key])
+      }
+    }
+    for (const [account, keys] of wanted) {
+      const going = this.bringFor(account, keys).finally(() => keys.forEach((key) => this.bringing.delete(key)))
+      keys.forEach((key) => this.bringing.set(key, going))
+      waits.push(going)
+    }
+    await Promise.all(waits)
+  }
+
+  private remember(hits: OldHit[]): void {
+    const threads = new Map<string, OldHit[]>()
+    for (const hit of hits) threads.set(keyOf(hit), [...(threads.get(keyOf(hit)) ?? []), hit])
+    for (const [key, found] of threads) {
+      this.found.delete(key) // to the back, as the newest
+      this.found.set(key, found)
+    }
+    for (const key of this.found.keys()) {
+      if (this.found.size <= REMEMBERED) break
+      this.found.delete(key)
+    }
+  }
+
+  private async bringFor(account: string, keys: string[]): Promise<void> {
+    let source: MailSource | null = null
+    try {
+      source = await this.deps.open(account)
+      for (const key of keys) {
+        await this.fetchThread(source, account, this.found.get(key) ?? [])
+        this.brought.add(key)
+      }
+    } catch {
+      // Offline or turned down: nothing is kept, and opening it again tries again.
+    } finally {
+      await source?.close().catch(() => undefined)
+    }
+    this.deps.changed()
+  }
+
+  private async fetchThread(source: MailSource, account: string, hits: OldHit[]): Promise<void> {
+    const [first] = hits
+    if (!first) return
+    const now = this.deps.now()
+    const keepFrom = this.deps.keepFrom()
+    const holdFrom = this.deps.store.holdFrom(account) ?? now
+    // Mail from before the window was never held: it's stored as it came.
+    const options: SyncOptions = { account, email: account, backfillDays: 0, rules: { times: [], vip: [] }, now, parse: this.deps.parse }
+    const roots = [...new Set(hits.map((hit) => hit.root).filter(Boolean))]
+    const boxes = source.mailboxes().filter((box) => (source.gmail ? box.role === 'all' : box.role !== 'trash' && box.role !== 'junk'))
+    for (const box of boxes) {
+      try {
+        await source.open(box)
+        const named = hits.filter((hit) => hit.box === box.id).map((hit) => hit.uid)
+        const traced = source.gmail
+          ? await source.search({ threadId: first.thread })
+          : roots.length > 0
+            ? await source.search({ or: roots.flatMap((root) => ['message-id', 'references', 'in-reply-to'].map((name): SearchObject => ({ header: { [name]: root } }))) })
+            : []
+        const uids = [...new Set([...named, ...traced])]
+        const kept = this.deps.store.kept(account, box.id, uids, true)
+        for await (const remote of source.fetch(uids.filter((uid) => !kept.has(uid)), MAX_SOURCE)) {
+          if (remote.arrived >= keepFrom) continue // the window's own, which a sync brings
+          const stored = await toStored(remote, box, source.gmail, options, holdFrom)
+          if (stored.thread !== first.thread) continue // named its first message, but isn't of its thread
+          this.deps.store.addOutside(stored, now)
+        }
+      } catch (e) {
+        if (!refused(e)) throw e
+      } finally {
+        source.done()
+      }
+    }
   }
 
   /** A search that isn't being looked at any more stops, and what it found goes. */
@@ -323,6 +436,7 @@ export class OldMail {
       }
       if (asking.stopped) return
       asking.hits.set(account, hits)
+      this.remember(hits)
       if (hits.length > 0) this.deps.changed()
     }))
   }

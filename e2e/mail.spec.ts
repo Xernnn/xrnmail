@@ -163,6 +163,25 @@ test('search finds Vietnamese without its marks', async () => {
   await expect(page.getByText('Something else')).toHaveCount(0)
 })
 
+test('mail from before what is kept is found on the server, below what is, and opens like any other', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Harbour lease 2024', from: 'Mai Tran <mai@example.com>', text: 'The signed lease is attached' }), { arrived: earlier(24 * 400) })
+  gmail.add(rawMail({ subject: 'Harbour visit', text: 'See you there' }), { arrived: earlier(2) })
+  await signIn(run)
+  const list = page.locator('.threads')
+  await expect(list.getByText('Harbour visit')).toBeVisible()
+  await expect(list.getByText('Harbour lease 2024')).toHaveCount(0) // older than the 90 days kept
+  await page.getByLabel('Search').fill('harbour')
+  await expect(list.locator('.thread').first()).toContainText('Harbour visit')
+  await expect(list.locator('.older-head')).toHaveText('Older')
+  await expect(list.locator('.older-head + .thread')).toContainText('Harbour lease 2024')
+  await list.getByText('Harbour lease 2024').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Harbour lease 2024')
+  await expect(page.locator('.body-text')).toHaveText('The signed lease is attached')
+  await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen') // opening it read it, on the server too
+})
+
 test('recent searches: offered under the empty search box, picked with the keys, removed one at a time or all, and kept', async () => {
   run = await launch()
   const { page, gmail } = run

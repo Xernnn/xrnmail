@@ -5,13 +5,13 @@ import { join } from 'node:path'
 import { DraftFiles } from '@main/draft-files'
 import { MemorySecrets } from '@main/secrets'
 import { SmtpSender } from '@main/sender'
-import { MailService } from '@main/service'
+import { MailService, UNDO_MS } from '@main/service'
 import { gmailQuery, imapPlan } from '@main/server-search'
 import { ImapSource } from '@main/source'
 import { Store } from '@main/store'
 import { ImapWriter } from '@main/writer'
 import { providerFor } from '@shared/providers'
-import type { ThreadRow } from '@shared/types'
+import type { ThreadRef, ThreadRow } from '@shared/types'
 import { FakeGmail, rawMail, type FakeOptions } from './fake-gmail'
 import { FakeSmtp } from './fake-smtp'
 
@@ -65,6 +65,24 @@ async function add(email: string, server: FakeGmail): Promise<void> {
 const ago = (days: number): Date => new Date(clock - days * DAY)
 const search = (text: string): ThreadRow[] => service.list({ kind: 'search', text })
 const shown = (rows: ThreadRow[]): [string, boolean][] => rows.map((row) => [row.subject, row.older === true])
+const subjects = (rows: ThreadRow[]): string[] => rows.map((row) => row.subject)
+
+/** What a search for [word] found on the server, fetched as opening it from its row does. */
+async function opened(word: string): Promise<ThreadRef> {
+  await eventually(() => expect(search(word).filter((row) => row.older)).toHaveLength(1))
+  const row = search(word).find((each) => each.older) as ThreadRow
+  const ref = { account: row.account, thread: row.thread }
+  await service.reach([ref])
+  return ref
+}
+
+/** Lets everything queued reach the server, past Undo's wait. */
+async function flushed(): Promise<void> {
+  clock += UNDO_MS + 1
+  await service.tick()
+  await eventually(() => expect(store.dueActions(G, clock).concat(store.dueActions(Y, clock))).toEqual([]))
+  await new Promise((resolve) => setTimeout(resolve, 30))
+}
 
 beforeEach(async () => {
   clock = at(10)
@@ -162,6 +180,106 @@ describe('searching the server', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(shown(search('report'))).toEqual([['Report, new', false]])
     expect(service.accounts()[0]?.error).toBeNull()
+  })
+})
+
+describe('opening what a search found', () => {
+  it('fetches the whole thread, shows it like any other, and keeps it out of every other list and count', async () => {
+    const thread = 7_000_000_000_000_000_900n
+    gmail.add(rawMail({ subject: 'Harbour lease', from: 'Mai Tran <mai@example.com>', text: 'Draft lease attached' }), { arrived: ago(400), thread })
+    gmail.add(rawMail({ subject: 'Re: Harbour lease', from: 'Alex <alex@example.com>', text: 'Signed and sent back' }), { arrived: ago(399), thread })
+    gmail.add(rawMail({ subject: 'Today' }), { arrived: ago(1) })
+    await add(G, gmail)
+    const counts = { unread: service.accounts()[0]?.unread, overview: service.overview() }
+    await eventually(() => expect(search('harbour')).toMatchObject([{ subject: 'Re: Harbour lease', older: true, count: 2, unread: 2 }]))
+    const ref = await opened('harbour')
+    expect(gmail.commands).toContain(`UID SEARCH X-GM-THRID ${thread}`)
+    const messages = service.thread(G, ref.thread, false, true, false)
+    expect(messages.map((m) => [m.subject, m.text.trim(), m.from.address])).toEqual([
+      ['Harbour lease', 'Draft lease attached', 'mai@example.com'],
+      ['Re: Harbour lease', 'Signed and sent back', 'alex@example.com']
+    ])
+    // Both are unread and in the inbox on the server, and still count for nothing here.
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Today'])
+    expect(subjects(service.list({ kind: 'all' }))).toEqual(['Today'])
+    expect(service.accounts()[0]?.unread).toBe(counts.unread)
+    expect(service.overview()).toEqual(counts.overview)
+    expect(service.contacts('mai')).toEqual([])
+    expect(store.list({ kind: 'search', text: 'harbour' }, clock)).toEqual([]) // it's found by asking, under Older
+    expect(subjects(service.list({ kind: 'recent' }))).toEqual(['Re: Harbour lease'])
+    // Opened again, and after a sync pass, it's what's kept here: nothing is fetched again.
+    const fetched = gmail.commands.filter((c) => /BODY\.PEEK\[\]/.test(c)).length
+    await service.reach([ref])
+    expect(service.thread(G, ref.thread)).toHaveLength(2)
+    await flushed()
+    expect(gmail.mails.filter((m) => m.flags.includes('\\Seen')).map((m) => m.uid)).toEqual([1, 2]) // opening read it, there too
+    // The other lists left the search, so it's asked again, and shows the thread as it is here now.
+    await eventually(() => expect(search('harbour')).toMatchObject([{ subject: 'Re: Harbour lease', older: true, unread: 0 }]))
+    await service.syncAll()
+    expect(service.thread(G, ref.thread)).toHaveLength(2)
+    expect(gmail.commands.filter((c) => /BODY\.PEEK\[\]/.test(c)).length).toBe(fetched)
+  })
+
+  it('archive, a label, a flag and Trash reach the server by its UIDs, opened or straight from its row', async () => {
+    const uid = gmail.add(rawMail({ subject: 'Old receipt' }), { arrived: ago(300) })
+    await add(G, gmail)
+    const ref = await opened('receipt') // as acting on the row does, before anything is sent
+    service.act([ref], { kind: 'label', label: 'Receipts', add: true })
+    service.act([ref], { kind: 'star' })
+    await flushed()
+    expect(gmail.mails.find((m) => m.uid === uid)).toMatchObject({ labels: ['\\Inbox', 'Receipts'], flags: ['\\Flagged'] })
+    service.act([ref], { kind: 'archive' })
+    await flushed()
+    expect(gmail.mails.find((m) => m.uid === uid)?.labels).toEqual(['Receipts'])
+    expect(search('receipt')).toMatchObject([{ subject: 'Old receipt', older: true, starred: true }]) // as it is now
+    expect(subjects(service.list({ kind: 'label', account: G, label: 'Receipts' }))).toEqual([])
+    service.act([ref], { kind: 'trash' })
+    await flushed()
+    expect(gmail.moved).toEqual([{ uid, to: '[Gmail]/Trash' }])
+    expect(search('receipt')).toEqual([]) // gone to Trash, as a search here would leave it out
+  })
+
+  it('on a server without threads, brings the replies that name it from every folder, and archives what was in the inbox', async () => {
+    const first = rawMail({ subject: 'Boat club dues', from: 'Mai Tran <mai@example.com>', text: 'Dues are due' })
+    const id = /Message-ID: (<[^>]+>)/.exec(first)?.[1] ?? ''
+    yahoo.add(first, { arrived: ago(300) })
+    yahoo.add(rawMail({ subject: 'Paid it', from: Y, text: 'Done', headers: [`In-Reply-To: ${id}`, `References: ${id}`] }), { arrived: ago(299), box: 'Sent' })
+    yahoo.add(rawMail({ subject: 'Another club', text: 'Not this one' }), { arrived: ago(298) })
+    await add(Y, yahoo)
+    const ref = await opened('boat')
+    expect(service.thread(Y, ref.thread).map((m) => m.text.trim())).toEqual(['Dues are due', 'Done']) // and reads both
+    expect(yahoo.commands.some((c) => c.startsWith('UID SEARCH OR') && c.includes(id))).toBe(true)
+    service.act([ref], { kind: 'archive' })
+    await flushed()
+    expect(yahoo.box('Archive').mails.map((m) => m.raw.toString())).toEqual([expect.stringContaining('Boat club dues')])
+    expect(yahoo.box('Sent').mails).toHaveLength(1) // your own reply stays where it is
+    expect(yahoo.writes().filter((c) => /MOVE|COPY/.test(c))).toEqual([expect.stringMatching(/^UID MOVE 1 "?Archive"?$/)])
+  })
+
+  it('a week unopened, what was fetched goes; opened since, or pinned, it stays', async () => {
+    for (const word of ['Alder', 'Birch', 'Cedar']) gmail.add(rawMail({ subject: `${word} notes` }), { arrived: ago(400) })
+    await add(G, gmail)
+    const [alder, birch, cedar] = [await opened('alder'), await opened('birch'), await opened('cedar')]
+    for (const ref of [alder, birch, cedar]) expect(service.thread(G, ref.thread)).toHaveLength(1)
+    clock += 5 * DAY
+    service.thread(G, birch.thread)
+    service.pin([cedar], true)
+    clock += 3 * DAY
+    await service.syncAll()
+    expect([alder, birch, cedar].map((ref) => store.thread(G, ref.thread, clock).length)).toEqual([0, 1, 1])
+    expect(subjects(service.list({ kind: 'pinned' }))).toEqual(['Cedar notes'])
+  })
+
+  it('once the window grows to take it in, it is ordinary mail', async () => {
+    gmail.add(rawMail({ subject: 'Spruce notes' }), { arrived: ago(120) })
+    await add(G, gmail)
+    const ref = await opened('spruce')
+    expect(service.thread(G, ref.thread, false, true, false)).toHaveLength(1)
+    expect(subjects(service.list({ kind: 'inbox' }))).toEqual([])
+    service.saveBackfill(180)
+    await eventually(() => expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Spruce notes']))
+    expect(shown(search('spruce'))).toEqual([['Spruce notes', false]])
+    expect(gmail.commands.filter((c) => /BODY\.PEEK\[\]/.test(c))).toHaveLength(1) // the window's sync found it here already
   })
 })
 

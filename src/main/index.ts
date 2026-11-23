@@ -420,8 +420,11 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
-  handle('thread', (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) =>
-    service.thread(text(account, 320), text(thread, 64), bins === true, remember !== false, read !== false))
+  handle('thread', async (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) => {
+    const ref = { account: text(account, 320), thread: text(thread, 64) }
+    await service.reach([ref])
+    return service.thread(ref.account, ref.thread, bins === true, remember !== false, read !== false)
+  })
   handle('clearRecent', () => service.clearRecent())
   handle('searches', () => service.searches())
   handle('rememberSearch', (search: unknown) => service.rememberSearch(text(search, 500)))
@@ -438,7 +441,11 @@ function register(service: MailService, avatars: Avatars): void {
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
   handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
-  handle('act', (refs: unknown, action: unknown) => service.act(targets(refs), mailAction(action)))
+  handle('act', async (refs: unknown, action: unknown) => {
+    const [chosen, what] = [targets(refs), mailAction(action)]
+    await service.reach(chosen)
+    return service.act(chosen, what)
+  })
   handle('undo', (token: unknown) => service.undo(number(token)))
   handle('snooze', (refs: unknown, until: unknown) => service.snooze(targets(refs), number(until)))
   handle('unsnooze', (refs: unknown) => service.unsnooze(targets(refs)))
