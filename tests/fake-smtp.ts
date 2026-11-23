@@ -16,6 +16,12 @@ export class FakeSmtp {
   token: string | null = null
   /** Answers AUTH with this, a busy server's 454 say, whatever the password. */
   authAnswer: string | null = null
+  /** Connections taken so far. */
+  connections = 0
+  /** Takes a connection and says nothing on it, not even hello, as a server slow to answer. */
+  silent = false
+  /** Hangs up on every connection after this many, as a network that goes between two. */
+  refuseAfter: number | null = null
   private server: Server | null = null
   private sockets = new Set<Socket>()
 
@@ -42,6 +48,9 @@ export class FakeSmtp {
     this.sockets.add(socket)
     socket.on('error', () => undefined)
     socket.on('close', () => this.sockets.delete(socket))
+    this.connections++
+    if (this.refuseAfter !== null && this.connections > this.refuseAfter) return void socket.destroy()
+    if (this.silent) return
     socket.write('220 fake ESMTP\r\n')
     let from = ''
     let to: string[] = []

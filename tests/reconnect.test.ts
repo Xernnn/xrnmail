@@ -396,3 +396,53 @@ describe('the log of failures', () => {
     expect(read()).toEqual([])
   })
 })
+
+describe('sending', () => {
+  const write = async (): Promise<number> => {
+    const draft = await service.startDraft({ kind: 'new' })
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Hi', html: '<p>Hello</p>', text: 'Hello', quote: null })
+    service.send(draft.id)
+    return draft.id
+  }
+
+  it('signs in and sends on one connection, so the network going between the two can\'t fail it', async () => {
+    await write()
+    const before = smtp.connections
+    smtp.refuseAfter = before + 1
+    clock += 11_000
+    await service.tick()
+    expect(smtp.sent).toHaveLength(1)
+    expect(smtp.connections).toBe(before + 1)
+    expect(service.drafts()).toEqual([])
+  })
+
+  it('is marked as sending only once signed in, so quitting during a slow connect leaves it to go next time', async () => {
+    const id = await write()
+    const before = smtp.connections
+    smtp.silent = true
+    clock += 11_000
+    const ticking = service.tick()
+    await soon(() => expect(smtp.connections).toBe(before + 1)) // connecting, and nothing heard yet
+    expect(store.draft(id)?.state).toBe('queued')
+    service = make() // the app quits there, and starts again
+    expect(service.drafts()[0]).toMatchObject({ id, state: 'queued' })
+    smtp.silent = false
+    const where = smtp.port
+    await smtp.stop() // the slow connection goes
+    await smtp.listen(where)
+    await ticking
+    clock += 61_000
+    await service.tick()
+    expect(smtp.sent).toHaveLength(1)
+    expect(service.drafts()).toEqual([])
+  })
+
+  it('a refused password still fails it, in fixed words, with nothing sent', async () => {
+    await write()
+    smtp.secret = 'changed'
+    clock += 11_000
+    await service.tick()
+    expect(service.drafts()[0]).toMatchObject({ state: 'failed', error: 'The mail server refused this password.' })
+    expect(smtp.received).toBe(0)
+  })
+})

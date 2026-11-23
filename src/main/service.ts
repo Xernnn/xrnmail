@@ -1757,16 +1757,35 @@ export class MailService {
       this.deps.changed()
       return null
     }
+    // Signed in before it's marked as sending, since failing that proves nothing left: it stays as it
+    // was, queued for the next try. Marked first, a quit during a slow connect came back as "check
+    // Sent" with nothing sent. The same connection sends it.
+    const sender = this.deps.openSender(this.config(account), login)
+    try {
+      await sender.check()
+    } catch (e) {
+      sender.close()
+      this.logFailure(account, 'send', e, started)
+      const draft = due()
+      if (!draft) return null
+      this.store.saveDraft(e instanceof NeverLeft
+        ? { ...draft, state: 'queued', sendAt: this.deps.now() + RETRY_MS, error: 'Waiting for a connection.' }
+        : { ...draft, state: 'failed', sendAt: null, error: describeSendFailure(e) })
+      this.deps.changed()
+      return null
+    }
+    this.reached(account)
     // Written down first: if the app dies here, this comes back as "check Sent", not sent twice. Moved
     // to another account meanwhile, it waits for the next turn and a sign-in of its own.
     const draft = this.store.claimDraft(id, account, this.deps.now())
-    if (!draft) return null
+    if (!draft) {
+      sender.close()
+      return null
+    }
     this.deps.changed()
     const config = this.config(draft.account)
-    const sender = this.deps.openSender(config, login)
     try {
       const copy = await sender.send(this.outgoingFrom(draft))
-      this.reached(draft.account)
       this.store.deleteDraft(draft.id)
       this.deps.files.clear(draft.id)
       if (!config.savesSent) await this.fileCopy(draft.account, copy.raw, copy.messageId)

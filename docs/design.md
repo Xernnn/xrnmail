@@ -106,10 +106,16 @@ is all Undo and "send later" are. `tick()` sends what's due.
 - `SmtpSender` connects and signs in as its own step first, since that's the one failure that proves
   nothing left. nodemailer reports a connection lost after the message was handed over the same way as
   one that never opened, so its error codes can't be used for this. Only that first step is retried.
+  The message goes on that same connection (nodemailer's `SMTPConnection`, not its transport, which
+  opened one connection to check and another to send, so the network going between the two failed a
+  message that never left as "check Sent"). A sign-in answered with a 4xx is that first step failing
+  too: SMTP's "not now".
 - A message that can't be put together, an attachment gone from the profile say, fails before
   anything is handed over (`Unmade`), and says so plainly: nothing went, so it isn't "check Sent".
-- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` before the
-  attempt, so a crash comes back the same way instead of as a retry.
+- Any later failure ends in `failed`, with "check Sent". The state is written as `sending` once
+  signed in, before the message is handed over, so a crash comes back the same way instead of as a
+  retry. Until then it's still `queued`: a quit during a slow connect, which finishing up gives up on
+  after eight seconds, leaves it to go next time rather than to be checked for.
 - **Nothing goes that the person took back.** Until a draft is marked `sending` it can be called back,
   changed or thrown away, and sending the ones due before it can take a while. So `sending` is only
   written if the draft is still queued and due at that moment, and what goes is the draft as it is
