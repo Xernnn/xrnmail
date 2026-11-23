@@ -1099,12 +1099,31 @@ describe('attachments', () => {
 
   // A message was fetched whole with nothing to stop it, so a server could have the laptop hold as
   // much as it cared to send.
+  it('opens a message as big as Gmail delivers, 50 MB', async () => {
+    gmail.add(rawMail({ subject: 'Scans', attachment: { name: 'scans.pdf', type: 'application/pdf', body: '%PDF-1.4 scans' } }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Scans')
+    const [message] = store.thread(thread.account, thread.thread, clock)
+    const asked: number[] = []
+    service = make({
+      openSource: (account, login) => {
+        const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })
+        const whole = source.whole.bind(source)
+        source.whole = (uid, most) => (asked.push(most), whole(uid, most))
+        return source
+      }
+    })
+    await service.original(message?.id ?? 0)
+    expect(asked.length).toBeGreaterThan(0)
+    for (const most of asked) expect(most).toBeGreaterThanOrEqual(50 * 1024 * 1024)
+  })
+
   it('fetches no more of a message than a mail service takes, and says when it is bigger', async () => {
     gmail.add(rawMail({ subject: 'Huge', attachment: { name: 'big.bin', type: 'application/octet-stream', body: Buffer.alloc(6000, 7) } }), { arrived: past(30) })
     await service.syncAll()
     const thread = ref('Huge')
     const [message] = store.thread(thread.account, thread.thread, clock)
-    // The limit is a mail service's, 36 MB; here it's made small, so the test needn't be that big.
+    // The limit is above what a mail service delivers, 64 MB; here it's made small, so the test needn't be that big.
     service = make({
       openSource: (account, login) => {
         const source = new ImapSource({ host: '127.0.0.1', port, security: 'none', user: account.user, ...login })

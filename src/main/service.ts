@@ -51,6 +51,10 @@ const TOO_BIG = 'Mail services take about 18 MB of attachments at most.'
  *  handed to a watch with a minute left had it cut off within the minute. */
 const TOKEN_MARGIN_MS = 5 * 60_000
 const DAY_MS = 86_400_000
+/** The most of one message fetched whole, for its attachments or View original: past what any
+ *  big service delivers (Gmail takes 50 MB in, once encoded), so none of their mail is too big to
+ *  open, and no server can have the laptop hold more than this of one message. */
+export const MAX_WHOLE = 64 * 1024 * 1024
 /** A successful sync clears a sync error, and something like a change that was put back has to
  *  stay on screen longer than that to be read at all. */
 const NOTE_MS = 10 * 60_000
@@ -1274,7 +1278,7 @@ export class MailService {
       if (box) {
         await source.open(box)
         // As much as a service takes in one message, and no more, whatever a server would send.
-        whole = await source.whole(message.uid, MAX_DRAFT_SOURCE)
+        whole = await source.whole(message.uid, MAX_WHOLE)
       }
     } catch (e) {
       if (e instanceof TooBig) throw e

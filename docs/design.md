@@ -251,7 +251,7 @@ stopping the rest.
   pass, and so its changes, drafts and Sent copies, until the app restarted. It isn't tried again
   on the main process, where it would hang the window too.
 - Attachments are listed but not kept. They're fetched whole when asked for, and read with `BODY.PEEK`:
-  36 MB of a message at most, as much as a service takes in one, so a server can't have the laptop
+  64 MB of a message at most, past the 50 MB Gmail delivers, so a server can't have the laptop
   hold more. A message bigger than that says it's too big to open here.
   A cut message lists only the files in the part that was kept, so its list is marked (`files_cut`)
   and made again from the whole message the first time it's opened, one message of a thread at a
