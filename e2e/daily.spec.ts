@@ -1419,6 +1419,29 @@ test('selecting several and acting on them together', async () => {
   await expect.poll(() => gmail.mails.filter((m) => m.labels.includes('\\Inbox')).length, LONG).toBe(0)
 })
 
+// The bar's Flag only ever flagged, so a selection of flagged threads couldn't be unflagged there.
+test('the bar under a selection takes the flags off when every thread picked is flagged, and flags them all otherwise', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Alpha' }), { arrived: earlier(5), flags: ['\\Flagged'] })
+  gmail.add(rawMail({ subject: 'Beta' }), { arrived: earlier(4), flags: ['\\Flagged'] })
+  gmail.add(rawMail({ subject: 'Gamma' }), { arrived: earlier(3) })
+  await signIn(run)
+  const bar = page.getByRole('toolbar', { name: 'Selected threads' })
+  const flags = page.locator('.threads .mark.flag')
+  await expect(flags).toHaveCount(2)
+  await page.getByLabel('Select Alpha').check({ force: true })
+  await page.getByLabel('Select Beta').check({ force: true })
+  await bar.getByRole('button', { name: 'Remove flag from selected' }).click()
+  await expect(flags).toHaveCount(0)
+  await page.getByLabel('Select Alpha').check({ force: true })
+  await page.getByLabel('Select Gamma').check({ force: true })
+  await bar.getByRole('button', { name: 'Flag selected' }).click()
+  await expect(flags).toHaveCount(2)
+  await expect.poll(() => gmail.mails.filter((m) => m.flags.includes('\\Flagged')).length, LONG).toBe(2)
+  expect(gmail.mails.find((m) => m.raw.toString().includes('Beta'))?.flags).not.toContain('\\Flagged')
+})
+
 test('the ⋮ on the bar under a selection labels, pins and moves to Other every thread picked', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -991,6 +991,7 @@ export function App(): ReactNode {
   const pickedAccounts = [...new Set(pickedRows.map((r) => r.account))]
   const pickedAccount = pickedAccounts.length === 1 ? accounts.find((a) => a.email === pickedAccounts[0]) : undefined
   const allPinned = pickedRows.length > 0 && pickedRows.every((r) => r.pinned)
+  const allFlagged = pickedRows.length > 0 && pickedRows.every((r) => r.starred)
   // Importance is Gmail's, so it's offered only for threads that are all on Gmail.
   const pickedGmail = pickedRows.length > 0 && pickedRows.every((r) => accounts.find((a) => a.email === r.account)?.labels)
   const onOther = active.kind === 'inbox' && active.focus === 'other'
@@ -1242,7 +1243,9 @@ export function App(): ReactNode {
                       <IconButton icon={Check} label="Archive selected" click={() => void run(refs, { kind: 'archive' }, 'Archived')} />
                       <IconButton icon={OctagonAlert} label="Report selected as spam" click={() => void run(refs, { kind: 'spam' }, 'Reported as spam')} />
                       <IconButton icon={Trash2} label="Delete selected" click={() => void run(refs, { kind: 'trash' }, 'Moved to Trash')} />
-                      <IconButton icon={Flag} label="Flag selected" click={() => void run(refs, { kind: 'star' })} />
+                      {/* As Gmail's: with every one flagged it takes the flags off, otherwise it flags them all. */}
+                      <IconButton icon={Flag} label={allFlagged ? 'Remove flag from selected' : 'Flag selected'} on={allFlagged}
+                        click={() => void run(refs, { kind: allFlagged ? 'unstar' : 'star' })} />
                     </>
                   )}
                   <IconButton icon={MailOpen} label="Mark selected read" click={() => void run(refs, { kind: 'read' })} />
