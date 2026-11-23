@@ -162,7 +162,8 @@ kept on the laptop.
   too, and what it finds is listed below, under Older. Gmail is asked in its own search language over
   All Mail, any other service with IMAP SEARCH in each folder but Trash and Junk, the newest 200 from
   each. Opening one fetches its whole thread, which then reads, replies and moves like any other, and
-  stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
+  stays on this laptop until it's gone a week unopened. Offline, the search is what's kept here, and
+  the list says "Older mail not searched" with the account, and Try again. The empty box offers the last eight searches (finished with Enter, or a result opened from them),
   picked with the arrow keys and Enter, and each can be removed, or all with Clear. They're kept on
   this laptop.
 - **.eml files:** `xrnmail some.eml`, or Open With from a file manager, shows the message read-only in

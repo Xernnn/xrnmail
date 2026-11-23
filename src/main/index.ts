@@ -537,6 +537,8 @@ function register(service: MailService, avatars: Avatars): void {
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))
+  handle('unsearched', (search: unknown) => service.unsearched(text(search, 500)))
+  handle('searchAgain', () => service.searchAgain())
   handle('thread', async (account: unknown, thread: unknown, bins: unknown, remember: unknown, read: unknown) => {
     const ref = { account: text(account, 320), thread: text(thread, 64) }
     await service.reach([ref])

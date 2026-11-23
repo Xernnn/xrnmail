@@ -1377,6 +1377,17 @@ export class MailService {
     return [...found, ...this.old.rows(query.text, found, found.length < limit)]
   }
 
+  /** The accounts whose server couldn't be asked about [text]'s older mail. */
+  unsearched(text: string): string[] {
+    return this.old.unsearched(text)
+  }
+
+  /** The servers are asked again about the search on show, from the start. */
+  searchAgain(): void {
+    this.old.leave()
+    this.deps.changed()
+  }
+
   /** Threads a search found on the server, from before the keeping window, are fetched before
    *  they're opened or acted on. Anything else is here already, and this does nothing. */
   reach(targets: ThreadRef[]): Promise<void> {

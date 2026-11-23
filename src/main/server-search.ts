@@ -264,6 +264,8 @@ interface Asking {
   /** Each account's hits, once its server has answered. */
   hits: Map<string, OldHit[]>
   sources: Set<MailSource>
+  /** The accounts whose server couldn't be asked: offline, signed out, or turned down. */
+  missed: Set<string>
   stopped: boolean
   timer: ReturnType<typeof setTimeout> | null
 }
@@ -417,7 +419,7 @@ export class OldMail {
   private ask(text: string): Asking {
     if (this.asking?.text === text) return this.asking
     this.leave()
-    const asking: Asking = { text, hits: new Map(), sources: new Set(), stopped: false, timer: null }
+    const asking: Asking = { text, hits: new Map(), sources: new Set(), missed: new Set(), stopped: false, timer: null }
     this.asking = asking
     if (parseQuery(text).length === 0) return asking
     asking.timer = setTimeout(() => {
@@ -428,21 +430,31 @@ export class OldMail {
     return asking
   }
 
-  /** Every account at once. One that can't be reached, or won't search, adds nothing, and says
-   *  nothing: what's kept here is still shown. */
+  /** Every account at once. One that can't be reached, or won't search, adds nothing, and is named
+   *  by `unsearched`: what's kept here is still shown. */
   private async run(asking: Asking): Promise<void> {
     await Promise.all(this.deps.accounts().map(async (account) => {
       let hits: OldHit[] = []
+      let failed = false
       try {
         hits = await this.search(asking, account)
       } catch {
         // Offline, signed out, or turned down: the search stands on what's here.
+        failed = true
       }
       if (asking.stopped) return
       asking.hits.set(account, hits)
+      if (failed) asking.missed.add(account)
       this.remember(hits)
-      if (hits.length > 0) this.deps.changed()
+      if (hits.length > 0 || failed) this.deps.changed()
     }))
+  }
+
+  /** The accounts whose server couldn't be asked about [text], in the sidebar's order. */
+  unsearched(text: string): string[] {
+    const asking = this.asking
+    if (asking?.text !== text.trim()) return []
+    return this.deps.accounts().filter((account) => asking.missed.has(account))
   }
 
   private async search(asking: Asking, account: string): Promise<OldHit[]> {

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
-  AlarmClockOff, Check, CheckSquare, Clock, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
+  AlarmClockOff, Check, CheckSquare, Clock, CloudOff, Eraser, Filter, Flag, FolderInput, History, Inbox, Mail, MailOpen, MoreVertical, Newspaper, OctagonAlert, Pin, PinOff, Search as SearchIcon, SearchX,
   SlidersHorizontal, Tag, Trash2, Undo2, X
 } from 'lucide-react'
 import {
@@ -107,6 +107,8 @@ export function App(): ReactNode {
   const [view, setView] = useState<View>({ kind: 'inbox' })
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ThreadRow[] | null>(null)
+  /** The accounts a search couldn't ask about older mail. */
+  const [unsearched, setUnsearched] = useState<string[]>([])
   /** The list emptied for its skeleton, so it's asked for again even when what's asked is the same. */
   const [relisted, setRelisted] = useState(0)
   const [limit, setLimit] = useState(PAGE)
@@ -296,6 +298,9 @@ export function App(): ReactNode {
       void window.mail.list(query as ListQuery, limit).then((found) => {
         if (asked === listAsked.current) setRows(found)
       })
+      const text = query.kind === 'search' ? query.text : null
+      if (text === null) setUnsearched([])
+      else void window.mail.unsearched(text).then((missed) => { if (asked === listAsked.current) setUnsearched(missed) })
     }, 120)
     return () => clearTimeout(timer)
   }, [JSON.stringify(query), version, reads, limit, relisted])
@@ -1285,6 +1290,13 @@ export function App(): ReactNode {
                   drag={(event) => dragged(event, row)} />
                 </Fragment>
               ))}
+              {searching && unsearched.length > 0 && (
+                <div className="summary-head">
+                  <CloudOff size={14} aria-hidden="true" />
+                  <span className="grow"><strong>Older mail not searched</strong> · {unsearched.join(', ')}</span>
+                  <button className="link" onClick={() => void window.mail.searchAgain()}>Try again</button>
+                </div>
+              )}
               {(rows === null || (firstRead && list.length === 0)) && !showDrafts && !showSubscriptions && <Skeleton />}
               {emptyList && !firstRead && (
                 searching ? <Empty icon={SearchX} title="Nothing found" />

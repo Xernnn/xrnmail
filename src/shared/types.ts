@@ -524,6 +524,10 @@ export interface MailApi {
   syncNow(): Promise<void>
   overview(): Promise<Overview>
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
+  /** The accounts whose server couldn't be asked about a search's older mail. */
+  unsearched(search: string): Promise<string[]>
+  /** Asks the servers again about the search on show. */
+  searchAgain(): Promise<void>
   /** [bins] is for reading what's in Trash or Spam. Opening a thread puts it at the top of Recently
    *  Seen, unless [remember] is false. */
   /** A thread's messages. Unless [read] is false, opening it reads it. */

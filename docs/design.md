@@ -344,8 +344,10 @@ so held mail stays out, and what's kept here already is left out of the answer.
   `BODY.PEEK`), which is all a row needs. Their rows go below what's kept here, once that's all shown.
 - A new search, or leaving search, drops the connections of the one before at once, mid-command,
   rather than waiting for a slow server to answer what nobody's asking any more.
-- A server that can't be reached, or won't search, adds nothing and says nothing: the search is what's
-  kept here, as it was before servers were asked.
+- A server that can't be reached, or won't search, adds nothing: the search is what's kept here, as
+  it was before servers were asked. The list names the account under it, "Older mail not searched"
+  (`unsearched`), with Try again (`searchAgain`, which starts the search afresh), so an empty answer
+  and an unasked server don't look the same.
 - Opening a row it found, or acting on one, fetches its thread first (`reach`, before `thread` and `act`
   in the main process): on Gmail everything with its X-GM-THRID in All Mail, elsewhere whatever in a
   folder sync reads names its first Message-ID (`Message-ID`, `References` or `In-Reply-To`), kept only

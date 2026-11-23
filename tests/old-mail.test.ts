@@ -183,6 +183,25 @@ describe('searching the server', () => {
     expect(shown(search('report'))).toEqual([['Report, new', false]])
     expect(service.accounts()[0]?.error).toBeNull()
   })
+
+  // It said nothing, so "Nothing found" read the same whether the server had nothing or was never asked.
+  it('names an account whose server could not be asked, and Try again asks it again', async () => {
+    gmail.add(rawMail({ subject: 'Report, new' }), { arrived: ago(2) })
+    gmail.add(rawMail({ subject: 'Report from before' }), { arrived: ago(400) })
+    await add(G, gmail)
+    await add(Y, yahoo)
+    gmail.refuseSearch.add(gmail.allMail)
+    expect(service.unsearched('report')).toEqual([]) // nothing asked yet
+    changed.mockClear()
+    expect(shown(search('report'))).toEqual([['Report, new', false]])
+    await eventually(() => expect(service.unsearched('report')).toEqual([G])) // Yahoo answered, with nothing
+    expect(changed).toHaveBeenCalled() // so the window looks again
+    expect(service.unsearched('another search')).toEqual([])
+    gmail.refuseSearch.clear()
+    service.searchAgain()
+    await eventually(() => expect(shown(search('report'))).toEqual([['Report, new', false], ['Report from before', true]]))
+    expect(service.unsearched('report')).toEqual([])
+  })
 })
 
 describe('opening what a search found', () => {

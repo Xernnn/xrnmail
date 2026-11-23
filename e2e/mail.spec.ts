@@ -182,6 +182,23 @@ test('mail from before what is kept is found on the server, below what is, and o
   await expect.poll(() => gmail.mails[0]?.flags).toContain('\\Seen') // opening it read it, on the server too
 })
 
+// A Gmail that couldn't be asked read the same as one with nothing older to find: "Nothing found".
+test('a search that could not ask the server says so, and Try again asks it', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Harbour lease 2024' }), { arrived: earlier(24 * 400) })
+  await signIn(run)
+  gmail.refuseSearch.add(gmail.allMail)
+  const list = page.locator('.threads')
+  await page.getByLabel('Search').fill('harbour')
+  await expect(list.locator('.summary-head')).toHaveText(`Older mail not searched · ${ME}Try again`)
+  await expect(page.getByText('Nothing found')).toBeVisible()
+  gmail.refuseSearch.clear()
+  await list.getByRole('button', { name: 'Try again' }).click()
+  await expect(list.locator('.older-head + .thread')).toContainText('Harbour lease 2024')
+  await expect(list.getByText('Older mail not searched')).toHaveCount(0)
+})
+
 test('the search box offers its operators as what is typed could finish, and nothing more', async () => {
   run = await launch()
   const { page, gmail } = run
