@@ -1023,6 +1023,25 @@ describe('blocking', () => {
   })
 })
 
+// Block sender and Let straight through over a thread left out only the account's own address, so
+// mail from one of its aliases offered to block it, and blocking it sent your own mail to Trash.
+describe('your own addresses', () => {
+  beforeEach(signedIn)
+
+  it('can be neither blocked nor let straight through, alias or not', () => {
+    service.saveProfile({ identities: { [ME]: { name: 'Me', signature: '', aliases: ['me+shop@example.com'], color: '', notify: true } } })
+    for (const address of [ME, 'Me+Shop@example.com']) {
+      expect(() => service.block(address)).toThrow('your own')
+      expect(() => service.editSenders('vip', [address], true)).toThrow('your own')
+    }
+    expect(service.settings().blocked).toEqual([])
+    expect(service.settings().batch.vip).toEqual([])
+    service.editSenders('vip', [ME], false) // taking one off is fine
+    service.block('ada@example.com')
+    expect(service.settings().blocked).toEqual(['ada@example.com'])
+  })
+})
+
 describe('attachments', () => {
   beforeEach(signedIn)
 

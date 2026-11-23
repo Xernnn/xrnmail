@@ -623,7 +623,11 @@ export function App(): ReactNode {
   /** Blocked from a thread, it's that thread that goes to Trash, whatever else is ticked in the list. */
   const block = async (address: string, refs: ThreadRef[]): Promise<void> => {
     if (!await ask({ title: `Block ${address}?`, note: 'New mail from them goes straight to Trash.', action: 'Block', danger: true })) return
-    await window.mail.block(address)
+    try {
+      await window.mail.block(address)
+    } catch (e) {
+      return say(problem(e))
+    }
     await run(refs, { kind: 'trash' }, `Blocked ${address}`)
   }
 

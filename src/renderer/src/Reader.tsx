@@ -339,7 +339,8 @@ export function Reader(props: {
   const pinned = messages.some((m) => m.pinned)
   const important = messages.some((m) => m.labels.includes(IMPORTANT))
   const active = [...new Set(messages.flatMap((m) => userLabels(m.labels)))]
-  const person = messages.find((m) => m.from.address && m.from.address !== last.account)
+  // Someone other than you, on any of your addresses: there's no blocking or letting through yourself.
+  const person = messages.find((m) => m.from.address && !own.includes(m.from.address.toLowerCase()))
   const sender = person?.from.address
   const gmail = account?.labels ?? false
   const folded = !unfolded && messages.length > LONG_THREAD

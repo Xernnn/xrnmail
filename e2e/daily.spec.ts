@@ -888,6 +888,31 @@ test('nothing in Spam or Trash offers Unsubscribe', async () => {
   expect(await run.opened()).toEqual([])
 })
 
+// Over a thread, only the account's own address was left out of who could be blocked or let
+// straight through, so mail sent from one of its aliases offered both.
+test('mail from one of your own addresses offers no Block sender and no Let straight through', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Note to self', from: `Me <me+shop@example.com>`, to: ME }), { arrived: earlier(5) })
+  gmail.add(rawMail({ subject: 'From Mai', from: 'Mai Tran <mai@example.com>' }), { arrived: earlier(4) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ identities: { 'me@example.com': { name: 'Me', signature: '', aliases: ['me+shop@example.com'], color: '', notify: true } } }))
+  await page.waitForTimeout(400) // the window hears of a changed setting a moment after it's saved
+  const tools = page.getByRole('toolbar', { name: 'Thread', exact: true })
+  const more = page.locator('.popover')
+  await page.locator('.threads').getByText('From Mai').click()
+  await tools.getByRole('button', { name: 'More', exact: true }).click()
+  await expect(more.getByRole('button', { name: 'Block sender' })).toBeVisible() // someone else's mail, as ever
+  await expect(more.getByRole('button', { name: 'Let this sender straight through' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.locator('.threads').getByText('Note to self').click()
+  await expect(page.locator('.thread-subject')).toHaveText('Note to self')
+  await tools.getByRole('button', { name: 'More', exact: true }).click()
+  await expect(more.getByRole('button', { name: 'Print' })).toBeVisible()
+  await expect(more.getByRole('button', { name: 'Block sender' })).toHaveCount(0)
+  await expect(more.getByRole('button', { name: 'Let this sender straight through' })).toHaveCount(0)
+})
+
 // Block sender sent what was ticked in the list to Trash, whoever it was from, and left the open
 // thread from the sender just blocked where it was.
 test('blocking the sender of the open thread sends that thread to Trash, not the ones ticked', async () => {

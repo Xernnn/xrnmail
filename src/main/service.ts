@@ -1868,6 +1868,8 @@ export class MailService {
    *  from what it last read lost one of two senders added in quick succession. */
   editSenders(list: SenderList, addresses: string[], on: boolean): void {
     if (!addresses.some((a) => a.trim())) return
+    // Your own mail blocked would go to Trash, and let through it never waits anyway.
+    if (on && (list === 'blocked' || list === 'vip') && addresses.some((a) => this.ownerOf(a))) throw new Error("That's one of your own addresses.")
     const settings = this.settings()
     const edited = (from: string[]): string[] => editedSenders(from, addresses, on)
     if (list === 'vip') return this.saveBatch({ vip: edited(settings.batch.vip) })
