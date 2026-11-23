@@ -103,6 +103,38 @@ test('the composer: From under the recipients, formatting in a bar of its own, a
   expect(smtp.sent[0]?.raw).toMatch(/<(s|strike)>struck<\/(s|strike)>/)
 })
 
+test('Send & Archive: the thread leaves the inbox as the reply goes, and Undo brings both back', async () => {
+  run = await launch()
+  const { page, gmail, smtp } = run
+  gmail.add(rawMail({ subject: 'Lunch plans', from: 'Ada <ada@example.com>' }), { arrived: earlier(5) })
+  await signIn(run)
+  await page.evaluate(() => window.mail.saveProfile({ keyChanges: { edison: { sendArchive: 'Ctrl+Shift+E' } } }))
+  const threads = page.locator('.threads')
+  await threads.getByText('Lunch plans').click()
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply', exact: true }).click()
+  let box = composer(page)
+  await box.getByLabel('Message').fill('Yes please')
+  await expect(box.getByRole('button', { name: 'Send & Archive' })).toHaveAttribute('title', 'Send & Archive (Ctrl+Shift+E)')
+  await box.getByRole('button', { name: 'Send & Archive' }).click()
+  await expect(box).toHaveCount(0)
+  await expect(threads.getByText('Lunch plans')).toHaveCount(0)
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  box = composer(page)
+  await expect(box.getByLabel('Message')).toHaveText('Yes please')
+  await expect(threads.getByText('Lunch plans')).toBeVisible()
+  await box.getByLabel('Message').click()
+  await page.keyboard.press('Control+Shift+E')
+  await expect(box).toHaveCount(0)
+  await expect(threads.getByText('Lunch plans')).toHaveCount(0)
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  expect(smtp.sent[0]?.raw).toContain('Yes please')
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(threads.getByText('Lunch plans')).toBeVisible()
+  // A new message answers no thread, so there's nothing to archive.
+  await page.keyboard.press('c')
+  await expect(composer(page).getByRole('button', { name: 'Send & Archive' })).toHaveCount(0)
+})
+
 test('undoing a send calls it back with everything intact', async () => {
   run = await launch()
   const { page, smtp } = run

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode, type RefObject } from 'react'
 import {
-  Bold, Check, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Signature, Strikethrough, Trash2,
+  Archive, Bold, Check, Clock, Italic, Link, List, ListOrdered, Paperclip, Quote as QuoteIcon, RemoveFormatting, SendHorizontal, Signature, Strikethrough, Trash2,
   SquareArrowOutUpRight, Underline, Upload, X
 } from 'lucide-react'
 import { plainName } from '@shared/names'
+import { hintFor, keyName, keysFor } from '@shared/keys'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
-import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings } from '@shared/types'
+import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings, type ThreadRef } from '@shared/types'
 import { Avatar } from './Common'
 import { fileSize, problem } from './format'
 import { MailBody, sanitize } from './MailBody'
@@ -228,7 +229,8 @@ export function Composer(props: {
   accounts: AccountView[]
   settings: Settings | null
   close(saved: boolean): void
-  sent(id: number, when: number, scheduled: boolean): void
+  /** [archived] is the thread Send & Archive archived, and what undoes that. */
+  sent(id: number, when: number, scheduled: boolean, archived?: { about: ThreadRef; undo: number }): void
   /** How it was asked for: Esc may have been pressed before it could open. */
   starting?: { off: boolean } | null
   /** It has a window to itself, and fills it. */
@@ -416,12 +418,18 @@ export function Composer(props: {
     if (worth) props.discarded?.(draft.id)
   }
 
-  const send = async (at?: number): Promise<void> => {
+  /** With [archive], it's Send & Archive: the thread it answers is archived as it goes. */
+  const send = async (at?: number, archive = false): Promise<void> => {
     setBusy(true)
     setError('')
     setLater(false)
     try {
       await save()
+      if (archive && draft.about) {
+        const { when, undo } = await window.mail.sendAndArchive(draft.id)
+        gone.current = true
+        return props.sent(draft.id, when, false, { about: draft.about, undo })
+      }
       const when = await window.mail.send(draft.id, at)
       gone.current = true
       props.sent(draft.id, when, at !== undefined)
@@ -532,6 +540,10 @@ export function Composer(props: {
     document.execCommand('insertText', false, text)
   }
 
+  // Only a reply or forward to a thread that's in the inbox has anything to archive.
+  const archivable = Boolean(draft.archivable && draft.about)
+  const keySet = props.settings?.keys ?? 'edison'
+  const archiveKey = hintFor(keySet, props.settings?.keyChanges[keySet], 'sendArchive')
   const signatures = props.settings?.signatures ?? []
   // The one chosen for this message, or the one its From address has.
   const signedWith = !props.settings ? null : signature !== undefined ? signatures.find((s) => s.id === signature) ?? null : signatureFor(props.settings, account, from)
@@ -548,6 +560,10 @@ export function Composer(props: {
       onKeyDown={(e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); void send() }
         else if (e.key === 'Escape') { e.preventDefault(); void closeUp() }
+        else if (archivable && (e.ctrlKey || e.metaKey || e.altKey) && keysFor(keySet, props.settings?.keyChanges[keySet])[keyName(e)] === 'sendArchive') {
+          e.preventDefault()
+          void send(undefined, true)
+        }
       }}>
       <header>
         <h2>{subject || (quote?.kind === 'reply' ? 'Reply' : 'New message')}</h2>
@@ -608,6 +624,7 @@ export function Composer(props: {
       <FormatBar editor={editor} changed={soon} />
       <footer>
         <button type="button" className="send" disabled={busy} onClick={() => void send()}><SendHorizontal size={18} aria-hidden="true" /> Send</button>
+        {archivable && <IconButton icon={Archive} label="Send & Archive" hint={archiveKey} click={() => { if (!busy) void send(undefined, true) }} />}
         <div className="anchor">
           <IconButton icon={Clock} label="Send later" click={() => setLater(!later)} />
           {later && <TimeMenu title="Send" up pick={(at) => void send(at)} close={() => setLater(false)} />}

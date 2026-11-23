@@ -645,6 +645,7 @@ function register(service: MailService, avatars: Avatars): void {
   handle('draftPicture', (id: unknown, file: unknown) => service.draftPicture(number(id), text(file, 64)))
   handle('removeFile', (id: unknown, file: unknown) => service.removeFile(number(id), text(file, 64)))
   handle('send', (id: unknown, at: unknown) => service.send(number(id), at === undefined ? undefined : number(at)))
+  handle('sendAndArchive', (id: unknown) => service.sendAndArchive(number(id)))
   handle('unsend', (id: unknown) => service.unsend(number(id)))
   handle('saveProfile', (patch: unknown) => {
     const clean = profile(patch)

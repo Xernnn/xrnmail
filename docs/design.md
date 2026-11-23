@@ -159,6 +159,11 @@ as Edison keeps it. `remote-drafts.ts` says what goes up and what's made of what
   goes for good, with its copy, once Undo has had its time, or when the app closes; until then
   nothing about it changes on the server, and one that was waiting to go waits as a draft, so it
   can't leave meanwhile. Undo gives it back as it was. A crash meanwhile keeps it.
+- **Send & Archive** is Send, and an archive of the thread the draft was started from (`about`),
+  done here at once. The archive waits for whichever of the two Undo times is longer before the
+  server hears of it, so Undo of the send, which also undoes the archive, still has it to call back.
+  It's offered while that thread is in the inbox (`archivable`, worked out each time a draft is
+  handed to the page, never kept).
 - **Sending** takes the copy off at once, not when the message leaves: a message on its way isn't a
   draft, and one still in Drafts could be sent from the phone as well while this laptop waits out Undo
   or a later time. Undo makes it a draft again, and it goes up afresh. What's in the undo window or
@@ -718,7 +723,9 @@ conflict is settled by asking and then saving the change, with nothing else to k
 of the app's menu (Ctrl+N, Ctrl+F, F5 and the rest) and what a page needs for itself (Tab, Enter,
 Ctrl+Enter) can't be taken, and saved changes are cleaned of them, of unknown actions and of a key
 named twice. The Shortcuts page listens for the next press itself, ahead of the dialog, so Esc calls
-off the choosing instead of closing Settings.
+off the choosing instead of closing Settings. Send & Archive is pressed inside the composer, so its
+key has to be held with Ctrl or Alt (`WRITING`), or it would send as it was typed; no set gives it
+one, since none of their apps has it.
 
 Subscriptions say how much of each sender's mail is read (`Subscription.read` over `count`, from the
 `\Seen` flag, so read anywhere) and how much came in the last week, counted in the same query that

@@ -69,6 +69,7 @@ const api: MailApi = {
   draftPicture: (id, file) => call('draftPicture', id, file),
   removeFile: (id, file) => call('removeFile', id, file),
   send: (id, at) => call('send', id, at),
+  sendAndArchive: (id) => call('sendAndArchive', id),
   unsend: (id) => call('unsend', id),
   saveProfile: (patch) => call('saveProfile', patch),
   openInGmail: (email, thread) => call('openInGmail', email, thread),

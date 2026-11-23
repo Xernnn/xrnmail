@@ -444,6 +444,10 @@ export interface Draft {
   files: DraftFile[]
   /** The signature under it: a signature's id, '' for none, or, not chosen, its From address's. */
   signature?: string
+  /** The thread a reply or forward was started from. */
+  about?: ThreadRef
+  /** Not kept: that thread is in the inbox now, so Send & Archive is offered. */
+  archivable?: boolean
   /** An answer to a calendar invitation, sent as one. */
   ical?: string
   state: DraftState
@@ -606,6 +610,9 @@ export interface MailApi {
   removeFile(id: number, file: string): Promise<Draft>
   /** With [at], waits until then; otherwise it waits out the undo time. Returns when it will leave. */
   send(id: number, at?: number): Promise<number>
+  /** Sends as `send` does, and archives the thread it answers or passes on, for as long as Undo of
+   *  the send lasts before the server hears: [undo] undoes the archiving. */
+  sendAndArchive(id: number): Promise<{ when: number; undo: number }>
   /** Calls a queued message back. */
   unsend(id: number): Promise<void>
   saveProfile(patch: ProfilePatch): Promise<void>

@@ -547,12 +547,14 @@ export function App(): ReactNode {
     }
   }, [drafts])
 
-  /** "Sending", with Undo bringing the message back to the composer. */
-  const announce = (id: number, when: number, scheduled: boolean): void => {
+  /** "Sending", with Undo bringing the message back to the composer, and the thread it archived, if
+   *  it was sent and archived, back to where it was. */
+  const announce = (id: number, when: number, scheduled: boolean, archived = 0): void => {
     const undo = async (): Promise<void> => {
       going.current.delete(id)
       try {
         await window.mail.unsend(id)
+        if (archived) await window.mail.undo(archived)
         const draft = (await window.mail.drafts()).find((d) => d.id === id)
         if (draft) await showComposer(draft)
       } catch (e) {
@@ -582,9 +584,11 @@ export function App(): ReactNode {
     })
   }
 
-  const sent = (id: number, when: number, scheduled: boolean): void => {
+  const sent = (id: number, when: number, scheduled: boolean, archived?: { about: ThreadRef; undo: number }): void => {
     setComposing(null)
-    announce(id, when, scheduled)
+    // The thread it archived leaves the list, as archiving it from there would.
+    if (archived && !SOLO) leave([archived.about])
+    announce(id, when, scheduled, archived?.undo)
   }
 
   const reply = useCallback((kind: ReplyKind, message: number) => void compose({ kind, message }), [compose])
@@ -917,7 +921,8 @@ export function App(): ReactNode {
         selectAll: () => void selectAll(),
         // As the toast's own Undo: the toast goes with it, and a window of its own waits for it.
         undo: () => { if (toast?.undo) undoNow(toast.undo) },
-        help: () => setHelp(true)
+        help: () => setHelp(true),
+        sendArchive: () => undefined // the composer's own
       }
       const set = profile?.keys ?? 'edison'
       const command = keysFor(set, profile?.keyChanges[set])[keyName(event)]

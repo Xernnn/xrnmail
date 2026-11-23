@@ -1005,9 +1005,13 @@ export class MailService {
    *  change already sent can't be called back, so an Undo offered for one that went at once would do
    *  nothing. It survives a restart, and waits out being offline. */
   act(targets: ThreadRef[], action: MailAction, undoable = false): number {
+    return this.actAfter(targets, action, takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0)
+  }
+
+  /** The same, waiting [wait] before the server hears of it. */
+  private actAfter(targets: ThreadRef[], action: MailAction, wait: number): number {
     const now = this.deps.now()
     const group = this.nextGroup()
-    const wait = takesAway(action) || undoable ? this.settings().undoActionSeconds * 1000 + UNDO_GRACE_MS : 0
     for (const email of new Set(targets.map((t) => t.account))) {
       const mine = targets.filter((t) => t.account === email)
       const { gmail } = this.config(email)
@@ -1431,7 +1435,12 @@ export class MailService {
   }
 
   drafts(): Draft[] {
-    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id))
+    return this.store.drafts().filter((draft) => !this.discarding.has(draft.id)).map((draft) => this.offered(draft))
+  }
+
+  /** What the composer is to offer: Send & Archive, while the thread it answers is in the inbox. */
+  private offered(draft: Draft): Draft {
+    return { ...draft, archivable: draft.about !== undefined && this.store.inInbox(draft.about, this.deps.now()) }
   }
 
   async startDraft(start: DraftStart): Promise<Draft> {
@@ -1450,17 +1459,19 @@ export class MailService {
     }
     const message = this.store.message(start.message, this.deps.now())
     if (!message) throw new Error("That message isn't here any more.")
+    const about = { account: message.account, thread: message.thread }
     if (start.kind === 'forward') {
       const id = this.store.addDraft({
-        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward')
+        ...base, account: message.account, subject: forwardSubject(message.subject), quote: quoteOf(message, 'forward'), about
       })
       // A cut message may have files its stored list doesn't know about.
       if (message.attachments.length > 0 || message.truncated) await this.carryAttachments(id, message.id)
-      return this.draftOrThrow(id)
+      return this.offered(this.draftOrThrow(id))
     }
     const own = this.ownAddresses(message.account)
-    return this.draftOrThrow(this.store.addDraft({
+    return this.offered(this.draftOrThrow(this.store.addDraft({
       ...base,
+      about,
       account: message.account,
       // Answered from whichever of your addresses it came to.
       from: [...message.to, ...message.cc].map((a) => a.address.toLowerCase()).find((a) => own.includes(a)) ?? '',
@@ -1470,7 +1481,7 @@ export class MailService {
       quote: this.settings().quoteReplies ? quoteOf(message, 'reply') : null,
       inReplyTo: message.messageId,
       references: `${message.references} ${message.messageId}`.trim()
-    }))
+    })))
   }
 
   private draftOrThrow(id: number): Draft {
@@ -1845,6 +1856,16 @@ export class MailService {
     this.dirtySince.delete(id)
     this.deps.changed()
     return sendAt
+  }
+
+  /** Sent as Send sends it, and the thread it's about archived at once here. The server hears of the
+   *  archiving only once Undo of the send has run out too, so Undo can bring the thread back. */
+  sendAndArchive(id: number): { when: number; undo: number } {
+    const { about } = this.draftOrThrow(id)
+    const when = this.send(id)
+    if (!about) return { when, undo: 0 }
+    const { undoSeconds, undoActionSeconds } = this.settings()
+    return { when, undo: this.actAfter([about], { kind: 'archive' }, Math.max(undoSeconds, undoActionSeconds) * 1000 + UNDO_GRACE_MS) }
   }
 
   /** Back to being a draft, it goes up again as one. */

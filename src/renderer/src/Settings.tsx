@@ -130,7 +130,7 @@ function Shortcuts(props: { set: KeySet; changes: KeyChanges; change: Change }):
       event.stopPropagation()
       if (event.key === 'Escape') return setChoosing(null)
       const pressed = keyName(event)
-      const problem = unbindable(pressed, event.key)
+      const problem = unbindable(pressed, event.key, choosing.command)
       if (problem) return setChoosing({ command: choosing.command, problem })
       const taken = holder(set, changes, pressed, choosing.command)
       if (taken) return setChoosing({ command: choosing.command, key: pressed, taken })

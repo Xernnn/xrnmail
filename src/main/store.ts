@@ -1128,6 +1128,14 @@ export class Store {
     this.db.exec('DELETE FROM recent')
   }
 
+  /** Whether any of a thread's mail is in the inbox, for anyone to see. */
+  inInbox(ref: ThreadRef, now: number): boolean {
+    return this.one(
+      'SELECT 1 AS yes FROM messages WHERE account = ? AND thread = ? AND in_inbox = 1 AND hidden = 0 AND bin = 0 AND release_at <= ? LIMIT 1',
+      ref.account, ref.thread, now
+    ) !== undefined
+  }
+
   /** How many snoozed threads came back in (after, upto]. */
   wokenBetween(after: number, upto: number): number {
     return Number(this.one('SELECT COUNT(*) AS n FROM snoozes WHERE until > ? AND until <= ?', after, upto)?.['n'] ?? 0)
@@ -1221,7 +1229,7 @@ export class Store {
   }
 
   saveDraft(draft: Draft): void {
-    const { id, account, state, sendAt, error, updated, ...data } = draft
+    const { id, account, state, sendAt, error, updated, archivable: _now, ...data } = draft
     this.db
       .prepare('UPDATE drafts SET account = ?, data = ?, updated = ?, state = ?, send_at = ?, error = ? WHERE id = ?')
       .run(account, JSON.stringify(data), updated, state, sendAt, error, id)

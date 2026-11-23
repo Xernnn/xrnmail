@@ -59,6 +59,10 @@ kept on the laptop.
   has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
+- **Send & Archive:** beside Send in a reply or forward to a thread in the inbox, it sends as Send
+  does and archives the thread as it goes; Undo of the send brings the thread back too. No set of
+  keys has one, as none of their apps does, but Settings, Shortcuts can give it a key held with Ctrl
+  or Alt.
 - **Sorting mail:** archive, delete, spam, flag, labels or folders, read and unread, all kept in step
   with the server, one thread or many at once, with Undo (for 5 seconds, or up to 30 as Settings,
   General say: what takes mail away, and anything else offered with Undo, waits that long here before
@@ -247,7 +251,8 @@ archives, `#` deletes, `z` undoes). Settings, Shortcuts has the other sets that 
 (xrnmail's old keys alone, where Delete deletes), Apple Mail's, Outlook's and Inbox's, each from its
 maker's list with Command read as Ctrl. Any action's key can be changed there: press Change, then the
 new key. A key another action has is offered to take over, and a change can go back to the set's own.
-Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set.
+Ctrl+N, Ctrl+F, Ctrl+Enter and F5 are the menu's and the composer's in every set. Send & Archive has
+no key in any set; one given to it has to be held with Ctrl or Alt, since it's pressed while writing.
 
 To have mail links open here, set it as your mail app after installing:
 `xdg-mime default xrnmail.desktop x-scheme-handler/mailto`.

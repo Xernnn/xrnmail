@@ -1477,6 +1477,45 @@ describe('sending', () => {
     expect(raw.replace(/\r?\n/g, '')).toContain(lines)
   })
 
+  it('Send & Archive sends as Send does and archives the thread, which Undo of the send brings back', async () => {
+    gmail.add(rawMail({ subject: 'Lunch', from: 'Ada <ada@example.com>' }), { arrived: past(30) })
+    await service.syncAll()
+    const thread = ref('Lunch')
+    const [message] = store.thread(ME, thread.thread, clock)
+    const inbox = (): boolean => gmail.mails.find((m) => m.raw.toString().includes('Subject: Lunch'))?.labels.includes('\\Inbox') ?? false
+    const reply = async (): Promise<Draft> => {
+      const draft = await service.startDraft({ kind: 'reply', message: message?.id ?? 0 })
+      service.saveDraft(draft.id, { ...draft, html: 'Yes', text: 'Yes' })
+      return draft
+    }
+    const first = await reply()
+    expect(first.archivable).toBe(true)
+    expect(service.drafts().find((d) => d.id === first.id)?.archivable).toBe(true)
+    // Undone, nothing went and the thread is back, here and on the server, which never heard of it.
+    const undone = service.sendAndArchive(first.id)
+    expect(ids()).toEqual([])
+    service.unsend(first.id)
+    service.undo(undone.undo)
+    expect(ids()).toEqual(['Lunch'])
+    await later(30_000)
+    expect(smtp.sent).toEqual([])
+    expect(inbox()).toBe(true)
+    // Left alone, it goes when Undo of the send runs out, and the archiving only once that has.
+    service.discardDraft(first.id)
+    const second = await reply()
+    expect(service.sendAndArchive(second.id).when).toBe(clock + 10_000)
+    expect(ids()).toEqual([])
+    await later(6_000)
+    expect(inbox()).toBe(true) // archiving alone would have gone by now
+    await later(5_000)
+    expect(smtp.sent).toHaveLength(1)
+    await later(1_000)
+    expect(inbox()).toBe(false)
+    // Its own reply left in Sent, it's offered only for a thread in the inbox.
+    expect((await service.startDraft({ kind: 'forward', message: message?.id ?? 0 })).archivable).toBe(false)
+    expect((await service.startDraft({ kind: 'new' })).archivable).toBeUndefined()
+  })
+
   it('removing an account takes its drafts and identity', async () => {
     const draft = await write()
     service.saveProfile({ identities: { [ME]: { name: 'Me', signature: '', aliases: [], color: '', notify: true } } })
