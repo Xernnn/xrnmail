@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { plainName } from '@shared/names'
 import { hintFor, keyName, keysFor } from '@shared/keys'
+import { PICTURE_SIZES, sizeOf, styleFor, type PictureSize } from '@shared/picture-size'
 import { chipLabel, readRecipient, splitRecipients } from '@shared/recipients'
 import { INLINE_PICTURES, signatureFor, type AccountView, type Address, type Draft, type DraftEdit, type DraftFile, type Quote, type Settings, type Template, type ThreadRef } from '@shared/types'
 import { Avatar } from './Common'
@@ -57,6 +58,10 @@ export function textOf(editor: HTMLElement | null): string {
 /** A picture written into a signature, which is all a signature may show. */
 const DATA_PICTURE = /^data:image\/(?:png|jpeg|gif|webp);base64,/i
 export const signatureMarkup = (html: string): string => ownMarkup(html, (src) => (DATA_PICTURE.test(src) ? src : null))
+
+/** A picture in the words, and the box it takes in the scrolling part of the composer. */
+interface Placed { img: HTMLImageElement; top: number; left: number; width: number; height: number }
+const placed = (img: HTMLImageElement): Placed => ({ img, top: img.offsetTop, left: img.offsetLeft, width: img.offsetWidth, height: img.offsetHeight })
 
 export const asDataUrl = (blob: Blob): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader()
@@ -268,6 +273,8 @@ export function Composer(props: {
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [saved, setSaved] = useState(false)
+  /** The picture in the words that was clicked, where it sits, and its tools beside it. */
+  const [picture, setPicture] = useState<Placed | null>(null)
   // Sanitised on the way in, because this copy is what gets sent. It's never put in this page: only
   // a frame shows it, which is why the editor below holds nothing but what's typed here.
   const [quote] = useState(() => cleanQuote(draft.quote))
@@ -478,6 +485,22 @@ export function Composer(props: {
     soon()
   }
 
+  /** A picture in the words made [size], as it will be sent. */
+  const resizePicture = (size: PictureSize): void => {
+    if (!picture) return
+    const style = styleFor(size)
+    if (style) picture.img.setAttribute('style', style)
+    else picture.img.removeAttribute('style')
+    setPicture(placed(picture.img))
+    soon()
+  }
+
+  const removePicture = (): void => {
+    picture?.img.remove()
+    setPicture(null)
+    soon()
+  }
+
   /** Pictures of the kinds mail shows go in the words, where [at] says; anything else is attached. */
   const addFiles = async (list: File[], at: Range | null = null): Promise<void> => {
     try {
@@ -601,8 +624,20 @@ export function Composer(props: {
       </label>
       <div className="compose-scroll">
         <div ref={editor} className="editor" role="textbox" aria-multiline="true" aria-label="Message" contentEditable
-          suppressContentEditableWarning onInput={soon} onPaste={paste} onDrop={dropText}
+          suppressContentEditableWarning onInput={() => { setPicture(null); soon() }} onPaste={paste} onDrop={dropText}
+          onClick={(e) => setPicture(e.target instanceof HTMLImageElement ? placed(e.target) : null)} onKeyDown={() => setPicture(null)}
           onDragStart={() => (ownDrag.current = true)} onDragEnd={() => (ownDrag.current = false)} />
+        {picture && (
+          <>
+            <div className="picture-frame" aria-hidden="true" style={{ top: picture.top, left: picture.left, width: picture.width, height: picture.height }} />
+            <div className="picture-tools" role="toolbar" aria-label="Picture" style={{ top: picture.top + 6, left: picture.left + 6 }} onMouseDown={(e) => e.preventDefault()}>
+              {PICTURE_SIZES.map(([size, label]) => (
+                <button key={size} type="button" aria-pressed={sizeOf(picture.img.getAttribute('style')) === size} onClick={() => resizePicture(size)}>{label}</button>
+              ))}
+              <button type="button" className="icon small" aria-label="Remove" title="Remove" onClick={removePicture}><Trash2 size={14} aria-hidden="true" /></button>
+            </div>
+          </>
+        )}
         {signedWith && (signedWith.text.trim() || /<img\b/i.test(signedWith.html)) && <div className="signature muted" dangerouslySetInnerHTML={{ __html: `-- <br>${signatureMarkup(signedWith.html)}` }} />}
         {quote && (
           <div className="quote">
