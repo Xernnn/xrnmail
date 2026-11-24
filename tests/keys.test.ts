@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanAllChanges, cleanChanges, hintFor, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
+import { cleanAllChanges, cleanChanges, follow, hintFor, holder, KEY_SETS, keyList, KEYS, keyName, keysFor, keysOf, PAIR_MS, rebound, RESERVED, reset, spell, unbindable } from '../src/shared/keys'
 
 describe('keys', () => {
   it('names a press the way the tables do', () => {
@@ -150,5 +150,56 @@ describe('Send & Archive', () => {
     expect(keyList('gmail', changes)).toContainEqual(['Ctrl+Shift+Enter', 'Send & Archive'])
     // A key that types, saved for it somehow, is let go of: in the composer it would send.
     expect(cleanChanges({ sendArchive: 'e' })).toEqual({})
+  })
+
+  describe('Gmail\'s g jumps', () => {
+    const jumps = { 'g i': 'goInbox', 'g s': 'goFlagged', 'g b': 'goSnoozed', 'g t': 'goSent', 'g d': 'goDrafts', 'g a': 'goAll', 'g l': 'goLabel' }
+
+    it('are in the Gmail set and the Edison one that shares its keys, and in no set whose app had none', () => {
+      expect(KEYS.gmail).toMatchObject(jumps)
+      expect(KEYS.edison).toMatchObject(jumps)
+      for (const set of ['apple', 'outlook', 'inbox'] as const) expect(Object.keys(KEYS[set]).filter((k) => k.includes(' ')), set).toEqual([])
+      // g on its own is nothing, so it can only start a pair.
+      for (const set of ['gmail', 'edison'] as const) expect(KEYS[set]['g']).toBeUndefined()
+    })
+
+    it('waits after g for the second key, and goes there if it comes in time', () => {
+      const table = keysFor('gmail')
+      const first = follow(table, 'g', null, 1000)
+      expect(first).toEqual({ waiting: { key: 'g', at: 1000 } })
+      expect(follow(table, 'i', first.waiting, 1000 + PAIR_MS)).toEqual({ command: 'goInbox', waiting: null })
+      expect(follow(table, 't', first.waiting, 1200).command).toBe('goSent')
+    })
+
+    it('reads the second key on its own once the wait is over, or when it finishes no pair', () => {
+      const table = keysFor('gmail')
+      const waiting = { key: 'g', at: 1000 }
+      expect(follow(table, 'i', waiting, 1001 + PAIR_MS)).toEqual({ command: undefined, waiting: null })
+      expect(follow(table, 's', waiting, 1001 + PAIR_MS).command).toBe('flag')
+      expect(follow(table, 'e', waiting, 1100)).toEqual({ command: 'archive', waiting: null })
+      expect(follow(table, 'e', null, 1100)).toEqual({ command: 'archive', waiting: null })
+    })
+
+    it('lists each pair for reading, the two keys one after the other', () => {
+      expect(keyList('gmail').find(([, what]) => what === 'Go to Inbox')?.[0]).toBe('g i')
+      expect(keyList('edison').find(([, what]) => what === 'Go to label')?.[0]).toBe('g l')
+      expect(keyList('apple').find(([, what]) => what === 'Go to Inbox')).toBeUndefined()
+    })
+
+    it('can each be set to a key of their own, leaving the other pairs', () => {
+      const changes = rebound({}, 'goInbox', 'i')
+      const table = keysFor('gmail', changes)
+      expect(table['i']).toBe('goInbox')
+      expect(table['g i']).toBeUndefined()
+      expect(table['g t']).toBe('goSent')
+      expect(follow(table, 'i', null, 0).command).toBe('goInbox')
+    })
+
+    it('give up g to a command set to it, as a press can\'t both be a key and wait for the next', () => {
+      expect(holder('gmail', {}, 'g', 'reply')).toBe('goInbox')
+      const table = keysFor('gmail', rebound({}, 'reply', 'g'))
+      expect(Object.keys(table).filter((k) => k.startsWith('g '))).toEqual([])
+      expect(follow(table, 'g', null, 0)).toEqual({ command: 'reply', waiting: null })
+    })
   })
 })

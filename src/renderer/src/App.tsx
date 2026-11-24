@@ -14,7 +14,7 @@ import { BatchStrip, DraftRow, NO_SWIPES, Row, SenderCard, Subscriptions, type S
 import { FolderMenu, IconButton, Popover, setLaterTimes, TimeMenu } from './Menus'
 import { CantShow, Reader, type Panel, type ReplyKind } from './Reader'
 import { SettingsDialog, type Tab } from './Settings'
-import { hintFor, keyList, keyName, keysFor, type KeyChanges, type KeyCommand, type KeySet } from '@shared/keys'
+import { follow, hintFor, keyList, keyName, keysFor, MODIFIERS, type KeyChanges, type KeyCommand, type KeySet, type Waiting } from '@shared/keys'
 import { cleanSidebar } from '@shared/sidebar'
 import { soloFrom } from '@shared/solo'
 import { COMPLETIONS } from '@shared/query'
@@ -173,6 +173,8 @@ export function App(): ReactNode {
   const going = useRef(new Set<number>())
   /** The open composer's draft, and its Close. */
   const closing = useRef<{ id: number; close(): Promise<void> } | null>(null)
+  /** The first key of a pair ("g" of "g i"), while the second is waited for. */
+  const waiting = useRef<Waiting | null>(null)
 
   const bump = useCallback(() => setVersion((v) => v + 1), [])
   /** One composer at a time. The one open is closed first, as its own Close would close it, so what's
@@ -889,6 +891,16 @@ export function App(): ReactNode {
     ]
   }
 
+  const go = (target: View): void => {
+    setView(target)
+    setSearch('')
+    setOpen(null)
+    setPicked(new Set())
+    setLimit(PAGE)
+    setRows(null)
+    setRelisted((n) => n + 1)
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const element = event.target as HTMLElement
@@ -899,6 +911,7 @@ export function App(): ReactNode {
       // beside it; only what's pressed inside it is its own. A composer of its own is all its window has.
       const writing = Boolean(element.closest?.('.composer')) || SOLO?.kind === 'draft'
       if (typing || settings || help || writing || question || scheduling || newFolder) {
+        waiting.current = null
         if (event.key === 'Escape' && event.target === searchBox.current) {
           setSearch('')
           searchBox.current?.blur()
@@ -956,11 +969,26 @@ export function App(): ReactNode {
         // As the toast's own Undo: the toast goes with it, and a window of its own waits for it.
         undo: () => { if (toast?.undo) undoNow(toast.undo) },
         help: () => setHelp(true),
+        goInbox: () => go({ kind: 'inbox' }),
+        goFlagged: () => go({ kind: 'starred' }),
+        goSnoozed: () => go({ kind: 'snoozed' }),
+        goSent: () => go({ kind: 'sent' }),
+        goDrafts: () => go({ kind: 'drafts' }),
+        goAll: () => go({ kind: 'all' }),
+        // Gmail asks for the label's name: here the search box does, offering each label after label:.
+        goLabel: () => {
+          setSearch('label:')
+          focusSearch()
+        },
         sendArchive: () => undefined // the composer's own
       }
+      // Shift held for the second key of a pair is only half of that press.
+      if (MODIFIERS.has(event.key)) return
       const set = profile?.keys ?? 'edison'
-      const command = keysFor(set, profile?.keyChanges[set])[keyName(event)]
-      const handler = command && commands[command]
+      const pressed = follow(keysFor(set, profile?.keyChanges[set]), keyName(event), waiting.current, event.timeStamp)
+      waiting.current = pressed.waiting
+      if (pressed.waiting) return event.preventDefault()
+      const handler = pressed.command && commands[pressed.command]
       if (!handler) return
       event.preventDefault()
       handler()
@@ -1001,16 +1029,6 @@ export function App(): ReactNode {
   if (accounts === null) return null
   if (accounts.length === 0) return SOLO ? null : <Welcome />
 
-  const go = (target: View): void => {
-    setView(target)
-    setSearch('')
-    setOpen(null)
-    setPicked(new Set())
-    setLimit(PAGE)
-    setRows(null)
-    setRelisted((n) => n + 1)
-  }
-
   const refs = targets()
   const many = accounts.length > 1
   const showDrafts = active.kind === 'drafts'
@@ -1043,7 +1061,13 @@ export function App(): ReactNode {
   const showRecent = searchFocus && !searching && searches.length > 0
   // The search's operators, offered as the last word typed could finish: is: offers is:unread and the rest.
   const typing = /(?:^|\s)-?(\S{2,})$/.exec(search)?.[1] ?? ''
-  const completions = searchFocus && typing ? COMPLETIONS.filter((op) => op.toLowerCase().startsWith(typing.toLowerCase()) && op.length > typing.length) : []
+  // After label:, the labels and folders there are, as g l asks for one by name.
+  const labelOps = /^label:/i.test(typing)
+    ? [...new Set(accounts.flatMap((a) => labelsOf(a, overview)))].map((name) => `label:${/\s/.test(name) ? `"${name}"` : name}`)
+    : []
+  const completions = searchFocus && typing
+    ? [...COMPLETIONS, ...labelOps].filter((op) => op.toLowerCase().startsWith(typing.toLowerCase()) && op.length > typing.length).slice(0, 12)
+    : []
   const showCompletions = completions.length > 0
   const complete = (op: string): void => {
     setSearch(`${search.slice(0, search.length - typing.length)}${op}${op.endsWith(':') ? '' : ' '}`)
