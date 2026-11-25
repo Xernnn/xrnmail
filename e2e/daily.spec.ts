@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { rawMail } from '../tests/fake-gmail'
 import { jar, pdf, png } from '../tests/files'
 import { later, launch, ME, signIn, type Running } from './app'
+import { png as photo } from './pictures'
 
 const LONG = { timeout: 15_000 }
 const earlier = (hours: number): Date => new Date(Date.now() - hours * 3_600_000)
@@ -2595,6 +2596,64 @@ test('a picture pasted or dropped goes into the words, stays there in Drafts, an
   expect(raw).toContain('style="max-width:100%"') // as wide as the page it's read on, at most
   expect(raw).toContain('filename=notes.txt')
   expect(raw).not.toContain('data:image')
+})
+
+test('a picture in the words is made small, fit or its own size, or taken out, and is sent at that size', async () => {
+  run = await launch()
+  const { page, smtp } = run
+  await signIn(run)
+  await undoOff(page)
+  await page.getByRole('button', { name: 'Compose' }).click()
+  let box = composer(page)
+  await box.getByLabel('To').fill('ada@example.com')
+  await box.getByLabel('Subject').fill('Sizes')
+  const editor = box.getByLabel('Message')
+  await editor.click()
+  await page.keyboard.type('Two views ')
+  const paste = (name: string, size: number): Promise<void> => page.evaluate(([picture, name]) => {
+    const data = new DataTransfer()
+    data.items.add(new File([Uint8Array.from(atob(picture), (c) => c.charCodeAt(0))], name, { type: 'image/png' }))
+    document.querySelector('.composer .editor')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, [photo(size, [40, 90, 160]).toString('base64'), name] as const)
+  const pictures = editor.locator('img')
+  await paste('harbour.png', 900)
+  await expect(pictures).toHaveCount(1)
+  await paste('ferry.png', 300)
+  await expect(pictures).toHaveCount(2)
+  const width = async (i: number): Promise<number> => (await pictures.nth(i).boundingBox())?.width ?? 0
+  const fitted = await width(0)
+  expect(fitted).toBeLessThan(900) // as wide as the composer, at most
+  const tools = box.getByRole('toolbar', { name: 'Picture' })
+  await expect(tools).toHaveCount(0)
+  await pictures.nth(0).click()
+  await expect(tools.getByRole('button', { name: 'Best fit' })).toHaveAttribute('aria-pressed', 'true')
+  await tools.getByRole('button', { name: 'Small' }).click()
+  await expect.poll(() => width(0)).toBe(200)
+  await expect(tools.getByRole('button', { name: 'Small' })).toHaveAttribute('aria-pressed', 'true')
+  await tools.getByRole('button', { name: 'Original size' }).click()
+  await expect.poll(() => width(0)).toBe(900)
+  await tools.getByRole('button', { name: 'Small' }).click()
+  // Typing puts the tools away.
+  await page.keyboard.type('!')
+  await expect(tools).toHaveCount(0)
+  await pictures.nth(1).click()
+  await tools.getByRole('button', { name: 'Remove' }).click()
+  await expect(pictures).toHaveCount(1)
+  await expect(tools).toHaveCount(0)
+  // Kept so in Drafts, and opened again at the size chosen.
+  await box.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: /^Drafts/ }).click()
+  await page.getByText('Sizes').click()
+  box = composer(page)
+  await expect(box.getByLabel('Message').locator('img')).toHaveAttribute('style', 'max-width:200px')
+  await box.getByLabel('Message').locator('img').click()
+  await expect(box.getByRole('toolbar', { name: 'Picture' }).getByRole('button', { name: 'Small' })).toHaveAttribute('aria-pressed', 'true')
+  await box.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => smtp.sent.length, LONG).toBe(1)
+  const raw = (smtp.sent[0]?.raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=')
+  expect(raw).toMatch(/<img src="cid:[^"]+" alt="harbour.png" style="max-width:200px">/)
+  expect(raw).not.toContain('ferry.png')
+  expect([...raw.matchAll(/Content-ID: </g)]).toHaveLength(1)
 })
 
 // The editor is in the app's own page: whatever a draft says, nothing in it is fetched from anywhere.

@@ -163,6 +163,48 @@ test('search finds Vietnamese without its marks', async () => {
   await expect(page.getByText('Something else')).toHaveCount(0)
 })
 
+test('g then a letter jumps as in Gmail, only while the second key comes soon, and g l asks for a label', async () => {
+  run = await launch()
+  const { page, gmail } = run
+  gmail.add(rawMail({ subject: 'Lunch on Friday' }), { arrived: earlier(2) })
+  gmail.add(rawMail({ subject: 'Any news?', from: `Me <${ME}>`, to: 'ada@example.com' }), { arrived: earlier(5), labels: ['\\Sent'], flags: ['\\Seen'] })
+  gmail.add(rawMail({ subject: 'Ferry tickets' }), { arrived: earlier(7), labels: ['Trips'], flags: ['\\Seen'] })
+  await signIn(run)
+  const title = page.locator('.view-title')
+  const list = page.locator('.threads')
+  const box = page.getByRole('combobox', { name: 'Search' })
+  await expect(list.getByText('Lunch on Friday')).toBeVisible()
+  await page.keyboard.press('g')
+  await page.keyboard.press('t')
+  await expect(title).toHaveText('Sent')
+  await expect(list.getByText('Any news?')).toBeVisible()
+  await page.keyboard.press('g')
+  await page.keyboard.press('a')
+  await expect(title).toHaveText('All Mail')
+  await page.keyboard.press('g')
+  await page.keyboard.press('i')
+  await expect(title).toHaveText('Inbox')
+  // Too late for the pair: t on its own is nothing, and the inbox stays.
+  await page.keyboard.press('g')
+  await pause(1700)
+  await page.keyboard.press('t')
+  await pause(200)
+  await expect(title).toHaveText('Inbox')
+  // Typed in the search box, g and t are only letters.
+  await box.fill('')
+  await box.pressSequentially('gt')
+  await expect(box).toHaveValue('gt')
+  await box.fill('')
+  await box.blur()
+  await page.keyboard.press('g')
+  await page.keyboard.press('l')
+  await expect(box).toBeFocused()
+  await expect(box).toHaveValue('label:')
+  await page.getByRole('option', { name: 'label:Trips' }).click()
+  await expect(list.getByText('Ferry tickets')).toBeVisible()
+  await expect(list.getByText('Lunch on Friday')).toHaveCount(0)
+})
+
 test('mail from before what is kept is found on the server, below what is, and opens like any other', async () => {
   run = await launch()
   const { page, gmail } = run

@@ -7,12 +7,16 @@ export type KeyCommand =
   | 'compose' | 'search' | 'next' | 'previous' | 'close' | 'reply' | 'replyAll' | 'forward' | 'archive' | 'trash' | 'removeFromView'
   | 'flag' | 'pin' | 'labels' | 'read' | 'unread' | 'toggleRead' | 'spam' | 'snooze' | 'select' | 'selectAll' | 'undo' | 'sync' | 'help'
   | 'find'
+  /** Gmail's jumps, each two keys pressed one after the other: g, then the place. */
+  | 'goInbox' | 'goFlagged' | 'goSnoozed' | 'goSent' | 'goDrafts' | 'goAll' | 'goLabel'
   /** In the composer, so only a key held with Ctrl or Alt: none of the sets' own apps has one. */
   | 'sendArchive'
 
 /** Every command, in the order Settings and the list of keys show them, with what it does in words. */
 export const COMMANDS: [KeyCommand, string][] = [
   ['compose', 'New message'], ['search', 'Search'], ['find', 'Find in message'], ['next', 'Next thread'], ['previous', 'Previous thread'], ['close', 'Close'],
+  ['goInbox', 'Go to Inbox'], ['goFlagged', 'Go to Flagged'], ['goSnoozed', 'Go to Snoozed'], ['goSent', 'Go to Sent'], ['goDrafts', 'Go to Drafts'],
+  ['goAll', 'Go to All Mail'], ['goLabel', 'Go to label'],
   ['reply', 'Reply'], ['replyAll', 'Reply all'], ['forward', 'Forward'], ['archive', 'Archive'], ['removeFromView', 'Remove from view'],
   ['trash', 'Delete'], ['spam', 'Report spam'], ['flag', 'Flag'], ['pin', 'Pin'], ['labels', 'Labels or Move to'],
   ['read', 'Mark read'], ['unread', 'Mark unread'], ['toggleRead', 'Mark read or unread'], ['snooze', 'Snooze'],
@@ -36,7 +40,7 @@ export function keyName(event: Pressed): string {
 }
 
 /** Keys that are only half a press, which a key can't be set to. */
-const MODIFIERS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'OS', 'Dead', 'Unidentified', 'Process'])
+export const MODIFIERS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'OS', 'Dead', 'Unidentified', 'Process'])
 
 /** What the app's menu answers to, or a page needs for itself, whatever a set says. */
 export const RESERVED: Record<string, string> = {
@@ -65,7 +69,9 @@ const BASE: Record<string, KeyCommand> = { ArrowDown: 'next', ArrowUp: 'previous
 const SHARED: Record<string, KeyCommand> = {
   ...BASE, '/': 'search', j: 'next', k: 'previous',
   c: 'compose', r: 'reply', a: 'replyAll', f: 'forward', e: 'archive', '#': 'trash', '!': 'spam',
-  s: 'flag', U: 'unread', b: 'snooze', l: 'labels', x: 'select', 'Ctrl+A': 'selectAll', z: 'undo'
+  s: 'flag', U: 'unread', b: 'snooze', l: 'labels', x: 'select', 'Ctrl+A': 'selectAll', z: 'undo',
+  // Gmail's "g then …" jumps, to the places xrnmail has: Starred is Flagged here.
+  'g i': 'goInbox', 'g s': 'goFlagged', 'g b': 'goSnoozed', 'g t': 'goSent', 'g d': 'goDrafts', 'g a': 'goAll', 'g l': 'goLabel'
 }
 
 /**
@@ -127,7 +133,9 @@ export function keysFor(set: KeySet, changes: KeyChanges = {}): Record<string, K
   const table: Record<string, KeyCommand> = {}
   const taken = new Set(Object.values(changes).filter(Boolean))
   for (const [key, command] of Object.entries(KEYS[set] ?? KEYS.edison)) {
-    if (command in changes || taken.has(key)) continue
+    // Two keys pressed one after the other ("g i") are named with a space; a key changed to the first
+    // of them takes the pair with it, as a press can't both be a key and wait for the next one.
+    if (command in changes || taken.has(key) || taken.has(key.split(' ')[0] ?? key)) continue
     table[key] = command
   }
   for (const [command, key] of Object.entries(changes)) if (key) table[key] = command as KeyCommand
@@ -138,10 +146,26 @@ export function keysFor(set: KeySet, changes: KeyChanges = {}): Record<string, K
 export const keysOf = (set: KeySet, changes: KeyChanges, command: KeyCommand): string[] =>
   Object.entries(keysFor(set, changes)).filter(([, found]) => found === command).map(([key]) => key)
 
-/** Which command has [key] now, other than [command]. */
+/** Which command has [key] now, other than [command]: its own, or the first of a pair it starts. */
 export function holder(set: KeySet, changes: KeyChanges, key: string, command: KeyCommand): KeyCommand | null {
-  const found = keysFor(set, changes)[key]
+  const table = keysFor(set, changes)
+  const found = table[key] ?? Object.entries(table).find(([name, other]) => name.startsWith(`${key} `) && other !== command)?.[1]
   return found && found !== command ? found : null
+}
+
+/** How long the second key of a pair is waited for, as Gmail does. */
+export const PAIR_MS = 1500
+
+/** The first key of a pair, and when it was pressed. */
+export interface Waiting { key: string; at: number }
+
+/** What the press [name] at [at] means in [table], after [waiting]: a pair it finishes, the first key of
+ *  a pair to wait on, or its own command. A press that finishes nothing is read on its own. */
+export function follow(table: Record<string, KeyCommand>, name: string, waiting: Waiting | null, at: number): { command?: KeyCommand; waiting: Waiting | null } {
+  const pair = waiting && at - waiting.at <= PAIR_MS ? table[`${waiting.key} ${name}`] : undefined
+  if (pair) return { command: pair, waiting: null }
+  if (Object.keys(table).some((key) => key.startsWith(`${name} `))) return { waiting: { key: name, at } }
+  return { command: table[name], waiting: null }
 }
 
 /** [command] set to [key], or to no key. Another command that had the key loses it, and a change of
