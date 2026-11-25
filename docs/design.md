@@ -715,7 +715,7 @@ merged it (the base). Its outline, schema 1:
   "schema": 1,
   "settings": {"batch": {"live": true, "times": ["09:00", "13:00", "17:00"], "vip": [], "earlyPerDay": 1}, "…": "…"},
   "threads": {"alex@example.com\n1790000000000000001": {"snooze": {"until": 1790000000000, "at": 1789990000000}}},
-  "early": {"day": "2026-11-26", "used": 1, "releases": [1790001000000]}
+  "early": {"day": "2026-11-6", "used": 1, "releases": [1790001000000]}
 }
 ```
 
@@ -735,7 +735,8 @@ merged it (the base). Its outline, schema 1:
   `snooze` (`until`, `at` when it was set), `reminder` (`until`, `at`, `fired`), `pin` (when it was
   pinned). An entry with nothing left in it goes.
 - **`early`** is the day's Deliver now: how many were used and when each was, so the other device
-  lets in what was waiting at those moments too, and the day's count is one count.
+  lets in what was waiting at those moments too, and the day's count is one count. The day is
+  written as `dayKey` writes it here, unpadded (`2026-11-6`), as the laptop's own `early` already is.
 
 Merging is three-way, against the base, field by field: a field changed on one side takes that
 side's value; changed on both, the device merging takes its own. Lists of addresses merge as sets,
