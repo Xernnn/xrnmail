@@ -703,6 +703,48 @@ redirect, which would carry the password elsewhere. Only counts and times are se
 `batch` and `early` are things that happened, and appear on the hub's timeline. `state.*` feeds its
 card. A hub that's down changes nothing here.
 
+## Shared with the phone
+
+xrnmail on the phone (the `xrnmail-android` repo) reads each account itself, as the laptop does, so
+mail is never shared: what is shared is what the person chose. `server/xrnmail-sync.py` keeps one
+document per person on the home server, and each device keeps a copy of the document as it last
+merged it (the base). Its outline, schema 1:
+
+```json
+{
+  "schema": 1,
+  "settings": {"batch": {"live": true, "times": ["09:00", "13:00", "17:00"], "vip": [], "earlyPerDay": 1}, "…": "…"},
+  "threads": {"alex@example.com\n1790000000000000001": {"snooze": {"until": 1790000000000, "at": 1789990000000}}},
+  "early": {"day": "2026-11-26", "used": 1, "releases": [1790001000000]}
+}
+```
+
+- **`settings`** holds the shared part of `Settings`, under the same names and with the same
+  meaning: `batch`, `summary`, `identities` (each account's `name`, `aliases` and `color` only),
+  `signatures`, `signatureFor`, `templates`, `blocked`, `muted`, `unsubscribed`, `imagesFrom`,
+  `undoSeconds`, `undoActionSeconds`, `defaultReply`, `quoteReplies`, `darkMail`, `images`,
+  `readAfter`, `threadOrder`, `afterRemove`, `later`, `swipes`, `swipeLeft`, `swipeLeftLong`,
+  `swipeRight`, `swipeRightLong`, `clock24` and `faces`. Everything else is the device's own:
+  the theme, the layout and list, the sidebar, keys, quick actions, notices (an identity's
+  `notify`, `sound`), the backfill window, the xrnhub link, starting at login, and the old
+  `focused` lists. A field a device doesn't know is kept as it came, so an older one never
+  drops what a newer one wrote.
+- **`threads`** is keyed by account address and thread, a newline between: Gmail's own thread id
+  (`X-GM-THRID`, as a decimal string), elsewhere the hash of the first Message-ID as `threadKey`
+  works it out. An entry holds what the device would keep in `snoozes`, `reminders` and `pins`:
+  `snooze` (`until`, `at` when it was set), `reminder` (`until`, `at`, `fired`), `pin` (when it was
+  pinned). An entry with nothing left in it goes.
+- **`early`** is the day's Deliver now: how many were used and when each was, so the other device
+  lets in what was waiting at those moments too, and the day's count is one count.
+
+Merging is three-way, against the base, field by field: a field changed on one side takes that
+side's value; changed on both, the device merging takes its own. Lists of addresses merge as sets,
+so an address added on one device and another taken out on the other both stand; signatures merge
+by `id` and templates by `name`. A thread's entry is one value, and changed on both sides the newer
+`at` wins. Archiving, deleting or moving a thread ends its snooze and reminder on every device, as
+it does here. The server only checks the outline; a 412 means another device wrote first: fetch,
+merge, send again.
+
 ## Reading what's quoted
 
 Most of a reply is what it quotes. `splitQuoted` finds where a plain message starts quoting, walking
