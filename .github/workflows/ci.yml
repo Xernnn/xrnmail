@@ -49,3 +49,25 @@ jobs:
 
       - name: UI tests
         run: xvfb-run -a npm run test:e2e
+
+  server:
+    # xrnmail-sync, the settings service the laptop and the phone share. On the oldest and newest
+    # Python it may run on: how deep json.loads nests changed in 3.14. Not the runner's own
+    # Python: Ubuntu's 3.12.3 answers a garbage request line with no status line (fixed in later
+    # CPython), which test_an_unparseable_request_gets_an_answer catches.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Sync server and deploy tests
+        run: |
+          python --version
+          python -m pip install --quiet bcrypt
+          python -m unittest server/test_xrnmail_sync.py server/test_deploy.py

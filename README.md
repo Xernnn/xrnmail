@@ -490,9 +490,16 @@ src/renderer/   the page (React): sidebar, list, reader, composer, settings
 src/shared/     what both sides use: types, keys, sidebar order, quoting, darkening, snooze times
 tests/          unit tests (Vitest), with a fake Gmail (IMAP) and SMTP server
 e2e/            UI tests (Playwright) that drive the built app against those fake servers
+server/         xrnmail-sync, the small service that keeps settings and snoozes in step with
+                xrnmail on a phone (Python, standard library and bcrypt; deploy.sh installs it)
 ```
 
-There's no server of xrnmail's own. Each account talks straight to its mail service: IMAP for
+`server/xrnmail-sync.py` is for keeping a phone and this laptop in step: the settings both follow,
+and each thread's snooze, reminder and pin. It never sees mail, address books or passwords, only
+what the person chose, under one login, on a server of the person's own. The laptop doesn't talk
+to it yet; [docs/design.md](docs/design.md#shared-with-the-phone) says what it will hold.
+
+There's no server of xrnmail's own between you and your mail. Each account talks straight to its mail service: IMAP for
 reading (opened read-only, so syncing can't change anything), IMAP again for changes, on their own
 connection, and SMTP for sending. What you do is applied here at once and queued for the server,
 so it works offline and survives a restart. [docs/design.md](docs/design.md) explains each part and
@@ -536,6 +543,7 @@ running as you can drive an app holding your mail passwords or point it at anoth
 npm test                           # logic, against fake IMAP and SMTP servers over real sockets
 npm run typecheck
 E2E_HEADLESS=1 npm run test:e2e    # builds, then drives the app, including a hostile email
+python3 -m unittest server/test_xrnmail_sync.py server/test_deploy.py   # the sync service (needs bcrypt)
 ```
 
 About 500 unit tests and 110 UI tests. The UI tests run the built app on a throwaway profile
