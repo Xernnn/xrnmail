@@ -21,7 +21,7 @@ adds to it or leaves out, is under [Where it differs](#where-it-differs-from-edi
 *In batches: the next delivery and what's waiting sit over the list, and Deliver now lets it in early.
 More pictures are under [Pictures](#pictures).*
 
-Version 1.0.0, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
+Version 1.1.0, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
 [imapflow](https://imapflow.com) for IMAP, nodemailer for SMTP and SQLite (`node:sqlite`) for the mail
 kept on the laptop.
 
@@ -194,8 +194,10 @@ kept on the laptop.
   message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
   way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
   signature from their domain) say is theirs; anything else with their address on it asks again.
-  A picture shown is fetched with Chrome's own user agent, never one naming the app, and never from
-  this laptop, the network it's on or the tailnet.
+  A picture shown is fetched with Chrome's own user agent, never one naming the app. One whose
+  address is on this laptop, the network it's on or the tailnet isn't fetched, nor one whose name
+  leads there when it's looked up (a name that answers differently a moment later can still get
+  past that).
   A picture that can't be fetched is a plain block, with a count and Try again. A link that shows one
   address and goes to another asks before it opens. See
   [docs/design.md](docs/design.md#hostile-mail).
