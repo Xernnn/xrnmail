@@ -621,8 +621,10 @@ test('pictures that can\'t be fetched stay plain blocks, say so, and can be trie
 // them off in a thread open in a window of its own, so its Try again was refused every time.
 test('a thread in a window of its own keeps its pictures when the main window moves on', async () => {
   const hits: string[] = []
+  const agents: string[] = []
   const web: Server = createServer((request, response) => {
     hits.push(request.url ?? '')
+    agents.push(request.headers['user-agent'] ?? '')
     // The first time, as on a bad connection; after that, the picture.
     const first = hits.length === 1
     response.writeHead(first ? 500 : 200, { 'Content-Type': first ? 'text/plain' : 'image/png', 'Cache-Control': 'no-store' })
@@ -652,6 +654,8 @@ test('a thread in a window of its own keeps its pictures when the main window mo
     await expect.poll(() => solo.locator('iframe.body-frame').evaluate((f: HTMLIFrameElement) =>
       ((f.contentDocument as Document).getElementById('range') as HTMLImageElement).naturalWidth)).toBe(1)
     expect(hits).toEqual(['/range.png', '/range.png'])
+    // Chrome's, not one naming the app or Electron that only this laptop sends.
+    expect(agents.every((agent) => agent.includes('Chrome/') && !/xrnmail|electron/i.test(agent))).toBe(true)
   } finally {
     web.close()
   }

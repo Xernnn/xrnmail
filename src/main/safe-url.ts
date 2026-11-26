@@ -54,6 +54,13 @@ export function isPrivateAddress(ip: string): boolean {
 
 export { canOpenDirectly } from '@shared/openable'
 
+/** What a message's pictures, and anything else the window fetches, are asked for with: Chrome's
+ *  own on Linux, as Chrome reduces it (the major version only). Electron's names the app and its
+ *  version, and Electron's, which nobody else sends: every picture host could tell it was this one
+ *  person who opened the mail. */
+export const genericUserAgent = (chrome: string): string =>
+  `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome.split('.')[0] || '152'}.0.0.0 Safari/537.36`
+
 /** Linux takes 255 bytes in a file name, and opening an attachment puts 9 more in front. */
 const NAME_BYTES = 200
 

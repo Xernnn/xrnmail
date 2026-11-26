@@ -25,7 +25,7 @@ import readMail from './parse-worker?nodeWorker'
 import { Avatars, pictureSize, sniff, webSources, type Picture, type PictureSources } from './avatars'
 import { allowImages, devServerUrl, handle, handleFrom, lockDownContents, lockDownNetwork } from './guard'
 import { openAttachment, xdgFiletype } from './opening'
-import { isSafeExternalUrl, safeFileName } from './safe-url'
+import { genericUserAgent, isSafeExternalUrl, safeFileName } from './safe-url'
 import { attachmentsOf } from './parse'
 import { KeyringSecrets, MemorySecrets, type Secrets } from './secrets'
 import { SmtpSender } from './sender'
@@ -62,6 +62,9 @@ if (passwordStore) app.commandLine.appendSwitch('password-store', passwordStore)
 setDefaultAutoSelectFamilyAttemptTimeout(ADDRESS_ATTEMPT_MS)
 
 if (!app.requestSingleInstanceLock()) app.quit()
+
+// Before any window or session exists, so nothing is ever fetched with Electron's own.
+app.userAgentFallback = genericUserAgent(process.versions.chrome)
 
 let window: BrowserWindow | null = null
 let mail: MailService | null = null
