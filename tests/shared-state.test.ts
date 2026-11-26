@@ -122,6 +122,16 @@ describe("merging a thread's entry", () => {
     expect(threadsOf(merge(agreed, agreed, archived))).toEqual({ [key]: { pin: 50 } })
   })
 
+  // A thread ended whole on one device (archived and unpinned there, so its entry went) and pinned
+  // again on the other kept the other's copy whole: the snooze ended there came back with the pin.
+  it('keeps only what the other device changed of a thread ended whole on one', () => {
+    const agreed = threads('{"snooze": {"until": 900, "at": 40}, "pin": 50}')
+    const ended = doc()
+    const repinned = threads('{"snooze": {"until": 900, "at": 40}, "pin": 70}')
+    expect(threadsOf(merge(agreed, ended, repinned))).toEqual({ [key]: { pin: 70 } })
+    expect(threadsOf(merge(agreed, repinned, ended))).toEqual({ [key]: { pin: 70 } })
+  })
+
   it('ends one ended on one device and left alone on the other, and drops an entry with nothing left in it', () => {
     const base = threads('{"snooze": {"until": 100, "at": 10}}')
     expect(threadsOf(merge(base, doc(), base))).toEqual({})

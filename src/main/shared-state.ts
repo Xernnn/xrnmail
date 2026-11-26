@@ -224,7 +224,8 @@ const empty = (entry: Json | undefined): boolean => entry === undefined || entry
 /** A thread's entries, merged a part at a time: its snooze, its reminder and its pin each on its own,
  *  so a pin set on one device keeps a snooze set on the other. A part changed on one side takes that
  *  side's; changed on both, the newer `at` wins, and the local side on a tie; taken out on one side
- *  and changed on the other, the change stands. An entry with nothing left in it goes. */
+ *  and changed on the other, the change stands. An entry gone on one side is merged as an empty one,
+ *  so what the other side left alone ends with it. An entry with nothing left in it goes. */
 function mergeThreads(base: JsonObject | undefined, local: JsonObject | undefined, remote: JsonObject | undefined): JsonObject {
   const b = base ?? {}
   const l = local ?? {}
@@ -235,7 +236,9 @@ function mergeThreads(base: JsonObject | undefined, local: JsonObject | undefine
     if (same(ll, rr)) merged = ll
     else if (same(ll, bb)) merged = rr
     else if (same(rr, bb)) merged = ll
-    else if (isObject(ll) && isObject(rr)) merged = mergeEntry(objectOr(bb), ll, rr)
+    // Both entries, or one gone (ended on that device): part by part, the gone one as empty, so
+    // what the other side didn't touch ends with it.
+    else if ((isObject(ll) || empty(ll)) && (isObject(rr) || empty(rr))) merged = mergeEntry(objectOr(bb), objectOr(ll) ?? {}, objectOr(rr) ?? {})
     else if (empty(ll)) merged = rr
     else if (empty(rr)) merged = ll
     else merged = entryAt(rr) > entryAt(ll) ? rr : ll

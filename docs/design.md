@@ -748,7 +748,9 @@ purpose, from an agreed copy that had a name or an alias, is a change like any o
 cleared. A thread's `snooze`, `reminder` and `pin` merge each on its own, so a pin set on one device
 keeps a snooze set on the other: a part changed on one side takes that side's; changed on both, the
 newer `at` wins (a pin's own time for a pin), and the merging side on a tie; taken out on one side
-and changed on the other, the change stands. Archiving, deleting or moving a
+and changed on the other, the change stands. An entry gone on one side (the thread archived and
+unpinned there) is merged as an empty one, so only what the other side changed stays: pinned again
+there, the pin stays and the snooze ended here doesn't come back. Archiving, deleting or moving a
 thread ends its snooze and reminder on every device, as it does here. The server only checks the
 outline; a 412 means another device wrote first: fetch, merge, send again.
 
