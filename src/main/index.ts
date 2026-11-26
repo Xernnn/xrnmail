@@ -416,6 +416,7 @@ function register(service: MailService, avatars: Avatars): void {
     service.removeAccount(account)
     avatars.forget(account)
   })
+  handle('signInAgain', (email: unknown, secret: unknown) => service.signInAgain(text(email, 320), text(secret, 500)))
   handle('syncNow', () => background(service.syncAll()))
   handle('overview', () => service.overview())
   handle('list', (query: unknown, limit: unknown) => service.list(listQuery(query), limit === undefined ? undefined : number(limit)))

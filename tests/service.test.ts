@@ -96,6 +96,28 @@ describe('accounts', () => {
     expect(secrets.get(`account:${ME}`)).toBeNull()
   })
 
+  // A changed Google password (which revokes every app password) left one way back: removing the
+  // account and adding it again, which threw away its drafts and its name, aliases and colour.
+  it('signs in again with a new password in place of the old, keeping its drafts and settings', async () => {
+    await signedIn()
+    service.saveProfile({ identities: { [ME]: { name: 'Alex Kim', signature: '', aliases: ['ak@example.com'], color: '#2f6fb2', notify: false } } })
+    const draft = await service.startDraft({ kind: 'new' })
+    service.saveDraft(draft.id, { account: ME, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Plans', html: 'Friday?', text: 'Friday?', quote: null })
+    gmail.secret = 'efghefghefghefgh' // changed on Google's side
+    smtp.secret = gmail.secret
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBe('Gmail refused this password.')
+
+    await expect(service.signInAgain(ME, 'still wrong')).rejects.toThrow('Gmail refused this password.')
+    expect(secrets.get(`account:${ME}`)).toBe('abcdabcdabcdabcd')
+    await service.signInAgain(ME, 'efgh efgh efgh efgh') // as Google shows it, in groups
+    expect(secrets.get(`account:${ME}`)).toBe('efghefghefghefgh')
+    await eventually(() => expect(service.accounts()[0]).toMatchObject({ error: null, syncing: false }))
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Plans'])
+    expect(service.settings().identities[ME]).toMatchObject({ name: 'Alex Kim', aliases: ['ak@example.com'], color: '#2f6fb2', notify: false })
+    await expect(service.signInAgain('someone@example.com', 'x')).rejects.toThrow('That account is gone.')
+  })
+
   it('keeps a good account and syncs it', async () => {
     gmail.add(rawMail({ subject: 'Hi' }), { arrived: new Date(at(9)) })
     await signedIn()

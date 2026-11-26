@@ -533,6 +533,8 @@ export interface MailApi {
   /** A guess at the service behind an address, from its domain's public records. */
   detectProvider(email: string): Promise<Detected>
   removeAccount(id: string): Promise<void>
+  /** A new password for an account that's here, in place of the one kept. Nothing else changes. */
+  signInAgain(email: string, secret: string): Promise<void>
   syncNow(): Promise<void>
   overview(): Promise<Overview>
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>

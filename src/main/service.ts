@@ -644,6 +644,42 @@ export class MailService {
     this.keepAccount(email, await this.verify(config, { secret }), secret)
   }
 
+  /** A new password, or app password, for an account that's here: checked as adding one is, then
+   *  kept in place of the old one. Nothing else of the account changes. Its mail, drafts, settings
+   *  and the changes waiting to go stay as they are, where removing it and adding it again lost them
+   *  all. Its watch and a pass start again at once. */
+  async signInAgain(rawEmail: string, rawSecret: string): Promise<void> {
+    const email = rawEmail.trim().toLowerCase()
+    if (!this.emails().includes(email)) throw new Error('That account is gone.')
+    const config = this.config(email)
+    if (config.signIn === 'microsoft') throw new Error('Outlook signs in with Microsoft, not a password.')
+    if (!rawSecret.trim()) throw new Error('Enter the password.')
+    if (!this.deps.secrets.available()) throw new Error('Unlock your system keyring first.')
+    const secret = config.provider === 'other' ? rawSecret : cleanSecret(rawSecret)
+    const checked = await this.verify(config, { secret })
+    if (!this.emails().includes(email)) throw new Error('That account is gone.')
+    this.deps.secrets.set(`account:${email}`, secret)
+    this.store.setMeta(`config:${email}`, JSON.stringify(checked))
+    this.signedInAgain(email)
+  }
+
+  /** The account's new login is kept: what waited on the old one goes again now. */
+  private signedInAgain(email: string): void {
+    const status = this.statusOf(email)
+    status.error = null
+    this.stopRetrying(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
+    this.draftsRetryAt.delete(email)
+    this.deps.changed()
+    background(this.syncOne(email))
+    this.watch(email)
+  }
+
   async startMicrosoft(rawEmail: string, rawClientId: string): Promise<{ code: string; url: string }> {
     const email = this.cleanEmail(rawEmail)
     const clientId = rawClientId.trim()

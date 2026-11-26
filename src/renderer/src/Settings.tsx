@@ -450,6 +450,8 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
 function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Identities; saveKeep(days: number): void; ask: Ask }): ReactNode {
   const { accounts, settings, saveKeep, ask, ids } = props
   const [adding, setAdding] = useState(false)
+  /** The account whose password is being entered again, and what's typed. */
+  const [again, setAgain] = useState<{ email: string; secret: string; busy: boolean } | null>(null)
   /** The accounts with a photo chosen here, rather than their Gravatar or none. */
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -467,6 +469,19 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
       setError(problem(e))
     }
   }
+  const signIn = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!again) return
+    setError('')
+    setAgain({ ...again, busy: true })
+    try {
+      await window.mail.signInAgain(again.email, again.secret)
+      setAgain(null)
+    } catch (e) {
+      setError(problem(e))
+      setAgain({ ...again, busy: false })
+    }
+  }
   return (
     <>
       <section>
@@ -475,6 +490,9 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
           <div className="line" key={a.id}>
             <AccountFace account={a} size={28} />
             <span className="grow">{a.email} <span className="muted">{a.providerName}</span></span>
+            {a.provider !== 'outlook' && (
+              <button className="quiet" aria-label={`Sign in to ${a.email} again`} onClick={() => setAgain({ email: a.email, secret: '', busy: false })}>Sign in again</button>
+            )}
             {photos.includes(a.email)
               ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
               : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
@@ -484,6 +502,16 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
             </button>
           </div>
         ))}
+        {again && (
+          <form className="add-account" onSubmit={(e) => void signIn(e)}>
+            <label>{again.email}<input type="password" autoComplete="off" required autoFocus aria-label={`New password for ${again.email}`}
+              value={again.secret} onChange={(e) => setAgain({ ...again, secret: e.target.value })} /></label>
+            <div className="row-end">
+              <button type="button" className="quiet" onClick={() => setAgain(null)}>Cancel</button>
+              <button type="submit" className="primary" disabled={again.busy}>Sign in</button>
+            </div>
+          </form>
+        )}
         {error && <p className="error">{error}</p>}
         {adding ? <AddAccount done={() => setAdding(false)} /> : <button className="quiet" onClick={() => setAdding(true)}>Add account</button>}
       </section>

@@ -11,6 +11,7 @@ const api: MailApi = {
   finishMicrosoft: () => call('finishMicrosoft'),
   detectProvider: (email) => call('detectProvider', email),
   removeAccount: (id) => call('removeAccount', id),
+  signInAgain: (email, secret) => call('signInAgain', email, secret),
   syncNow: () => call('syncNow'),
   overview: () => call('overview'),
   list: (query, limit) => call('list', query, limit),
