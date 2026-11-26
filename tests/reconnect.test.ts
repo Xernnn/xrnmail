@@ -302,6 +302,22 @@ describe('a password the server refuses', () => {
 })
 
 describe('the network changing', () => {
+  // sync.log, 24-25 Nov: passes that failed after 61 s (ETIMEOUT) and after 113-186 s
+  // (NoConnection), each holding its account all that time. One on a connection the network had
+  // dropped waited for imapflow to give up on it: 60 s of quiet, or with the folder locked, a quiet
+  // it expects, 60 s, a NOOP, and 60 s more. A change of network now lets go of it at once.
+  it('lets go of a pass stuck on the old connection, and passes again at once on the new one', async () => {
+    gmail.stall = /^LIST$/ // the pass was on the wire as the VPN reconnected
+    const stuck = service.syncAll()
+    await eventually(() => expect(gmail.commands.at(-1)).toMatch(/^LIST/))
+    gmail.stall = null
+    const before = passes()
+    await service.reconnect()
+    await soon(() => expect(passes() - before).toBe(1), 5_000)
+    await stuck
+    await soon(() => expect(service.accounts()[0]).toMatchObject({ syncing: false, error: null }))
+  })
+
   it('starts the watch over and syncs, leaving one watch', async () => {
     service.watchAll()
     await eventually(() => expect(gmail.idling).toBe(1))

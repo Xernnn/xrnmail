@@ -407,6 +407,9 @@ export class MailService {
   private rewatches = new Map<string, { losses: number; timer: NodeJS.Timeout | null }>()
   /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** Each account's pass under way, by its connection, and those cut short because the network changed. */
+  private passing = new Map<string, MailSource>()
+  private readonly cut = new WeakSet<MailSource>()
   /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
   private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
@@ -839,6 +842,14 @@ export class MailService {
    *  runs before the network is back is tried again within seconds. */
   async reconnect(): Promise<void> {
     this.sharing.restart()
+    // A pass on the old connection holds its account until imapflow gives up on it: with the folder
+    // locked, a silence it expects, it waits out its quiet time, asks NOOP, and waits it out again,
+    // two to three minutes. It's let go of now and runs again at once, on the network there is.
+    for (const [email, source] of this.passing) {
+      this.cut.add(source)
+      this.syncAgain.add(email)
+      source.drop()
+    }
     for (const email of [...this.retries.keys()]) this.stopRetrying(email)
     if (this.watching) {
       this.stopWatching()
@@ -1016,6 +1027,7 @@ export class MailService {
     const started = performance.now()
     try {
       source = this.deps.openSource(config, await this.login(email))
+      this.passing.set(email, source)
       await source.connect()
       this.noteFolders(email, source)
       await syncAccount(source, this.store, {
@@ -1062,10 +1074,14 @@ export class MailService {
       this.stopRetrying(email)
     } catch (e) {
       const service = this.serviceName(email)
-      status.error = describeFailure(e, service)
-      if (!removed()) this.logFailure(email, 'sync', e, started)
-      if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
+      // Cut short on purpose: the pass that follows says how it went.
+      if (!(source && this.cut.has(source))) {
+        status.error = describeFailure(e, service)
+        if (!removed()) this.logFailure(email, 'sync', e, started)
+        if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
+      }
     } finally {
+      if (source && this.passing.get(email) === source) this.passing.delete(email)
       await source?.close().catch(() => undefined)
       status.syncing = false
       status.progress = null
