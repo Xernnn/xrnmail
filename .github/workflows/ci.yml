@@ -24,6 +24,14 @@ jobs:
 
       - run: npm ci
 
+      # tests/share.test.ts runs the laptop's share against the real xrnmail-sync, which reads
+      # bcrypt hashes.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - run: python -m pip install --quiet bcrypt
+
       - name: Typecheck (main + renderer)
         run: npm run typecheck
 
