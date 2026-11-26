@@ -172,6 +172,28 @@ describe('sharing with the phone', () => {
     await eventually(async () => expect(((await onServer())['threads'] as JsonObject)[KEY]).toEqual({ snooze: { until: at(18), at: at(9, 59) }, pin: clock }))
   })
 
+  // The phone keeps an address as it was typed. Its blank identity for "Me@Example.com" was taken
+  // into this laptop's me@example.com, wiping its name and aliases, and the key was then sent back
+  // as taken away, which the phone put back, and so on, a write each way every few seconds.
+  it("an account the phone has in other letter case leaves the laptop's identity alone, and settles", async () => {
+    service.saveProfile({ identities: { [ME]: { name: 'Alex Kim', signature: '', aliases: ['ak@example.com'], color: '', notify: true } } })
+    await service.syncAll()
+    const PHONE_KEY = 'Me@Example.com'
+    await phoneWrites((doc) => {
+      const settings = doc['settings'] as JsonObject
+      return { ...doc, settings: { ...settings, identities: { ...(settings['identities'] as JsonObject), [PHONE_KEY]: { name: '', aliases: [], color: '#3B82F6' } } } }
+    })
+    await service.syncAll()
+    expect(service.settings().identities[ME]).toMatchObject({ name: 'Alex Kim', aliases: ['ak@example.com'] })
+    const shared = (await settingsOn())['identities'] as JsonObject
+    expect(shared[PHONE_KEY]).toEqual({ name: '', aliases: [], color: '#3B82F6' })
+    expect(shared[ME]).toMatchObject({ name: 'Alex Kim' })
+    const writes = asked.filter((line) => line.startsWith('PUT')).length
+    await service.syncAll()
+    await service.syncAll()
+    expect(asked.filter((line) => line.startsWith('PUT')).length).toBe(writes)
+  })
+
   it('a setting changed on either side reaches the other, and one archived here ends its snooze there', async () => {
     await phoneWrites((doc) => ({ ...doc, settings: { ...(doc['settings'] as JsonObject), undoSeconds: 20, muted: ['news@paper.example'] } }))
     await service.syncAll()

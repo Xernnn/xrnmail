@@ -35,7 +35,7 @@ import { Refused, type MailWriter, type Moved } from './writer'
 import { batchSettings, identity as checkedIdentity, profile, summarySettings, texts } from './checks'
 import { LaptopShare } from './shared-place'
 import { HttpSharedServer, type SharedServer } from './shared-server'
-import { isObject, type JsonObject } from './shared-state'
+import { blankIdentity, isObject, type JsonObject } from './shared-state'
 import { Sharing } from './shared-sync'
 
 /** Everything the app does, with the clock and the outside world passed in. */
@@ -2675,11 +2675,15 @@ export class MailService {
           next = { ...next, unsubscribed: cleanSenders(texts(value, 5000, 320)) }
         } else if (key === 'identities') {
           if (!isObject(value)) continue
-          const accounts = this.emails()
           const identities: Record<string, Identity> = {}
-          for (const [account, who] of Object.entries(value)) {
-            const email = accounts.find((mine) => mine === account.toLowerCase())
-            if (!email || !isObject(who)) continue
+          // Each account's own entry, by its address as kept here, lower case. Failing that, one in
+          // other letter case (the phone keeps an address as it was typed), but never a blank one:
+          // that's one the phone made up, and it would wipe the name and aliases kept here.
+          const entries = Object.entries(value)
+          for (const email of this.emails()) {
+            const exact = entries.find(([account]) => account === email)?.[1]
+            const who = exact ?? entries.find(([account, other]) => account.toLowerCase() === email && !blankIdentity(other))?.[1]
+            if (!isObject(who)) continue
             try {
               const own = settings.identities[email] ?? { name: '', signature: '', aliases: [], color: '', notify: true }
               identities[email] = checkedIdentity({ ...own, name: who['name'] as string, aliases: who['aliases'] as string[], color: who['color'] as string })

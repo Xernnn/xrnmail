@@ -72,12 +72,15 @@ export class LaptopShare implements SharedPlace {
   /** The shared part of this laptop's settings, with what [agreed] holds that this laptop doesn't. */
   private settingsPart(agreed: JsonObject | undefined): JsonObject {
     const settings = this.side.settings()
-    const mine = this.mine()
     const own: [string, Json][] = this.side.accounts().map((email) => {
       const who = settings.identities[email]
       return [email, { name: who?.name ?? '', aliases: plain(who?.aliases ?? []), color: this.side.colorOf(email) }]
     })
-    const theirs = Object.entries(objectOr(get(agreed, 'identities')) ?? {}).filter(([account]) => !mine.has(account.toLowerCase()))
+    // Any other key goes back as it came: another account's, or this one's in other letter case as
+    // the phone may have typed it. Left out, it would be sent as taken away, and the phone, which
+    // still has it, would put it back, for ever.
+    const ownKeys = new Set(this.side.accounts())
+    const theirs = Object.entries(objectOr(get(agreed, 'identities')) ?? {}).filter(([account]) => !ownKeys.has(account))
     return keepUnknown(this.part(settings, Object.fromEntries([...theirs, ...own])), agreed)
   }
 
