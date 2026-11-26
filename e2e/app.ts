@@ -35,6 +35,8 @@ export async function launch(options: {
   data?: string
   /** More of the command line, after the app's own: a file to open, say. */
   args?: string[]
+  /** False: pictures from this machine are refused, as an installed build refuses them. */
+  localPictures?: boolean
 } = {}): Promise<Running> {
   const gmail = options.gmail ?? new FakeGmail()
   const port = await gmail.listen()
@@ -53,6 +55,8 @@ export async function launch(options: {
       XRNMAIL_SMTP: `127.0.0.1:${smtpPort}`,
       XRNMAIL_TEST_SECRETS: '1',
       XRNMAIL_EARLY_WAIT: '1',
+      // The tests' pictures are served from this machine, which a real message's never are.
+      ...(options.localPictures === false ? {} : { XRNMAIL_LOCAL_PICTURES: '1' }),
       ...faces
     }
   })

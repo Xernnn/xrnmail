@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import { plainName } from '@shared/names'
 
 /** What may be handed to the operating system. A link in an email can say anything, and
@@ -41,6 +42,12 @@ export function isPublicHttps(raw: string): boolean {
  *  loopback, private, shared (carrier NAT, and Tailscale's), link-local, unspecified, multicast, and
  *  IPv6's unique-local, link-local and multicast, including IPv4 ones written as IPv6. */
 export function isPrivateAddress(ip: string): boolean {
+  // An IPv4 address written as IPv6 the way a URL writes it back, ::ffff:7f00:1 for 127.0.0.1.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip)
+  if (mapped) {
+    const [high, low] = [parseInt(mapped[1] ?? '0', 16), parseInt(mapped[2] ?? '0', 16)]
+    return isPrivateAddress(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)
+  }
   const v4 = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/i.exec(ip)
   if (v4) {
     const a = Number(v4[1])
@@ -50,6 +57,29 @@ export function isPrivateAddress(ip: string): boolean {
   }
   const v6 = ip.toLowerCase()
   return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('ff')
+}
+
+/** Names that only ever lead to this laptop, the network it's on, or the tailnet. */
+const LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|home\.arpa|ts\.net)$/
+
+/** Whether a picture a message names may be fetched once its pictures are shown: never from this
+ *  laptop, the network it's on or the tailnet, where a stranger's mail could reach a router's page
+ *  or a service of the owner's own (the xrnrule daemon on 127.0.0.1, the home server). A name is
+ *  looked up with [lookup] first, and every address it has must be on the internet; one that can't
+ *  be looked up isn't fetched. As the phone does. */
+export async function pictureMayBeFetched(raw: string, lookup: (host: string) => Promise<string[]>): Promise<boolean> {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  if (!host || LOCAL_NAME.test(host)) return false
+  if (isIP(host)) return !isPrivateAddress(host)
+  const addresses = await lookup(host).catch(() => [])
+  return addresses.length > 0 && addresses.every((address) => !isPrivateAddress(address))
 }
 
 export { canOpenDirectly } from '@shared/openable'

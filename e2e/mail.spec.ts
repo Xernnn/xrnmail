@@ -617,6 +617,33 @@ test('pictures that can\'t be fetched stay plain blocks, say so, and can be trie
   await expect(note).toBeVisible() // still offline: tried, and said again
 })
 
+// Shown, a stranger's picture was fetched from wherever it pointed: this laptop (the xrnrule daemon
+// on 127.0.0.1), the router's page, the tailnet.
+test('a picture shown is never fetched from this laptop', async () => {
+  const hits: string[] = []
+  const web: Server = createServer((request, response) => {
+    hits.push(request.url ?? '')
+    response.writeHead(200, { 'Content-Type': 'image/png' })
+    response.end(Buffer.from(PIXEL.split(',')[1] ?? '', 'base64'))
+  })
+  await new Promise<void>((resolve) => web.listen(0, '127.0.0.1', resolve))
+  const address = web.address()
+  const picture = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}/status.png`
+  try {
+    run = await launch({ localPictures: false })
+    const { page, gmail } = run
+    gmail.add(rawMail({ subject: 'Your router', from: 'Mai Tran <mai@example.com>', html: `<p>Look at this.</p><img src="${picture}" width="20" height="20">` }), { arrived: earlier(3) })
+    await signIn(run)
+    await page.locator('.threads').getByText('Your router', { exact: true }).click()
+    await page.frameLocator('iframe.body-frame').getByText('Look at this.').waitFor()
+    await page.getByRole('button', { name: 'Show images' }).click()
+    await pause(800)
+    expect(hits).toEqual([])
+  } finally {
+    web.close()
+  }
+})
+
 // Pictures were one switch for the whole app: the main window moving on to another thread turned
 // them off in a thread open in a window of its own, so its Try again was refused every time.
 test('a thread in a window of its own keeps its pictures when the main window moves on', async () => {

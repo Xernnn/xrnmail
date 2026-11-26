@@ -2,7 +2,8 @@ import { app, ipcMain, session, shell, type IpcMainInvokeEvent, type WebContents
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { TRACKER } from '@shared/trackers'
-import { isSafeExternalUrl } from './safe-url'
+import { lookup } from 'node:dns/promises'
+import { isSafeExternalUrl, pictureMayBeFetched } from './safe-url'
 
 /**
  * Every email is written by a stranger, and the window holds a bridge to all of them. These walls
@@ -65,8 +66,9 @@ export function allowImages(contents: WebContents, allow: boolean): void {
 /** A picture in an email is a tracker until someone says otherwise, and the page never needs the
  *  network, so everything it asks for is refused here. Mail itself is fetched by the main process,
  *  which doesn't pass through this. */
-export function lockDownNetwork(): void {
+export function lockDownNetwork(options: { localPictures?: boolean; addresses?: (host: string) => Promise<string[]> } = {}): void {
   const web = session.defaultSession
+  const addresses = options.addresses ?? (async (host: string): Promise<string[]> => (await lookup(host, { all: true })).map((found) => found.address))
   web.webRequest.onBeforeRequest(
     { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
     (details, callback) => {
@@ -75,7 +77,11 @@ export function lockDownNetwork(): void {
       const allowed = details.webContentsId !== undefined && imagesAllowed.has(details.webContentsId)
       // A known service's open-tracking address is refused even then, however the mail named it:
       // CSS has more ways to ask for a picture than the page can find and take out.
-      callback({ cancel: !(allowed && details.resourceType === 'image') || TRACKER.test(details.url) })
+      if (!(allowed && details.resourceType === 'image') || TRACKER.test(details.url)) return callback({ cancel: true })
+      // Asked again for each address a redirect leads to. The UI tests serve their pictures from
+      // this machine, and say so ([localPictures], never in an installed build).
+      if (options.localPictures) return callback({})
+      void pictureMayBeFetched(details.url, addresses).then((ok) => callback({ cancel: !ok }), () => callback({ cancel: true }))
     }
   )
   web.on('will-download', (event) => event.preventDefault())

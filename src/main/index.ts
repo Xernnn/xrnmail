@@ -795,7 +795,7 @@ app.on('second-instance', (_event, argv, from) => {
 app.on('window-all-closed', () => { if (quitting || !tray) app.quit() })
 
 void app.whenReady().then(() => {
-  lockDownNetwork()
+  lockDownNetwork({ localPictures: test['XRNMAIL_LOCAL_PICTURES'] === '1' })
   const store = new Store(join(app.getPath('userData'), 'mail.sqlite'))
   clearOpened(store)
   const secrets: Secrets = test['XRNMAIL_TEST_SECRETS'] ? new MemorySecrets() : new KeyringSecrets(store)
