@@ -304,9 +304,13 @@ export class Sharing {
     this.engine = null
     this.busy = true
     this.deps.changed()
-    // A server or login of its own: the copy agreed with any other means nothing to it.
+    // A server or login of its own: the copy agreed with any other means nothing to it. The same
+    // ones signed in to again (after a new password) keep it: forgotten, the sync after would be a
+    // first merge, and whatever the phone changed meanwhile would be decided as if new on both sides,
+    // the laptop's way, putting back senders it unblocked and snoozes it ended.
     const before = this.deps.store.meta(AGREED_KEY)
-    this.meta.save(null)
+    const saved = this.login()
+    if (!saved || saved.url !== url || saved.user !== user) this.meta.save(null)
     const trial = this.deps.serverFor(url, user, secret)
     try {
       await new SharedSync(trial, this.deps.place, this.meta).sync()

@@ -229,6 +229,23 @@ describe('sharing with the phone', () => {
     expect(service.overview()).toMatchObject({ held: 1, earlyLeft: 0 })
   })
 
+  // Sign in again forgot the agreed copy, so the sync after it was a first merge: what the phone
+  // had changed meanwhile was decided the laptop's way, and the sender it unblocked was blocked again.
+  it("signing in again keeps what the phone changed meanwhile", async () => {
+    service.block('spam@shop.example')
+    service.saveProfile({ undoSeconds: 20 })
+    await service.syncAll()
+    expect(await settingsOn()).toMatchObject({ blocked: ['spam@shop.example'], undoSeconds: 20 })
+    server.setPassword('a new one')
+    phone = new HttpSharedServer(server.url, USER, 'a new one', fetch, 'xrnmail-android')
+    await phoneWrites((doc) => ({ ...doc, settings: { ...(doc['settings'] as JsonObject), blocked: [], undoSeconds: 5 } }))
+    await service.syncAll()
+    expect(service.share().problem).toBe('Sign in again')
+    await service.connectShare(server.url, USER, 'a new one')
+    expect(await settingsOn()).toMatchObject({ blocked: [], undoSeconds: 5 })
+    expect(service.settings()).toMatchObject({ blocked: [], undoSeconds: 5 })
+  })
+
   it('a refused login stops asking until it is entered again', async () => {
     server.setPassword('a new one')
     await service.syncAll()
