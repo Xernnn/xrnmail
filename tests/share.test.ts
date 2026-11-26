@@ -249,7 +249,7 @@ describe('sharing with the phone', () => {
   it('a refused login stops asking until it is entered again', async () => {
     server.setPassword('a new one')
     await service.syncAll()
-    expect(service.share().problem).toBe('Sign in again')
+    expect(service.share()).toMatchObject({ problem: 'Sign in again', stopped: true })
     const before = asked.length
     await service.syncAll()
     service.saveProfile({ clock24: false })

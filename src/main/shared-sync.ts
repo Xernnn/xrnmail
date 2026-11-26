@@ -284,6 +284,7 @@ export class Sharing {
       user: login?.user ?? '',
       syncedAt: this.meta.syncedAt(),
       problem: unopened ?? this.problem,
+      stopped: unopened !== null || this.stopped,
       busy: this.busy
     }
   }

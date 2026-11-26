@@ -520,6 +520,8 @@ export interface ShareView {
   syncedAt: number | null
   /** What went wrong last, in a word or two, until it works again. */
   problem: string | null
+  /** Waiting for the login to be entered again: nothing is asked of the server until then. */
+  stopped: boolean
   busy: boolean
 }
 

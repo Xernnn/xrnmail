@@ -116,7 +116,8 @@ describe('losing the race to the other device', () => {
     const place: SharedPlace = { document: () => doc, chosen: (d) => d, take: (_was, merged) => void (doc = merged) }
     const sharing = new Sharing({ store, secrets, place, serverFor: () => racing, changed: () => undefined, settleMs: 10 })
     await sharing.check()
-    expect(sharing.view().problem).toBe('Busy')
+    // Said, and not as one that asks for the login again.
+    expect(sharing.view()).toMatchObject({ problem: 'Busy', stopped: false })
     const first = asks
     await sharing.check()
     expect(asks).toBeGreaterThan(first)

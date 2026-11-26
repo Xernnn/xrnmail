@@ -869,7 +869,8 @@ function Share(props: { version: number }): ReactNode {
   }, [props.version])
 
   if (!view) return null
-  const again = view.on && view.problem !== null && view.problem !== 'Server unreachable' && view.problem !== 'Busy'
+  // Only when a new login is what it waits for: a busy or unreachable server is tried again by itself.
+  const again = view.on && view.stopped
   const connect = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     setError('')
