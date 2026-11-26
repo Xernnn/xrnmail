@@ -741,10 +741,33 @@ merged it (the base). Its outline, schema 1:
 Merging is three-way, against the base, field by field: a field changed on one side takes that
 side's value; changed on both, the device merging takes its own. Lists of addresses merge as sets,
 so an address added on one device and another taken out on the other both stand; signatures merge
-by `id` and templates by `name`. A thread's entry is one value, and changed on both sides the newer
-`at` wins. Archiving, deleting or moving a thread ends its snooze and reminder on every device, as
-it does here. The server only checks the outline; a 412 means another device wrote first: fetch,
-merge, send again.
+by `id` and templates by `name`. An identity a device made up (no name and no aliases, only a
+colour, which is what the phone gives an account it adds) never beats one with either filled in:
+the other side's wins whole. A thread's `snooze`, `reminder` and `pin` merge each on its own, so a
+pin set on one device keeps a snooze set on the other: a part changed on one side takes that side's;
+changed on both, the newer `at` wins (a pin's own time for a pin), and the merging side on a tie;
+taken out on one side and changed on the other, the change stands. Archiving, deleting or moving a
+thread ends its snooze and reminder on every device, as it does here. The server only checks the
+outline; a 412 means another device wrote first: fetch, merge, send again.
+
+A device's first merge, with no base, is against only what it chose itself: a field still at the
+device's own first value is left out, so the other side's stands, and so is an identity it made up.
+So the laptop's names, aliases and colours outlast the blank ones the phone wrote first, and what
+the laptop never changed takes the phone's.
+
+The laptop's side is `src/main/shared-state.ts` (the merge, the phone's rule for rule),
+`shared-sync.ts` (fetch, merge, send, and the login), `shared-place.ts` (what of the settings and the
+store goes in, and what comes back out) and `shared-server.ts` (the requests). It signs in from
+Settings › Sync with the sync password, or a device login (`xrndev_…`) in the same box, sent as a
+Bearer token instead; the secret is kept in the keyring like the mail passwords. While the window is
+up it waits on the server for the phone's changes (`?wait=25`); in the tray it looks with each
+three-minute pass through the mail, and a change made here goes about two seconds later. What comes
+back is cleaned as the same change from the page is (`checks.ts`), and moving the batch or Summary
+times moves what's waiting, as it does here. A login the server refuses (401), a device login that
+isn't for xrnmail (403) or an address that's wrong isn't tried again until the login is entered
+again: each wrong login counts towards the server's lockout. The laptop shares reminders too
+(`until`, `at`: the date of the message they were set on, `fired`), and keeps the day's Deliver now
+releases, letting in what was waiting at each of the phone's.
 
 ## Reading what's quoted
 

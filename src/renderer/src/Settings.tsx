@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal, Smartphone
 } from 'lucide-react'
 import {
-  INLINE_PICTURES, QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type Signature as SignatureKept, type SummarySettings,
-  type SwipeAction, type Template
+  INLINE_PICTURES, QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type ShareView, type Signature as SignatureKept,
+  type SummarySettings, type SwipeAction, type Template
 } from '@shared/types'
 import { asDataUrl, escapeAttribute, FormatBar, signatureMarkup, textOf } from './Composer'
 import { SettingsKeeper, type SettingsChange } from '@shared/keeper'
@@ -28,7 +28,7 @@ const KEEP_DAYS = [30, 90, 365, 1095]
 type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 export type Tab =
-  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'rules' | 'batches' | 'hub' | 'about'
+  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'rules' | 'batches' | 'sync' | 'hub' | 'about'
 
 type TabIcon = ComponentType<{ className?: string; size?: number; 'aria-hidden'?: 'true' }>
 
@@ -40,7 +40,7 @@ const TABS: [Tab, string, TabIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
   ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
-  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
+  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['sync', 'Sync', Smartphone], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
 ]
 
 /** What each page holds, for the search box. */
@@ -57,6 +57,7 @@ const TAB_WORDS: Record<Tab, string> = {
   blocked: 'senders block unblock trash',
   rules: 'mail rules filters conditions actions label move folder archive read flag delete important summary straight through apply now',
   batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
+  sync: 'phone share home server device login password connect',
   hub: 'connect counts',
   about: 'version'
 }
@@ -802,6 +803,66 @@ function Hub(props: { settings: Settings }): ReactNode {
   )
 }
 
+/** Sharing with the phone through the home server: settings, snoozes, reminders and pins. The
+ *  password box takes a device login too. */
+function Share(props: { version: number }): ReactNode {
+  const [view, setView] = useState<ShareView | null>(null)
+  const [url, setUrl] = useState('')
+  const [user, setUser] = useState('')
+  const [secret, setSecret] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void window.mail.share().then((found) => {
+      setView(found)
+      // Signing in again starts from where it signed in before.
+      if (found.on) {
+        setUrl((typed) => typed || found.url)
+        setUser((typed) => typed || found.user)
+      }
+    })
+  }, [props.version])
+
+  if (!view) return null
+  const again = view.on && view.problem !== null && view.problem !== 'Server unreachable' && view.problem !== 'Busy'
+  const connect = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      await window.mail.connectShare(url, user, secret)
+      setSecret('')
+      setView(await window.mail.share())
+    } catch (e) {
+      setError(problem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section>
+      {view.on && (
+        <div className="line">
+          <span className="grow">{view.url}</span>
+          <span className={view.problem ? 'error' : 'muted'} role="status">{view.problem ?? (view.syncedAt ? clock(view.syncedAt) : '')}</span>
+          <button className="quiet danger" onClick={() => void window.mail.disconnectShare().then(() => window.mail.share()).then(setView)}>Disconnect</button>
+        </div>
+      )}
+      {(!view.on || again) && (
+        <form className="add-account" onSubmit={(e) => void connect(e)}>
+          <label>Address<input type="url" placeholder="https://…/xrnmail" required value={url} onChange={(e) => setUrl(e.target.value)} /></label>
+          <label>Name<input autoComplete="off" value={user} onChange={(e) => setUser(e.target.value)} /></label>
+          <label>Password or device login<input type="password" autoComplete="off" required value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
+          {error && <p className="error">{error}</p>}
+          <div className="row-end"><button type="submit" className="primary" disabled={busy}>{again ? 'Sign in again' : 'Connect'}</button></div>
+        </form>
+      )}
+    </section>
+  )
+}
+
 /** The page chosen at the left. */
 function Pages(props: {
   page: Tab
@@ -830,6 +891,7 @@ function Pages(props: {
       {page === 'blocked' && <Blocked blocked={settings.blocked} senders={senders} />}
       {page === 'rules' && <Rules accounts={accounts} version={props.version} undoSeconds={settings.undoActionSeconds} ask={props.ask} />}
       {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} change={change} />}
+      {page === 'sync' && <Share version={props.version} />}
       {page === 'hub' && <Hub settings={settings} />}
       {page === 'about' && <About />}
     </div>

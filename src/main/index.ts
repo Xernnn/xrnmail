@@ -6,15 +6,12 @@ import { homedir } from 'node:os'
 import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { basename, join } from 'node:path'
 import type {
-  AccountConfig, AppCommand, AssistantSection, BatchSettings, DraftEdit, DraftStart, Identity, ListQuery, MailAction, NewAccount, ProfilePatch, QuickAction, Quote,
-  Rsvp, SenderList, Server, Signature, SummarySettings, SwipeAction, Template, ThreadRef
+  AccountConfig, AppCommand, AssistantSection, DraftEdit, DraftStart, ListQuery, MailAction, NewAccount, Quote, Rsvp, SenderList, Server, ThreadRef
 } from '@shared/types'
-import { cleanSidebar } from '@shared/sidebar'
-import { DEFAULT_LATER, type LaterTimes } from '@shared/later'
-import { cleanAllChanges, isKeySet } from '@shared/keys'
 import { cleanRule } from '@shared/rules'
 import { soloKey, soloQuery, type Solo } from '@shared/solo'
-import { QUICK_SLOTS, SENDER_LISTS } from '@shared/types'
+import { SENDER_LISTS } from '@shared/types'
+import { batchSettings, number, profile, summarySettings, text, texts } from './checks'
 import { parseMailto } from './compose'
 import { addContextMenu, appMenu, AppTray, notify, notifySummary, ownCommand, resourceFile, setStartAtLogin, setUpSpelling, startedHidden } from './desktop'
 import { DraftFiles } from './draft-files'
@@ -250,16 +247,6 @@ const MAX_DROP = 26 * 1024 * 1024
  *  program that opens it may be (128 KB). */
 const MAX_LINK = 64 * 1024
 
-const text = (value: unknown, max = 8192): string => {
-  if (typeof value !== 'string' || value.length > max) throw new Error('Bad request')
-  return value
-}
-
-const number = (value: unknown): number => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('Bad request')
-  return value
-}
-
 /** How much of a message's source View original shows; Save as .eml keeps all of it. */
 const ORIGINAL_SHOWN = 2 * 1024 * 1024
 
@@ -287,34 +274,6 @@ function listQuery(value: unknown): ListQuery {
   if (q['kind'] === 'search') return { kind: 'search', text: text(q['text'], 500) }
   if (q['kind'] === 'from') return { kind: 'from', account: text(q['account'], 320), address: text(q['address'], 320) }
   throw new Error('Bad request')
-}
-
-const texts = (value: unknown, max: number, each: number): string[] => {
-  if (!Array.isArray(value) || value.length > max) throw new Error('Bad request')
-  return value.map((item) => text(item, each))
-}
-
-/** Only what's there: a change names what it changes, and the rest stays as saved. */
-function batchSettings(value: unknown): Partial<BatchSettings> {
-  const b = (value ?? {}) as Record<string, unknown>
-  const patch: Partial<BatchSettings> = {}
-  if (b['live'] !== undefined) patch.live = b['live'] === true
-  if (b['times'] !== undefined) patch.times = texts(b['times'], 50, 8)
-  if (b['vip'] !== undefined) patch.vip = texts(b['vip'], 500, 320)
-  if (b['earlyPerDay'] !== undefined) patch.earlyPerDay = number(b['earlyPerDay'])
-  return patch
-}
-
-/** The main process decides what's allowed: `saveSummary` cleans the rest. */
-function summarySettings(value: unknown): Partial<SummarySettings> {
-  const s = (value ?? {}) as Record<string, unknown>
-  const patch: Partial<SummarySettings> = {}
-  if (s['senders'] !== undefined) patch.senders = texts(s['senders'], 500, 320)
-  if (s['every'] !== undefined) patch.every = s['every'] === 'weekly' ? 'weekly' : 'daily'
-  if (s['time'] !== undefined) patch.time = text(s['time'], 8)
-  if (s['day'] !== undefined) patch.day = number(s['day'])
-  if (s['chosen'] !== undefined) patch.chosen = s['chosen'] === true
-  return patch
 }
 
 function senderList(value: unknown): SenderList {
@@ -405,83 +364,6 @@ function newAccount(value: unknown): NewAccount {
   }
 }
 
-const COLOR = /^#[0-9a-f]{6}$/i
-
-function identity(who: Partial<Identity> | undefined): Identity {
-  const color = text(who?.color ?? '', 7)
-  return {
-    name: text(who?.name, 200),
-    signature: text(who?.signature, 8192),
-    aliases: (Array.isArray(who?.aliases) ? who.aliases : []).slice(0, 20).map((a) => text(a, 320)),
-    color: COLOR.test(color) ? color : '',
-    notify: who?.notify !== false
-  }
-}
-
-/** A signature's words, with any picture in them, which is kept with it. */
-const MAX_SIGNATURE = 2 * 1024 * 1024
-const SIGNATURE_ID = /^[\w-]{1,64}$/
-
-function signature(value: unknown): Signature {
-  const s = (value ?? {}) as Record<string, unknown>
-  const id = text(s['id'], 64)
-  if (!SIGNATURE_ID.test(id)) throw new Error('Bad request')
-  return { id, name: text(s['name'], 200), html: text(s['html'], MAX_SIGNATURE), text: text(s['text'], 20_000) }
-}
-
-function profile(value: unknown): ProfilePatch {
-  const p = (value ?? {}) as Record<string, unknown>
-  const patch: ProfilePatch = {}
-  if (p['identities'] !== undefined) {
-    patch.identities = Object.fromEntries(
-      Object.entries(p['identities'] as Record<string, Identity>).map(([email, who]) => [
-        text(email, 320), identity(who)
-      ])
-    )
-  }
-  if (Array.isArray(p['signatures'])) patch.signatures = p['signatures'].slice(0, 50).map(signature)
-  if (p['signatureFor'] && typeof p['signatureFor'] === 'object') {
-    patch.signatureFor = Object.fromEntries(Object.entries(p['signatureFor'] as Record<string, unknown>).slice(0, 500)
-      .map(([address, id]) => [text(address, 320).toLowerCase(), text(id, 64)]))
-  }
-  if (Array.isArray(p['templates'])) {
-    patch.templates = (p['templates'] as Template[]).map((t) => ({
-      name: text(t?.name, 200), text: text(t?.text, 20_000), ...(t?.subject ? { subject: text(t.subject, 2000) } : {})
-    }))
-  }
-  if (Array.isArray(p['blocked'])) patch.blocked = p['blocked'].map((b) => text(b, 320))
-  if (Array.isArray(p['muted'])) patch.muted = p['muted'].map((b) => text(b, 320))
-  if (p['sidebar'] && typeof p['sidebar'] === 'object') patch.sidebar = cleanSidebar(p['sidebar'])
-  if (p['undoSeconds'] !== undefined) patch.undoSeconds = number(p['undoSeconds'])
-  if (p['undoActionSeconds'] !== undefined) patch.undoActionSeconds = number(p['undoActionSeconds'])
-  if (p['defaultReply'] === 'reply' || p['defaultReply'] === 'replyAll') patch.defaultReply = p['defaultReply']
-  if (p['theme'] === 'system' || p['theme'] === 'light' || p['theme'] === 'dark') patch.theme = p['theme']
-  if (p['focused'] !== undefined) patch.focused = p['focused'] === true
-  if (p['layout'] === 'panes' || p['layout'] === 'below' || p['layout'] === 'list') patch.layout = p['layout']
-  if (p['afterRemove'] === 'next' || p['afterRemove'] === 'previous' || p['afterRemove'] === 'list') patch.afterRemove = p['afterRemove']
-  if (p['previewLines'] !== undefined) patch.previewLines = number(p['previewLines'])
-  for (const key of ['attachmentCards', 'sidebarIcons', 'clock24', 'quickOn', 'swipes', 'notifyFocusedOnly', 'darkMail', 'quoteReplies', 'importanceMarks', 'faces', 'sound'] as const) {
-    if (p[key] !== undefined) patch[key] = p[key] === true
-  }
-  if (isKeySet(p['keys'])) patch.keys = p['keys']
-  if (p['keyChanges'] && typeof p['keyChanges'] === 'object') patch.keyChanges = cleanAllChanges(p['keyChanges'])
-  if (Array.isArray(p['quickActions'])) patch.quickActions = p['quickActions'].slice(0, QUICK_SLOTS).map((a) => text(a, 16) as QuickAction)
-  for (const key of ['swipeLeft', 'swipeLeftLong', 'swipeRight', 'swipeRightLong'] as const) {
-    if (p[key] !== undefined) patch[key] = text(p[key], 16) as SwipeAction
-  }
-  if (p['background'] !== undefined) patch.background = p['background'] === true
-  if (p['startAtLogin'] !== undefined) patch.startAtLogin = p['startAtLogin'] === true
-  if (p['images'] === 'ask' || p['images'] === 'always') patch.images = p['images']
-  if (p['readAfter'] !== undefined) patch.readAfter = number(p['readAfter'])
-  if (p['threadOrder'] === 'oldest' || p['threadOrder'] === 'newest') patch.threadOrder = p['threadOrder']
-  if (p['later'] && typeof p['later'] === 'object') {
-    const later = p['later'] as Record<string, unknown>
-    patch.later = Object.fromEntries(Object.entries(later).filter(([key]) => key in DEFAULT_LATER).map(([key, value]) => [key, number(value)])) as Partial<LaterTimes>
-  }
-  if (Array.isArray(p['imagesFrom'])) patch.imagesFrom = p['imagesFrom'].map((a) => text(a, 320))
-  return patch
-}
-
 const RSVPS: Rsvp[] = ['ACCEPTED', 'TENTATIVE', 'DECLINED']
 
 function rsvp(value: unknown): Rsvp {
@@ -562,6 +444,10 @@ function register(service: MailService, avatars: Avatars): void {
   handle('connectHub', (url: unknown, user: unknown, secret: unknown) =>
     service.connectHub(text(url, 500), text(user, 200), text(secret, 500)))
   handle('disconnectHub', () => service.disconnectHub())
+  handle('share', () => service.share())
+  handle('connectShare', (url: unknown, user: unknown, secret: unknown) =>
+    service.connectShare(text(url, 500), text(user, 200), text(secret, 500)))
+  handle('disconnectShare', () => service.disconnectShare())
   handle('beginEarly', () => service.beginEarly())
   handle('finishEarly', () => service.finishEarly())
   handleFrom('allowRemoteImages', (sender: Electron.WebContents, allow: unknown) => allowImages(sender, allow === true))
@@ -860,6 +746,13 @@ function createWindow(store: Store, hidden: boolean): void {
   lockDownContents(shown.webContents)
   addContextMenu(shown.webContents)
   shown.on('ready-to-show', () => { if (!hidden) shown.show() })
+  // While the window is up, what's changed on the phone is waited for at the home server and shows
+  // at once; in the tray, it's looked for with each pass through the mail.
+  shown.on('show', () => mail?.holdShare('window'))
+  shown.on('restore', () => mail?.holdShare('window'))
+  shown.on('hide', () => mail?.releaseShare('window'))
+  shown.on('minimize', () => mail?.releaseShare('window'))
+  shown.on('closed', () => mail?.releaseShare('window'))
   const remember = (): void => {
     if (shown.isDestroyed()) return
     const place: WindowPlace = { ...shown.getNormalBounds(), maximized: shown.isMaximized() }

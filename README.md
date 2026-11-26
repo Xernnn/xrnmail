@@ -496,8 +496,9 @@ server/         xrnmail-sync, the small service that keeps settings and snoozes 
 
 `server/xrnmail-sync.py` is for keeping a phone and this laptop in step: the settings both follow,
 and each thread's snooze, reminder and pin. It never sees mail, address books or passwords, only
-what the person chose, under one login, on a server of the person's own. The laptop doesn't talk
-to it yet; [docs/design.md](docs/design.md#shared-with-the-phone) says what it will hold.
+what the person chose, under one login, on a server of the person's own. Settings › Sync signs the
+laptop in, with the sync password or a device login made for it;
+[docs/design.md](docs/design.md#shared-with-the-phone) says what's shared and how two changes meet.
 
 There's no server of xrnmail's own between you and your mail. Each account talks straight to its mail service: IMAP for
 reading (opened read-only, so syncing can't change anything), IMAP again for changes, on their own

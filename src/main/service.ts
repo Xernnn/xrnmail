@@ -1,6 +1,6 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, ShareView, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { IMPORTANT, INLINE_PICTURES, QUICK_SLOTS, signatureFor } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
@@ -32,6 +32,11 @@ import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount, type Ruled } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
+import { batchSettings, identity as checkedIdentity, profile, summarySettings, texts } from './checks'
+import { LaptopShare } from './shared-place'
+import { HttpSharedServer, type SharedServer } from './shared-server'
+import { isObject, type JsonObject } from './shared-state'
+import { Sharing } from './shared-sync'
 
 /** Everything the app does, with the clock and the outside world passed in. */
 
@@ -179,6 +184,12 @@ export interface ServiceDeps {
   earlyWaitSeconds?: number
   /** How long a search waits for typing to stop before asking the servers about older mail. */
   searchSettleMs?: number
+  /** Where what's shared with the phone is kept: xrnmail-sync on the home server. */
+  openShare?(url: string, user: string, secret: string): SharedServer
+  /** How long after a change made here it goes to the home server, and how long each wait there for
+   *  the phone's lasts, for tests to shorten. */
+  shareSettleMs?: number
+  sharePollSeconds?: number
 }
 
 /** What names a message on its account's server whatever folder it's in: Gmail's own id, or its
@@ -407,8 +418,29 @@ export class MailService {
   private tooBig = new Set<string>()
   /** Searches of the servers, for mail from before the keeping window. */
   private readonly old: OldMail
+  /** What's shared with the phone through the home server: settings, snoozes, reminders, pins. */
+  private readonly sharing: Sharing
 
   constructor(private deps: ServiceDeps) {
+    this.sharing = new Sharing({
+      store: deps.store,
+      secrets: deps.secrets,
+      place: new LaptopShare({
+        settings: () => this.settings(),
+        defaults: () => DEFAULT_SETTINGS,
+        accounts: () => this.emails(),
+        colorOf: (email) => this.identity(email).color,
+        takeSettings: (part) => this.takeShared(part),
+        store: deps.store,
+        now: () => this.deps.now(),
+        changed: () => this.deps.changed()
+      }),
+      serverFor: (url, user, secret) => (deps.openShare ?? ((u, n, p) => new HttpSharedServer(u, n, p, this.post)))(url, user, secret),
+      changed: () => this.deps.changed(),
+      now: () => this.deps.now(),
+      settleMs: deps.shareSettleMs,
+      pollSeconds: deps.sharePollSeconds
+    })
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
@@ -723,13 +755,14 @@ export class MailService {
   }
 
   async syncAll(): Promise<void> {
-    await Promise.all(this.emails().map((email) => this.syncOne(email)))
+    await Promise.all([...this.emails().map((email) => this.syncOne(email)), this.sharing.check()])
   }
 
   /** After waking from sleep, or when the network changes: every connection may be dead, so each
    *  watch starts again, the waits between tries start over, and every account syncs. A pass that
    *  runs before the network is back is tried again within seconds. */
   async reconnect(): Promise<void> {
+    this.sharing.restart()
     for (const email of [...this.retries.keys()]) this.stopRetrying(email)
     if (this.watching) {
       this.stopWatching()
@@ -1113,7 +1146,9 @@ export class MailService {
     const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
     // Back as a snooze comes back, and told of the same way.
-    const woken = this.store.wokenBetween(this.lastTick, now) + this.store.settleReminders(now, (email) => this.ownAddresses(email))
+    const back = this.store.settleReminders(now, (email) => this.ownAddresses(email))
+    if (back > 0) this.sharing.changedHere()
+    const woken = this.store.wokenBetween(this.lastTick, now) + back
     this.lastTick = now
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
@@ -1172,6 +1207,7 @@ export class MailService {
       this.change(email, states, action, group, wait)
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unremind(ref))
+      if (endsSnooze(action)) this.sharing.changedHere()
       if (action.kind === 'read') mine.forEach((ref) => this.store.seeReminder(ref))
     }
     return group
@@ -1278,12 +1314,14 @@ export class MailService {
     targets.forEach((ref) => this.store.keepOutside(ref))
     const back = away.length > 0 ? this.act(away, { kind: 'inbox' }, true) : null
     targets.forEach((ref) => this.store.snooze(ref, now, until))
+    this.sharing.changedHere()
     this.deps.changed()
     return back
   }
 
   unsnooze(targets: ThreadRef[]): void {
     targets.forEach((ref) => this.store.unsnooze(ref))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -1296,11 +1334,13 @@ export class MailService {
     if (!message) throw new Error("That message isn't here any more.")
     if (!this.ownAddresses(message.account).includes(message.from.address.toLowerCase())) throw new Error('Only for mail you sent.')
     this.store.remind({ account: message.account, thread: message.thread, messageId: message.messageId }, message.date, until)
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
   unremind(targets: ThreadRef[]): void {
     targets.forEach((ref) => this.store.unremind(ref))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -1334,10 +1374,11 @@ export class MailService {
     return list
   }
 
-  /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
+  /** Nothing goes to the mail server: a pin is a note about a thread, kept here and shared with the phone. */
   pin(targets: ThreadRef[], on: boolean): void {
     const now = this.deps.now()
     targets.forEach((ref) => (on ? this.store.pin(ref, now) : this.store.unpin(ref)))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -2107,6 +2148,7 @@ export class MailService {
   /** The app is closing for good. Mail that's only waiting out Undo goes now, and so do changes, or
    *  both would sit here until the next launch. Mail set for later is left to wait for its time. */
   async finishUp(): Promise<void> {
+    const shared = this.sharing.finish()
     const now = this.deps.now()
     for (const draft of this.store.dueDrafts(now + this.settings().undoSeconds * 1000)) {
       this.store.saveDraft({ ...draft, sendAt: now })
@@ -2116,6 +2158,7 @@ export class MailService {
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))
+    await shared
   }
 
   /** Remakes the previews of mail stored by an older version, in small steps. The tag means it
@@ -2292,6 +2335,7 @@ export class MailService {
 
   private saveSettings(settings: Settings): void {
     this.store.setMeta('settings', JSON.stringify(settings))
+    this.sharing.changedHere()
   }
 
   /** Waiting mail moves to the next slot of the new timetable. Measuring from now, not from when it
@@ -2421,6 +2465,16 @@ export class MailService {
     }
   }
 
+  /** When today's Deliver nows were used, here or on the phone. */
+  private earlyReleases(): number[] {
+    try {
+      const saved = JSON.parse(this.store.meta('early') ?? '{}') as { releases?: unknown }
+      return Array.isArray(saved.releases) ? saved.releases.filter((at): at is number => Number.isInteger(at)) : []
+    } catch {
+      return []
+    }
+  }
+
   private earlyLeft(): number {
     return Math.max(0, this.settings().batch.earlyPerDay - this.earlyUsed())
   }
@@ -2440,12 +2494,89 @@ export class MailService {
     this.earlyStarted = null
     const released = this.store.releaseAll(now)
     if (released > 0) {
-      this.store.setMeta('early', JSON.stringify({ day: dayKey(now), used: this.earlyUsed() + 1 }))
+      // When, as well as how many: the phone lets in what was waiting at each of these moments too.
+      const day = dayKey(now)
+      const releases = this.earlyUsed() > 0 ? [...this.earlyReleases(), now] : [now]
+      this.store.setMeta('early', JSON.stringify({ day, used: this.earlyUsed() + 1, releases }))
+      this.sharing.changedHere()
     }
     this.lastTick = now
     this.deps.changed()
     await this.report('early', released)
     return released
+  }
+
+  /** Sharing with the phone, as Settings shows it. */
+  share(): ShareView {
+    return this.sharing.view()
+  }
+
+  /** Signs in to xrnmail-sync with the sync password, or a device login in its place, and syncs. */
+  connectShare(url: string, user: string, secret: string): Promise<void> {
+    return this.sharing.connect(url, user, secret)
+  }
+
+  disconnectShare(): void {
+    this.sharing.disconnect()
+  }
+
+  /** While [why] holds (the window being shown), the phone's changes are waited for and land at once. */
+  holdShare(why: string): void {
+    this.sharing.hold(why)
+  }
+
+  releaseShare(why: string): void {
+    this.sharing.release(why)
+  }
+
+  /** Shared settings the phone changed, each cleaned as the same change from this laptop's own page
+   *  is. One that won't clean (a newer phone's value this version doesn't know) is left as it is
+   *  here, and goes back up with the next sync. Mail waiting for a batch or the Summary moves to the
+   *  new times, as it does when they're changed here. */
+  private takeShared(part: JsonObject): void {
+    const settings = this.settings()
+    let next: Settings = settings
+    const patch: ProfilePatch = {}
+    let retime = false
+    for (const [key, value] of Object.entries(part)) {
+      try {
+        if (key === 'batch') {
+          next = { ...next, batch: cleanBatch({ ...next.batch, ...batchSettings(value) }) }
+          retime = true
+        } else if (key === 'summary') {
+          next = { ...next, summary: cleanSummary({ ...next.summary, ...summarySettings(value) }) }
+          retime = true
+        } else if (key === 'unsubscribed') {
+          next = { ...next, unsubscribed: cleanSenders(texts(value, 5000, 320)) }
+        } else if (key === 'identities') {
+          if (!isObject(value)) continue
+          const accounts = this.emails()
+          const identities: Record<string, Identity> = {}
+          for (const [account, who] of Object.entries(value)) {
+            const email = accounts.find((mine) => mine === account.toLowerCase())
+            if (!email || !isObject(who)) continue
+            try {
+              const own = settings.identities[email] ?? { name: '', signature: '', aliases: [], color: '', notify: true }
+              identities[email] = checkedIdentity({ ...own, name: who['name'] as string, aliases: who['aliases'] as string[], color: who['color'] as string })
+            } catch {
+              // This account's stays as it is here.
+            }
+          }
+          if (Object.keys(identities).length > 0) patch.identities = identities
+        } else {
+          Object.assign(patch, profile({ [key]: value }))
+        }
+      } catch {
+        // Left as it is here.
+      }
+    }
+    if (next !== settings) this.saveSettings(next)
+    if (Object.keys(patch).length > 0) this.saveProfile(patch)
+    if (retime) {
+      this.retime(this.rules())
+      background(this.reportHeld())
+    }
+    this.deps.changed()
   }
 
   async connectHub(rawUrl: string, user: string, secret: string): Promise<void> {
