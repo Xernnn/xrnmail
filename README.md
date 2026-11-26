@@ -21,7 +21,7 @@ adds to it or leaves out, is under [Where it differs](#where-it-differs-from-edi
 *In batches: the next delivery and what's waiting sit over the list, and Deliver now lets it in early.
 More pictures are under [Pictures](#pictures).*
 
-Version 0.1.1, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
+Version 1.0.0, for Linux (an AppImage). Electron 44, React 19 and TypeScript, with
 [imapflow](https://imapflow.com) for IMAP, nodemailer for SMTP and SQLite (`node:sqlite`) for the mail
 kept on the laptop.
 
@@ -59,6 +59,15 @@ kept on the laptop.
   up here to carry on with. Sending or throwing it away takes it off there too, and throwing one away
   has Undo. Offline it waits and
   catches up. Changed in both places, both are kept. See [docs/design.md](docs/design.md#drafts-on-the-server).
+- **Shared with the phone:** Settings, Phone signs in to xrnmail-sync on a home server, with the sync
+  password or a device login made for the laptop. Settings both devices follow (batches, the Summary,
+  straight-through, blocked and muted senders, signatures, templates, names and aliases, swipes and
+  the rest), each thread's snooze, reminder and pin, and the day's Deliver now go both ways: while
+  the window is up a change on the phone shows at once, and from the tray within three minutes.
+  Mail itself never goes there. See [docs/design.md](docs/design.md#shared-with-the-phone).
+- **Sign in again:** after a password or app password changes, Settings, Accounts takes the new one
+  in place of the old, and keeps the account's mail, drafts and settings. A password the server has
+  refused isn't tried again until then, so the account's service never sees a wrong login a minute.
 - **Undo send and send later:** a message waits 10 seconds by default before it leaves.
 - **Send & Archive:** beside Send in a reply or forward to a thread in the inbox, it sends as Send
   does and archives the thread as it goes; Undo of the send brings the thread back too. No set of
@@ -185,6 +194,8 @@ kept on the laptop.
   message, Always from this sender, or always for everyone (Settings, General). A sender trusted that
   way gets their pictures by themselves only on mail the receiving server's checks (DMARC, or a DKIM
   signature from their domain) say is theirs; anything else with their address on it asks again.
+  A picture shown is fetched with Chrome's own user agent, never one naming the app, and never from
+  this laptop, the network it's on or the tailnet.
   A picture that can't be fetched is a plain block, with a count and Try again. A link that shows one
   address and goes to another asks before it opens. See
   [docs/design.md](docs/design.md#hostile-mail).
@@ -496,7 +507,7 @@ server/         xrnmail-sync, the small service that keeps settings and snoozes 
 
 `server/xrnmail-sync.py` is for keeping a phone and this laptop in step: the settings both follow,
 and each thread's snooze, reminder and pin. It never sees mail, address books or passwords, only
-what the person chose, under one login, on a server of the person's own. Settings › Sync signs the
+what the person chose, under one login, on a server of the person's own. Settings › Phone signs the
 laptop in, with the sync password or a device login made for it;
 [docs/design.md](docs/design.md#shared-with-the-phone) says what's shared and how two changes meet.
 
@@ -541,13 +552,14 @@ running as you can drive an app holding your mail passwords or point it at anoth
 ## Tests
 
 ```sh
-npm test                           # logic, against fake IMAP and SMTP servers over real sockets
+npm test                           # logic, against fake IMAP and SMTP servers over real sockets,
+                                   # and the real xrnmail-sync for sharing (needs python3 with bcrypt)
 npm run typecheck
 E2E_HEADLESS=1 npm run test:e2e    # builds, then drives the app, including a hostile email
 python3 -m unittest server/test_xrnmail_sync.py server/test_deploy.py   # the sync service (needs bcrypt)
 ```
 
-About 500 unit tests and 110 UI tests. The UI tests run the built app on a throwaway profile
+About 715 unit tests and 160 UI tests. The UI tests run the built app on a throwaway profile
 against the fake Gmail, with links and file opens recorded rather than opened and no lookups on the
 network. `E2E_HEADLESS=1` keeps their windows off the desktop; without it a tiling window manager
 makes them too narrow for three panes. CI (`.github/workflows/ci.yml`) runs the type check, the unit
