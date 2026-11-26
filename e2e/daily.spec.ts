@@ -2920,7 +2920,7 @@ test('settings come in Edison\'s sections, and what they choose for the list tak
   await settings.click()
   await expect(page.getByRole('navigation', { name: 'Settings' }).getByRole('button')).toHaveText([
     'General', 'Notifications', 'Accounts', 'Appearance', 'Customize Actions', 'Shortcuts', 'Signatures', 'Templates', 'Summary',
-    'Blocked Senders', 'Rules', 'Batches', 'xrnhub', 'About'
+    'Blocked Senders', 'Rules', 'Batches', 'Phone', 'xrnhub', 'About'
   ])
   await page.getByRole('button', { name: 'Appearance' }).click()
   await expect(page.getByRole('heading', { name: 'Appearance', level: 2 })).toBeVisible()
@@ -3014,7 +3014,7 @@ test('Settings and adding an account have short labels and figures, and no sente
   const settings = page.getByRole('dialog', { name: 'Settings' })
   const words = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length
   const pages = await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button').allInnerTexts()
-  expect(pages).toHaveLength(14)
+  expect(pages).toHaveLength(15)
   let seen = ''
   for (const name of pages) {
     await settings.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: name.trim(), exact: true }).click()
@@ -3042,6 +3042,19 @@ test('Settings and adding an account have short labels and figures, and no sente
   await expect(asking.getByRole('heading')).toHaveText('Turn off Summary?')
   await expect(asking.getByRole('button', { name: 'Turn off' })).toBeVisible()
   await expect(asking.locator('p')).toHaveCount(0)
+})
+
+test('Settings, Phone signs in to the home server, and only over https', async () => {
+  run = await launch()
+  const { page } = run
+  await signIn(run)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'Phone' }).click()
+  await page.getByLabel('Address').fill('http://example.com/xrnmail')
+  await page.getByLabel('Name').fill('alex')
+  await page.getByLabel('Password').fill('not sent anywhere')
+  await page.getByRole('button', { name: 'Connect' }).click()
+  await expect(page.locator('.settings-page .error')).toHaveText('Use an https address.')
 })
 
 test('settings can be searched', async () => {

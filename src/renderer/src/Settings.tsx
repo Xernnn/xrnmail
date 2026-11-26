@@ -40,7 +40,7 @@ const TABS: [Tab, string, TabIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
   ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
-  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['sync', 'Sync', Smartphone], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
+  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['sync', 'Phone', Smartphone], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
 ]
 
 /** What each page holds, for the search box. */
@@ -832,7 +832,7 @@ function Hub(props: { settings: Settings }): ReactNode {
 }
 
 /** Sharing with the phone through the home server: settings, snoozes, reminders and pins. The
- *  password box takes a device login too. */
+ *  password box takes a device login (`xrndev_…`) too, as every xrn client's does. */
 function Share(props: { version: number }): ReactNode {
   const [view, setView] = useState<ShareView | null>(null)
   const [url, setUrl] = useState('')
@@ -882,7 +882,7 @@ function Share(props: { version: number }): ReactNode {
         <form className="add-account" onSubmit={(e) => void connect(e)}>
           <label>Address<input type="url" placeholder="https://…/xrnmail" required value={url} onChange={(e) => setUrl(e.target.value)} /></label>
           <label>Name<input autoComplete="off" value={user} onChange={(e) => setUser(e.target.value)} /></label>
-          <label>Password or device login<input type="password" autoComplete="off" required value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
+          <label>Password<input type="password" autoComplete="off" required value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
           {error && <p className="error">{error}</p>}
           <div className="row-end"><button type="submit" className="primary" disabled={busy}>{again ? 'Sign in again' : 'Connect'}</button></div>
         </form>

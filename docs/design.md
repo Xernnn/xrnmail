@@ -758,7 +758,7 @@ the laptop never changed takes the phone's.
 The laptop's side is `src/main/shared-state.ts` (the merge, the phone's rule for rule),
 `shared-sync.ts` (fetch, merge, send, and the login), `shared-place.ts` (what of the settings and the
 store goes in, and what comes back out) and `shared-server.ts` (the requests). It signs in from
-Settings › Sync with the sync password, or a device login (`xrndev_…`) in the same box, sent as a
+Settings › Phone with the sync password, or a device login (`xrndev_…`) in the same box, sent as a
 Bearer token instead; the secret is kept in the keyring like the mail passwords. While the window is
 up it waits on the server for the phone's changes (`?wait=25`); in the tray it looks with each
 three-minute pass through the mail, and a change made here goes about two seconds later. What comes
