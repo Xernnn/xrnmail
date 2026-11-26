@@ -395,7 +395,8 @@ export class MailService {
   private group: number
   /** Short-lived tokens, kept only in memory. What renews them is in the keyring. */
   private tokens = new Map<string, Tokens>()
-  private signingIn: { email: string; clientId: string; code: DeviceCode } | null = null
+  /** A Microsoft sign-in under way: for a new account, or [again] for one that's here. */
+  private signingIn: { email: string; clientId: string; code: DeviceCode; again: boolean } | null = null
   private notes = new Map<string, { text: string; until: number }>()
   /** Changes being made on the server now, by their id. */
   private readonly underWay = new Set<number>()
@@ -587,7 +588,7 @@ export class MailService {
         id: email,
         email,
         ...status,
-        error: status.error ?? (this.isRefused(email) ? refusedWords(this.serviceName(email)) : note && note.until > now ? note.text : null),
+        error: status.error ?? (this.isRefused(email) ? this.refusedText(email) : note && note.until > now ? note.text : null),
         provider: config.provider,
         providerName: provider(config.provider).name,
         labels: config.gmail,
@@ -696,9 +697,13 @@ export class MailService {
     this.watch(email)
   }
 
+  /** For an Outlook account that's here, it's Sign in again: the application ID it signed in with,
+   *  unless another is given, and finishing keeps everything of the account but its sign-in. */
   async startMicrosoft(rawEmail: string, rawClientId: string): Promise<{ code: string; url: string }> {
-    const email = this.cleanEmail(rawEmail)
-    const clientId = rawClientId.trim()
+    const typed = rawEmail.trim().toLowerCase()
+    const again = this.emails().includes(typed) && this.config(typed).signIn === 'microsoft'
+    const email = again ? typed : this.cleanEmail(rawEmail)
+    const clientId = rawClientId.trim() || (again ? this.config(email).clientId || this.settings().microsoftClientId : '')
     if (!/^[0-9a-f-]{36}$/i.test(clientId)) throw new Error('That application ID should look like 00000000-0000-0000-0000-000000000000.')
     let code: DeviceCode
     try {
@@ -706,7 +711,7 @@ export class MailService {
     } catch (e) {
       throw new Error((e as Error).message.includes('application ID') ? (e as Error).message : "Couldn't reach Microsoft.")
     }
-    this.signingIn = { email, clientId, code }
+    this.signingIn = { email, clientId, code, again }
     return { code: code.userCode, url: code.url }
   }
 
@@ -714,7 +719,7 @@ export class MailService {
   async finishMicrosoft(): Promise<void> {
     const pending = this.signingIn
     if (!pending) throw new Error('Start signing in first.')
-    const { email, clientId, code } = pending
+    const { email, clientId, code, again } = pending
     let tokens: Tokens | null = null
     while (!tokens) {
       if (this.signingIn !== pending || this.deps.now() > code.expiresAt) throw new Error('The sign-in code ran out. Try again.')
@@ -722,6 +727,14 @@ export class MailService {
       if (!tokens) await new Promise((resolve) => setTimeout(resolve, code.intervalMs))
     }
     this.signingIn = null
+    if (again) {
+      if (!this.emails().includes(email)) throw new Error('That account is gone.')
+      const config = await this.verify({ ...this.config(email), clientId }, { secret: '', accessToken: tokens.access })
+      this.tokens.set(email, tokens)
+      this.deps.secrets.set(`account:${email}`, tokens.refresh)
+      this.store.setMeta(`config:${email}`, JSON.stringify(config))
+      return this.signedInAgain(email)
+    }
     const domain = email.split('@')[1] ?? ''
     const chosen = provider('outlook')
     // Personal addresses and company ones use different outgoing servers.
@@ -764,7 +777,7 @@ export class MailService {
   private async login(email: string): Promise<Login> {
     // Every connection signs in here, so nothing else need know: an account whose password was
     // refused sends no LOGIN until it's entered again.
-    if (this.isRefused(email)) throw new LoginRefused(refusedWords(this.serviceName(email)))
+    if (this.isRefused(email)) throw new LoginRefused(this.refusedText(email))
     const key = `account:${email}`
     const secret = this.deps.secrets.get(key)
     if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
@@ -786,6 +799,12 @@ export class MailService {
     return this.store.meta(`refused:${email}`) === '1'
   }
 
+  /** What an account waiting to be signed in to again says: a password refused, or Microsoft's
+   *  sign-in no longer renewed. */
+  private refusedText(email: string): string {
+    return this.config(email).signIn === 'microsoft' ? SIGN_IN_AGAIN : refusedWords(this.serviceName(email))
+  }
+
   /** A refused password is tried again by nothing: not the watch every minute, not the passes, not the
    *  changes or drafts waiting to go. Each try was a wrong LOGIN, sixty or more an hour per account,
    *  which Gmail answers by blocking sign-ins for a while. It waits for Sign in again. */
@@ -799,7 +818,7 @@ export class MailService {
     const watch = this.watchers.get(email)
     if (watch) this.endWatch(watch)
     this.watchers.delete(email)
-    this.statusOf(email).error = refusedWords(this.serviceName(email))
+    this.statusOf(email).error = this.refusedText(email)
     this.deps.changed()
   }
 
@@ -884,7 +903,13 @@ export class MailService {
   /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
   private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
     if (error instanceof LoginRefused) return // nothing went out
-    if (refusedLogin(error)) this.refuse(email)
+    // A token turned away is no wrong password: Exchange ends a session's token early (a password
+    // change, a new network) and says AUTHENTICATE failed now and then. The next sign-in renews it,
+    // and only Microsoft refusing to renew it means signing in again.
+    if (this.config(email).signIn === 'microsoft') {
+      if (refusedLogin(error)) this.tokens.delete(email)
+      if (error instanceof SignInExpired) this.refuse(email)
+    } else if (refusedLogin(error)) this.refuse(email)
     this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
   }
 
@@ -898,7 +923,7 @@ export class MailService {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
     if (this.isRefused(email)) {
-      status.error = refusedWords(this.serviceName(email))
+      status.error = this.refusedText(email)
       return void this.deps.changed()
     }
     // Asked for while one runs, by waking, the window coming back or the button, it goes again once
@@ -1078,7 +1103,9 @@ export class MailService {
       if (!(source && this.cut.has(source))) {
         status.error = describeFailure(e, service)
         if (!removed()) this.logFailure(email, 'sync', e, started)
-        if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
+        // A token turned away is renewed for the next try, which is soon, as for a lost connection.
+        const renew = config.signIn === 'microsoft' && refusedLogin(e)
+        if ((status.error === unreachable(service) || renew) && !removed()) this.retrySoon(email)
       }
     } finally {
       if (source && this.passing.get(email) === source) this.passing.delete(email)

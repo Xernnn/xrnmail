@@ -450,8 +450,9 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
 function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Identities; saveKeep(days: number): void; ask: Ask }): ReactNode {
   const { accounts, settings, saveKeep, ask, ids } = props
   const [adding, setAdding] = useState(false)
-  /** The account whose password is being entered again, and what's typed. */
-  const [again, setAgain] = useState<{ email: string; secret: string; busy: boolean } | null>(null)
+  /** The account whose password is being entered again, and what's typed; for an Outlook account,
+   *  the code to enter on Microsoft's page instead. */
+  const [again, setAgain] = useState<{ email: string; secret: string; busy: boolean; microsoft?: boolean; code?: string } | null>(null)
   /** The accounts with a photo chosen here, rather than their Gravatar or none. */
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -467,6 +468,19 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
       setPhotos(await window.mail.photos())
     } catch (e) {
       setError(problem(e))
+    }
+  }
+  const signInWithMicrosoft = async (email: string): Promise<void> => {
+    setError('')
+    setAgain({ email, secret: '', busy: true, microsoft: true })
+    try {
+      const { code } = await window.mail.startMicrosoft(email, '')
+      setAgain({ email, secret: '', busy: true, microsoft: true, code })
+      await window.mail.finishMicrosoft()
+      setAgain(null)
+    } catch (e) {
+      setError(problem(e))
+      setAgain(null)
     }
   }
   const signIn = async (event: FormEvent): Promise<void> => {
@@ -490,9 +504,10 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
           <div className="line" key={a.id}>
             <AccountFace account={a} size={28} />
             <span className="grow">{a.email} <span className="muted">{a.providerName}</span></span>
-            {a.provider !== 'outlook' && (
-              <button className="quiet" aria-label={`Sign in to ${a.email} again`} onClick={() => setAgain({ email: a.email, secret: '', busy: false })}>Sign in again</button>
-            )}
+            <button className="quiet" aria-label={`Sign in to ${a.email} again`} disabled={again?.busy === true}
+              onClick={() => (a.provider === 'outlook' ? void signInWithMicrosoft(a.email) : setAgain({ email: a.email, secret: '', busy: false }))}>
+              Sign in again
+            </button>
             {photos.includes(a.email)
               ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
               : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
@@ -502,7 +517,8 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
             </button>
           </div>
         ))}
-        {again && (
+        {again?.code && <p className="device-code">Code <strong>{again.code}</strong></p>}
+        {again && !again.microsoft && (
           <form className="add-account" onSubmit={(e) => void signIn(e)}>
             <label>{again.email}<input type="password" autoComplete="off" required autoFocus aria-label={`New password for ${again.email}`}
               value={again.secret} onChange={(e) => setAgain({ ...again, secret: e.target.value })} /></label>
