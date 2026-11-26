@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from 'react'
 import {
-  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal
+  AtSign, Ban, Bell, Clock, Info, Keyboard, LayoutTemplate, ListFilter, MousePointerClick, Newspaper, Palette, Signature, SlidersHorizontal, Smartphone
 } from 'lucide-react'
 import {
-  INLINE_PICTURES, QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type Signature as SignatureKept, type SummarySettings,
-  type SwipeAction, type Template
+  INLINE_PICTURES, QUICK_SLOTS, type AccountView, type Identity, type ProfilePatch, type QuickAction, type SenderList, type Settings, type ShareView, type Signature as SignatureKept,
+  type SummarySettings, type SwipeAction, type Template
 } from '@shared/types'
 import { asDataUrl, escapeAttribute, FormatBar, signatureMarkup, textOf } from './Composer'
 import { SettingsKeeper, type SettingsChange } from '@shared/keeper'
@@ -28,7 +28,7 @@ const KEEP_DAYS = [30, 90, 365, 1095]
 type Ask = (asking: Omit<Question, 'answer'>) => Promise<boolean>
 
 export type Tab =
-  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'rules' | 'batches' | 'hub' | 'about'
+  'general' | 'notifications' | 'accounts' | 'appearance' | 'actions' | 'shortcuts' | 'signatures' | 'templates' | 'summary' | 'blocked' | 'rules' | 'batches' | 'sync' | 'hub' | 'about'
 
 type TabIcon = ComponentType<{ className?: string; size?: number; 'aria-hidden'?: 'true' }>
 
@@ -40,7 +40,7 @@ const TABS: [Tab, string, TabIcon][] = [
   ['general', 'General', SlidersHorizontal], ['notifications', 'Notifications', Bell], ['accounts', 'Accounts', AtSign],
   ['appearance', 'Appearance', Palette], ['actions', 'Customize Actions', MousePointerClick], ['shortcuts', 'Shortcuts', Keyboard],
   ['signatures', 'Signatures', Signature], ['templates', 'Templates', LayoutTemplate], ['summary', 'Summary', Newspaper], ['blocked', 'Blocked Senders', Ban],
-  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
+  ['rules', 'Rules', ListFilter], ['batches', 'Batches', Clock], ['sync', 'Phone', Smartphone], ['hub', 'xrnhub', HubIcon], ['about', 'About', Info]
 ]
 
 /** What each page holds, for the search box. */
@@ -57,6 +57,7 @@ const TAB_WORDS: Record<Tab, string> = {
   blocked: 'senders block unblock trash',
   rules: 'mail rules filters conditions actions label move folder archive read flag delete important summary straight through apply now',
   batches: 'new mail as it arrives live real time instantly push idle in batches delivery times straight through vip early deliver now',
+  sync: 'phone share home server device login password connect',
   hub: 'connect counts',
   about: 'version'
 }
@@ -449,6 +450,9 @@ function Notifications(props: { accounts: AccountView[]; ids: Identities; settin
 function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Identities; saveKeep(days: number): void; ask: Ask }): ReactNode {
   const { accounts, settings, saveKeep, ask, ids } = props
   const [adding, setAdding] = useState(false)
+  /** The account whose password is being entered again, and what's typed; for an Outlook account,
+   *  the code to enter on Microsoft's page instead. */
+  const [again, setAgain] = useState<{ email: string; secret: string; busy: boolean; microsoft?: boolean; code?: string } | null>(null)
   /** The accounts with a photo chosen here, rather than their Gravatar or none. */
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -466,6 +470,32 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
       setError(problem(e))
     }
   }
+  const signInWithMicrosoft = async (email: string): Promise<void> => {
+    setError('')
+    setAgain({ email, secret: '', busy: true, microsoft: true })
+    try {
+      const { code } = await window.mail.startMicrosoft(email, '')
+      setAgain({ email, secret: '', busy: true, microsoft: true, code })
+      await window.mail.finishMicrosoft()
+      setAgain(null)
+    } catch (e) {
+      setError(problem(e))
+      setAgain(null)
+    }
+  }
+  const signIn = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!again) return
+    setError('')
+    setAgain({ ...again, busy: true })
+    try {
+      await window.mail.signInAgain(again.email, again.secret)
+      setAgain(null)
+    } catch (e) {
+      setError(problem(e))
+      setAgain({ ...again, busy: false })
+    }
+  }
   return (
     <>
       <section>
@@ -474,6 +504,10 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
           <div className="line" key={a.id}>
             <AccountFace account={a} size={28} />
             <span className="grow">{a.email} <span className="muted">{a.providerName}</span></span>
+            <button className="quiet" aria-label={`Sign in to ${a.email} again`} disabled={again?.busy === true}
+              onClick={() => (a.provider === 'outlook' ? void signInWithMicrosoft(a.email) : setAgain({ email: a.email, secret: '', busy: false }))}>
+              Sign in again
+            </button>
             {photos.includes(a.email)
               ? <button className="quiet" aria-label={`Remove the photo of ${a.email}`} onClick={() => void photo(a.email, false)}>Remove photo</button>
               : <button className="quiet" aria-label={`Choose a photo for ${a.email}`} onClick={() => void photo(a.email, true)}>Choose photo…</button>}
@@ -483,6 +517,17 @@ function Accounts(props: { accounts: AccountView[]; settings: Settings; ids: Ide
             </button>
           </div>
         ))}
+        {again?.code && <p className="device-code">Code <strong>{again.code}</strong></p>}
+        {again && !again.microsoft && (
+          <form className="add-account" onSubmit={(e) => void signIn(e)}>
+            <label>{again.email}<input type="password" autoComplete="off" required autoFocus aria-label={`New password for ${again.email}`}
+              value={again.secret} onChange={(e) => setAgain({ ...again, secret: e.target.value })} /></label>
+            <div className="row-end">
+              <button type="button" className="quiet" onClick={() => setAgain(null)}>Cancel</button>
+              <button type="submit" className="primary" disabled={again.busy}>Sign in</button>
+            </div>
+          </form>
+        )}
         {error && <p className="error">{error}</p>}
         {adding ? <AddAccount done={() => setAdding(false)} /> : <button className="quiet" onClick={() => setAdding(true)}>Add account</button>}
       </section>
@@ -802,6 +847,67 @@ function Hub(props: { settings: Settings }): ReactNode {
   )
 }
 
+/** Sharing with the phone through the home server: settings, snoozes, reminders and pins. The
+ *  password box takes a device login (`xrndev_…`) too, as every xrn client's does. */
+function Share(props: { version: number }): ReactNode {
+  const [view, setView] = useState<ShareView | null>(null)
+  const [url, setUrl] = useState('')
+  const [user, setUser] = useState('')
+  const [secret, setSecret] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void window.mail.share().then((found) => {
+      setView(found)
+      // Signing in again starts from where it signed in before.
+      if (found.on) {
+        setUrl((typed) => typed || found.url)
+        setUser((typed) => typed || found.user)
+      }
+    })
+  }, [props.version])
+
+  if (!view) return null
+  // Only when a new login is what it waits for: a busy or unreachable server is tried again by itself.
+  const again = view.on && view.stopped
+  const connect = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      await window.mail.connectShare(url, user, secret)
+      setSecret('')
+      setView(await window.mail.share())
+    } catch (e) {
+      setError(problem(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section>
+      {view.on && (
+        <div className="line">
+          <span className="grow">{view.url}</span>
+          <span className={view.problem ? 'error' : 'muted'} role="status">{view.problem ?? (view.syncedAt ? clock(view.syncedAt) : '')}</span>
+          <button className="quiet danger" onClick={() => void window.mail.disconnectShare().then(() => window.mail.share()).then(setView)}>Disconnect</button>
+        </div>
+      )}
+      {(!view.on || again) && (
+        <form className="add-account" onSubmit={(e) => void connect(e)}>
+          <label>Address<input type="url" placeholder="https://…/xrnmail" required value={url} onChange={(e) => setUrl(e.target.value)} /></label>
+          <label>Name<input autoComplete="off" value={user} onChange={(e) => setUser(e.target.value)} /></label>
+          <label>Password<input type="password" autoComplete="off" required value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
+          {error && <p className="error">{error}</p>}
+          <div className="row-end"><button type="submit" className="primary" disabled={busy}>{again ? 'Sign in again' : 'Connect'}</button></div>
+        </form>
+      )}
+    </section>
+  )
+}
+
 /** The page chosen at the left. */
 function Pages(props: {
   page: Tab
@@ -830,6 +936,7 @@ function Pages(props: {
       {page === 'blocked' && <Blocked blocked={settings.blocked} senders={senders} />}
       {page === 'rules' && <Rules accounts={accounts} version={props.version} undoSeconds={settings.undoActionSeconds} ask={props.ask} />}
       {page === 'batches' && <Batches key={settings.batch.vip.join()} batch={settings.batch} change={change} />}
+      {page === 'sync' && <Share version={props.version} />}
       {page === 'hub' && <Hub settings={settings} />}
       {page === 'about' && <About />}
     </div>

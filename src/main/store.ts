@@ -1186,6 +1186,52 @@ export class Store {
     this.db.prepare('DELETE FROM pins WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
   }
 
+  /** Every snooze, pin and reminder by thread, as they're shared with the phone. A reminder still
+   *  waiting for its thread (set as a message went, before the copy in Sent is here) isn't one yet. */
+  snoozes(): (ThreadRef & { at: number; until: number })[] {
+    return this.all('SELECT account, thread, at, until FROM snoozes ORDER BY account, thread')
+      .map((r) => ({ account: String(r['account']), thread: String(r['thread']), at: Number(r['at']), until: Number(r['until']) }))
+  }
+
+  pins(): (ThreadRef & { at: number })[] {
+    return this.all('SELECT account, thread, at FROM pins ORDER BY account, thread')
+      .map((r) => ({ account: String(r['account']), thread: String(r['thread']), at: Number(r['at']) }))
+  }
+
+  reminders(): (ThreadRef & { at: number; until: number; fired: boolean })[] {
+    return this.all("SELECT account, thread, at, until, fired FROM reminders WHERE thread != '' AND id IN (SELECT MAX(id) FROM reminders GROUP BY account, thread) ORDER BY account, thread")
+      .map((r) => ({ account: String(r['account']), thread: String(r['thread']), at: Number(r['at']), until: Number(r['until']), fired: Number(r['fired']) === 1 }))
+  }
+
+  snoozeOf(ref: ThreadRef): { at: number; until: number } | null {
+    const row = this.one('SELECT at, until FROM snoozes WHERE account = ? AND thread = ?', ref.account, ref.thread)
+    return row ? { at: Number(row['at']), until: Number(row['until']) } : null
+  }
+
+  pinOf(ref: ThreadRef): number | null {
+    const row = this.one('SELECT at FROM pins WHERE account = ? AND thread = ?', ref.account, ref.thread)
+    return row ? Number(row['at']) : null
+  }
+
+  reminderOf(ref: ThreadRef): { at: number; until: number; fired: boolean } | null {
+    const row = this.one('SELECT at, until, fired FROM reminders WHERE account = ? AND thread = ? ORDER BY id DESC LIMIT 1', ref.account, ref.thread)
+    return row ? { at: Number(row['at']), until: Number(row['until']), fired: Number(row['fired']) === 1 } : null
+  }
+
+  /** A pin as the other device has it, its time too. */
+  setPin(ref: ThreadRef, at: number): void {
+    this.db.prepare('INSERT OR REPLACE INTO pins(account, thread, at) VALUES(?,?,?)').run(ref.account, ref.thread, at)
+  }
+
+  /** A thread's reminder as the other device has it. One that has come back there has come back
+   *  here too, and hasn't been opened here since. */
+  setReminder(ref: ThreadRef, at: number, until: number, fired: boolean): void {
+    this.inTransaction(() => {
+      this.db.prepare('DELETE FROM reminders WHERE account = ? AND thread = ?').run(ref.account, ref.thread)
+      this.db.prepare('INSERT INTO reminders(account, thread, at, until, fired) VALUES(?,?,?,?,?)').run(ref.account, ref.thread, at, until, fired ? 1 : 0)
+    })
+  }
+
   /** A thread was opened: it goes to the top of Recently Seen, and only the newest [RECENT_KEPT] stay. */
   saw(ref: ThreadRef, at: number): void {
     this.inTransaction(() => {
@@ -1560,6 +1606,12 @@ export class Store {
   /** Delivering early is for the batch: what waits for the Summary keeps waiting for it. */
   releaseAll(now: number): number {
     return Number(this.db.prepare('UPDATE messages SET release_at = ? WHERE release_at > ? AND summary = 0').run(now, now).changes)
+  }
+
+  /** What was waiting at [at] lands now: the other device's Deliver now, used then. Mail that came
+   *  after it goes on waiting, as it would have there. */
+  releaseWaitingAt(at: number, now: number): number {
+    return Number(this.db.prepare('UPDATE messages SET release_at = ? WHERE arrived <= ? AND release_at > ? AND summary = 0').run(now, at, now).changes)
   }
 
   /** Moves waiting mail onto a new timetable, after the batch or Summary settings change, and into or

@@ -260,7 +260,64 @@ describe('a watch on the inbox that drops', () => {
   })
 })
 
+// A revoked app password was tried again by the watch every minute, by every pass and by every
+// change waiting to go: sixty or more wrong LOGINs an hour per account, which Gmail answers by
+// blocking sign-ins for a while.
+describe('a password the server refuses', () => {
+  const logins = (): number => gmail.commands.filter((line) => line === 'LOGIN').length
+
+  it('is tried again by nothing, even after a restart, until it is entered again', async () => {
+    fakeTimers()
+    service.watchAll()
+    await eventually(() => expect(gmail.idling).toBe(1))
+    gmail.secret = 'efghefghefghefgh' // revoked on Google's side, and a new one made
+    smtp.secret = gmail.secret
+    await service.reconnect() // the watch and a pass sign in again, and are refused
+    await eventually(() => expect(error()).toBe('Gmail refused this password.'))
+    await eventually(() => expect(service.accounts()[0]?.syncing).toBe(false))
+    const refused = logins()
+
+    service.act([{ account: ME, thread: 'any' }], { kind: 'archive' })
+    for (let minute = 0; minute < 10; minute++) {
+      await vi.advanceTimersByTimeAsync(60_000)
+      clock += 60_000
+      await service.syncAll()
+      await service.tick()
+    }
+    await service.reconnect()
+    service.stopWatching()
+    const restarted = make()
+    restarted.watchAll()
+    await restarted.syncAll()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    expect(logins()).toBe(refused)
+    expect(restarted.accounts()[0]?.error).toBe('Gmail refused this password.')
+    restarted.stopWatching()
+
+    await service.signInAgain(ME, gmail.secret)
+    service.watchAll()
+    await eventually(() => expect(error()).toBeNull())
+    await eventually(() => expect(gmail.idling).toBe(1))
+  })
+})
+
 describe('the network changing', () => {
+  // sync.log, 24-25 Nov: passes that failed after 61 s (ETIMEOUT) and after 113-186 s
+  // (NoConnection), each holding its account all that time. One on a connection the network had
+  // dropped waited for imapflow to give up on it: 60 s of quiet, or with the folder locked, a quiet
+  // it expects, 60 s, a NOOP, and 60 s more. A change of network now lets go of it at once.
+  it('lets go of a pass stuck on the old connection, and passes again at once on the new one', async () => {
+    gmail.stall = /^LIST$/ // the pass was on the wire as the VPN reconnected
+    const stuck = service.syncAll()
+    await eventually(() => expect(gmail.commands.at(-1)).toMatch(/^LIST/))
+    gmail.stall = null
+    const before = passes()
+    await service.reconnect()
+    await soon(() => expect(passes() - before).toBe(1), 5_000)
+    await stuck
+    await soon(() => expect(service.accounts()[0]).toMatchObject({ syncing: false, error: null }))
+  })
+
   it('starts the watch over and syncs, leaving one watch', async () => {
     service.watchAll()
     await eventually(() => expect(gmail.idling).toBe(1))

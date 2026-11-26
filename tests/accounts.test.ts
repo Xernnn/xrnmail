@@ -702,6 +702,57 @@ describe('Outlook sign-in', () => {
     expect(subjects(service.list({ kind: 'inbox' }))).toEqual(['Kept'])
   })
 
+  const authenticates = (): number => outlook.commands.filter((c) => c.startsWith('AUTHENTICATE')).length
+  const renewals = (): number => post.mock.calls.filter(([, init]) => String((init as { body?: string })?.body ?? '').includes('grant_type=refresh_token')).length
+
+  // One refused AUTHENTICATE marked an Outlook account refused for good, as a wrong password is:
+  // nothing renewed its token again, and the only way back was removing it, which threw away its
+  // drafts and the changes waiting to go. Exchange turns a token away early now and then (a
+  // password change elsewhere, a new network), and a renewed one is let in.
+  it('a token turned away is renewed, not taken for a wrong password, and the account goes on', async () => {
+    microsoft({ refresh: json({ access_token: 'token-2', refresh_token: 'renew-2', expires_in: 3600 }) })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    outlook.options.token = 'token-2' // token-1 no longer let in, though it hasn't run out
+    await service.syncAll()
+    await vi.waitFor(() => expect(service.accounts()[0]).toMatchObject({ error: null, syncing: false }), { timeout: 15_000, interval: 15 })
+    expect(renewals()).toBe(1)
+    expect(secrets.get(`account:${O}`)).toBe('renew-2')
+  })
+
+  it('once Microsoft stops renewing, asks nothing more of it, and signs in again in place, keeping drafts and changes', async () => {
+    outlook.add(rawMail({ subject: 'Kept' }), { arrived: new Date(at(8)) })
+    microsoft({
+      refresh: json({ error: 'invalid_grant' }, false),
+      poll: [json({ access_token: 'token-1', refresh_token: 'renew-1', expires_in: 3600 }), json({ access_token: 'token-3', refresh_token: 'renew-3', expires_in: 3600 })]
+    })
+    await service.startMicrosoft(O, CLIENT)
+    await service.finishMicrosoft()
+    await settled(O)
+    const draft = await service.startDraft({ kind: 'new', account: O })
+    service.saveDraft(draft.id, { account: O, from: '', to: 'ada@example.com', cc: '', bcc: '', subject: 'Note', html: 'Hi', text: 'Hi', quote: null })
+    const [row] = service.list({ kind: 'inbox' })
+    clock += 3_600_000 // the token has run out, and Microsoft won't renew it
+    await service.syncAll()
+    expect(service.accounts()[0]?.error).toBe('Sign in to this account again.')
+    service.act([{ account: O, thread: row?.thread ?? '' }], { kind: 'archive' })
+    const [asked, sent] = [renewals(), authenticates()]
+    await service.syncAll()
+    await service.tick()
+    expect([renewals(), authenticates()]).toEqual([asked, sent])
+
+    outlook.options.token = 'token-3'
+    smtp.token = 'token-3'
+    await service.startMicrosoft(O, '') // the account's own application ID
+    await service.finishMicrosoft()
+    expect(secrets.get(`account:${O}`)).toBe('renew-3')
+    await vi.waitFor(() => expect(service.accounts()[0]).toMatchObject({ error: null, syncing: false }), { timeout: 15_000, interval: 15 })
+    expect(service.accounts()).toHaveLength(1)
+    expect(service.drafts().map((d) => d.subject)).toEqual(['Note'])
+    expect(store.dueActions(O, clock + UNDO_MS + 1)).toHaveLength(1) // the archive still waits its turn
+  })
+
   it('waits out a Microsoft that is busy or rate-limited, with mail due to go still queued', async () => {
     let renewal = json({ error: 'temporarily_unavailable' }, false, 503)
     microsoft({ refresh: () => renewal })

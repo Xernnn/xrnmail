@@ -511,6 +511,20 @@ export interface Detected {
   smtp?: Server
 }
 
+/** Sharing with the phone, as Settings shows it. */
+export interface ShareView {
+  on: boolean
+  url: string
+  user: string
+  /** When the laptop last agreed with the server. */
+  syncedAt: number | null
+  /** What went wrong last, in a word or two, until it works again. */
+  problem: string | null
+  /** Waiting for the login to be entered again: nothing is asked of the server until then. */
+  stopped: boolean
+  busy: boolean
+}
+
 /** What the page may ask for. The preload script exposes exactly this as `window.mail`. */
 export interface MailApi {
   accounts(): Promise<AccountView[]>
@@ -521,6 +535,8 @@ export interface MailApi {
   /** A guess at the service behind an address, from its domain's public records. */
   detectProvider(email: string): Promise<Detected>
   removeAccount(id: string): Promise<void>
+  /** A new password for an account that's here, in place of the one kept. Nothing else changes. */
+  signInAgain(email: string, secret: string): Promise<void>
   syncNow(): Promise<void>
   overview(): Promise<Overview>
   list(query: ListQuery, limit?: number): Promise<ThreadRow[]>
@@ -562,6 +578,11 @@ export interface MailApi {
   saveBackfill(days: number): Promise<void>
   connectHub(url: string, user: string, secret: string): Promise<void>
   disconnectHub(): Promise<void>
+  /** Sharing settings, snoozes, reminders and pins with the phone, through xrnmail-sync. */
+  share(): Promise<ShareView>
+  /** [secret] is the sync password, or a device login (`xrndev_…`) in its place. */
+  connectShare(url: string, user: string, secret: string): Promise<void>
+  disconnectShare(): Promise<void>
   /** Holding back a batch has a door: ask, wait, and only then does it open. */
   beginEarly(): Promise<number>
   finishEarly(): Promise<number>

@@ -1,6 +1,6 @@
 import type {
   AccountConfig, AccountView, Address, BatchSettings, Detected, Draft, DraftEdit, DraftStart, HeaderDetails, Identity, ListQuery, MailAction, MessageDetails, MessageView, QuickAction,
-  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
+  NewAccount, Overview, ProfilePatch, Rsvp, SenderList, Server, Settings, ShareView, Signature, Subscription, SummarySettings, SwipeAction, ThreadRef, ThreadRow, UnsubscribeResult
 } from '@shared/types'
 import { IMPORTANT, INLINE_PICTURES, QUICK_SLOTS, signatureFor } from '@shared/types'
 import { editedSenders } from '@shared/keeper'
@@ -32,6 +32,11 @@ import type { Failure } from './sync-log'
 import type { DraftCopy, DraftLink, Located, MessageDetail, PendingAction, Store } from './store'
 import { syncAccount, type Ruled } from './sync'
 import { Refused, type MailWriter, type Moved } from './writer'
+import { batchSettings, identity as checkedIdentity, profile, summarySettings, texts } from './checks'
+import { LaptopShare } from './shared-place'
+import { HttpSharedServer, type SharedServer } from './shared-server'
+import { blankIdentity, isObject, type JsonObject } from './shared-state'
+import { Sharing } from './shared-sync'
 
 /** Everything the app does, with the clock and the outside world passed in. */
 
@@ -179,6 +184,12 @@ export interface ServiceDeps {
   earlyWaitSeconds?: number
   /** How long a search waits for typing to stop before asking the servers about older mail. */
   searchSettleMs?: number
+  /** Where what's shared with the phone is kept: xrnmail-sync on the home server. */
+  openShare?(url: string, user: string, secret: string): SharedServer
+  /** How long after a change made here it goes to the home server, and how long each wait there for
+   *  the phone's lasts, for tests to shorten. */
+  shareSettleMs?: number
+  sharePollSeconds?: number
 }
 
 /** What names a message on its account's server whatever folder it's in: Gmail's own id, or its
@@ -285,14 +296,26 @@ const unreachable = (service: string): string => `Couldn't reach ${service}.`
 const BUSY_CODES = new Set(['UNAVAILABLE', 'INUSE', 'LIMIT', 'SERVERBUG'])
 const BUSY_WORDS = /too many (simultaneous )?connections|try again later/i
 
+const refusedWords = (service: string): string => `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+
+/** The server turned the password away: not a busy one, which is waited out like a lost connection. */
+export function refusedLogin(error: unknown): boolean {
+  const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string } | null
+  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
+  return e?.authenticationFailed === true && !busy
+}
+
+/** Asked for a connection to an account whose password the server refused: nothing is sent. */
+class LoginRefused extends Error {}
+
 /** Fixed words: what a server says is never shown, and can't carry anything back to the page. It's
  *  only read for whether a sign-in turned away was busy, which is waited out like a lost connection
  *  and tried again: told "refused this password", people changed a password that was right. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
   const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
-  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
-  if (e?.authenticationFailed && !busy) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  if (error instanceof LoginRefused) return error.message
+  if (refusedLogin(error)) return refusedWords(service)
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
@@ -372,7 +395,8 @@ export class MailService {
   private group: number
   /** Short-lived tokens, kept only in memory. What renews them is in the keyring. */
   private tokens = new Map<string, Tokens>()
-  private signingIn: { email: string; clientId: string; code: DeviceCode } | null = null
+  /** A Microsoft sign-in under way: for a new account, or [again] for one that's here. */
+  private signingIn: { email: string; clientId: string; code: DeviceCode; again: boolean } | null = null
   private notes = new Map<string, { text: string; until: number }>()
   /** Changes being made on the server now, by their id. */
   private readonly underWay = new Set<number>()
@@ -384,6 +408,9 @@ export class MailService {
   private rewatches = new Map<string, { losses: number; timer: NodeJS.Timeout | null }>()
   /** Something arrived, or a sync was asked for, during a sync, too late for it to have seen. */
   private syncAgain = new Set<string>()
+  /** Each account's pass under way, by its connection, and those cut short because the network changed. */
+  private passing = new Map<string, MailSource>()
+  private readonly cut = new WeakSet<MailSource>()
   /** Accounts whose passes couldn't reach the server: how many tries in a row, and the next one. */
   private retries = new Map<string, { tries: number; timer: NodeJS.Timeout | null }>()
   /** How many times each account has been removed. A pass notes it as it starts, and stops when it
@@ -407,8 +434,29 @@ export class MailService {
   private tooBig = new Set<string>()
   /** Searches of the servers, for mail from before the keeping window. */
   private readonly old: OldMail
+  /** What's shared with the phone through the home server: settings, snoozes, reminders, pins. */
+  private readonly sharing: Sharing
 
   constructor(private deps: ServiceDeps) {
+    this.sharing = new Sharing({
+      store: deps.store,
+      secrets: deps.secrets,
+      place: new LaptopShare({
+        settings: () => this.settings(),
+        defaults: () => DEFAULT_SETTINGS,
+        accounts: () => this.emails(),
+        colorOf: (email) => this.identity(email).color,
+        takeSettings: (part) => this.takeShared(part),
+        store: deps.store,
+        now: () => this.deps.now(),
+        changed: () => this.deps.changed()
+      }),
+      serverFor: (url, user, secret) => (deps.openShare ?? ((u, n, p) => new HttpSharedServer(u, n, p, this.post)))(url, user, secret),
+      changed: () => this.deps.changed(),
+      now: () => this.deps.now(),
+      settleMs: deps.shareSettleMs,
+      pollSeconds: deps.sharePollSeconds
+    })
     this.lastTick = deps.now()
     this.group = Math.max(deps.store.lastActionGroup(), deps.now())
     deps.store.failInterrupted(NOT_SURE_SENT)
@@ -540,7 +588,7 @@ export class MailService {
         id: email,
         email,
         ...status,
-        error: status.error ?? (note && note.until > now ? note.text : null),
+        error: status.error ?? (this.isRefused(email) ? this.refusedText(email) : note && note.until > now ? note.text : null),
         provider: config.provider,
         providerName: provider(config.provider).name,
         labels: config.gmail,
@@ -612,9 +660,50 @@ export class MailService {
     this.keepAccount(email, await this.verify(config, { secret }), secret)
   }
 
+  /** A new password, or app password, for an account that's here: checked as adding one is, then
+   *  kept in place of the old one. Nothing else of the account changes. Its mail, drafts, settings
+   *  and the changes waiting to go stay as they are, where removing it and adding it again lost them
+   *  all. Its watch and a pass start again at once. */
+  async signInAgain(rawEmail: string, rawSecret: string): Promise<void> {
+    const email = rawEmail.trim().toLowerCase()
+    if (!this.emails().includes(email)) throw new Error('That account is gone.')
+    const config = this.config(email)
+    if (config.signIn === 'microsoft') throw new Error('Outlook signs in with Microsoft, not a password.')
+    if (!rawSecret.trim()) throw new Error('Enter the password.')
+    if (!this.deps.secrets.available()) throw new Error('Unlock your system keyring first.')
+    const secret = config.provider === 'other' ? rawSecret : cleanSecret(rawSecret)
+    const checked = await this.verify(config, { secret })
+    if (!this.emails().includes(email)) throw new Error('That account is gone.')
+    this.deps.secrets.set(`account:${email}`, secret)
+    this.store.setMeta(`config:${email}`, JSON.stringify(checked))
+    this.signedInAgain(email)
+  }
+
+  /** The account's new login is kept: what waited on the old one goes again now. */
+  private signedInAgain(email: string): void {
+    this.store.deleteMeta(`refused:${email}`)
+    const status = this.statusOf(email)
+    status.error = null
+    this.stopRetrying(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
+    this.draftsRetryAt.delete(email)
+    this.deps.changed()
+    background(this.syncOne(email))
+    this.watch(email)
+  }
+
+  /** For an Outlook account that's here, it's Sign in again: the application ID it signed in with,
+   *  unless another is given, and finishing keeps everything of the account but its sign-in. */
   async startMicrosoft(rawEmail: string, rawClientId: string): Promise<{ code: string; url: string }> {
-    const email = this.cleanEmail(rawEmail)
-    const clientId = rawClientId.trim()
+    const typed = rawEmail.trim().toLowerCase()
+    const again = this.emails().includes(typed) && this.config(typed).signIn === 'microsoft'
+    const email = again ? typed : this.cleanEmail(rawEmail)
+    const clientId = rawClientId.trim() || (again ? this.config(email).clientId || this.settings().microsoftClientId : '')
     if (!/^[0-9a-f-]{36}$/i.test(clientId)) throw new Error('That application ID should look like 00000000-0000-0000-0000-000000000000.')
     let code: DeviceCode
     try {
@@ -622,7 +711,7 @@ export class MailService {
     } catch (e) {
       throw new Error((e as Error).message.includes('application ID') ? (e as Error).message : "Couldn't reach Microsoft.")
     }
-    this.signingIn = { email, clientId, code }
+    this.signingIn = { email, clientId, code, again }
     return { code: code.userCode, url: code.url }
   }
 
@@ -630,7 +719,7 @@ export class MailService {
   async finishMicrosoft(): Promise<void> {
     const pending = this.signingIn
     if (!pending) throw new Error('Start signing in first.')
-    const { email, clientId, code } = pending
+    const { email, clientId, code, again } = pending
     let tokens: Tokens | null = null
     while (!tokens) {
       if (this.signingIn !== pending || this.deps.now() > code.expiresAt) throw new Error('The sign-in code ran out. Try again.')
@@ -638,6 +727,14 @@ export class MailService {
       if (!tokens) await new Promise((resolve) => setTimeout(resolve, code.intervalMs))
     }
     this.signingIn = null
+    if (again) {
+      if (!this.emails().includes(email)) throw new Error('That account is gone.')
+      const config = await this.verify({ ...this.config(email), clientId }, { secret: '', accessToken: tokens.access })
+      this.tokens.set(email, tokens)
+      this.deps.secrets.set(`account:${email}`, tokens.refresh)
+      this.store.setMeta(`config:${email}`, JSON.stringify(config))
+      return this.signedInAgain(email)
+    }
     const domain = email.split('@')[1] ?? ''
     const chosen = provider('outlook')
     // Personal addresses and company ones use different outgoing servers.
@@ -678,6 +775,9 @@ export class MailService {
 
   /** What to sign in with. A token is renewed here, ahead of it running out. */
   private async login(email: string): Promise<Login> {
+    // Every connection signs in here, so nothing else need know: an account whose password was
+    // refused sends no LOGIN until it's entered again.
+    if (this.isRefused(email)) throw new LoginRefused(this.refusedText(email))
     const key = `account:${email}`
     const secret = this.deps.secrets.get(key)
     if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
@@ -693,7 +793,37 @@ export class MailService {
     return { secret: '', accessToken: tokens.access }
   }
 
+  /** The server refused this account's password, and it hasn't been entered again since. Kept in the
+   *  store, so a restart doesn't try it again either. */
+  private isRefused(email: string): boolean {
+    return this.store.meta(`refused:${email}`) === '1'
+  }
+
+  /** What an account waiting to be signed in to again says: a password refused, or Microsoft's
+   *  sign-in no longer renewed. */
+  private refusedText(email: string): string {
+    return this.config(email).signIn === 'microsoft' ? SIGN_IN_AGAIN : refusedWords(this.serviceName(email))
+  }
+
+  /** A refused password is tried again by nothing: not the watch every minute, not the passes, not the
+   *  changes or drafts waiting to go. Each try was a wrong LOGIN, sixty or more an hour per account,
+   *  which Gmail answers by blocking sign-ins for a while. It waits for Sign in again. */
+  private refuse(email: string): void {
+    if (!this.emails().includes(email)) return
+    this.store.setMeta(`refused:${email}`, '1')
+    this.stopRetrying(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
+    this.statusOf(email).error = this.refusedText(email)
+    this.deps.changed()
+  }
+
   removeAccount(email: string): void {
+    this.store.deleteMeta(`refused:${email}`)
     this.saveEmails(this.emails().filter((e) => e !== email))
     this.removals.set(email, (this.removals.get(email) ?? 0) + 1)
     const watch = this.watchers.get(email)
@@ -723,13 +853,22 @@ export class MailService {
   }
 
   async syncAll(): Promise<void> {
-    await Promise.all(this.emails().map((email) => this.syncOne(email)))
+    await Promise.all([...this.emails().map((email) => this.syncOne(email)), this.sharing.check()])
   }
 
   /** After waking from sleep, or when the network changes: every connection may be dead, so each
    *  watch starts again, the waits between tries start over, and every account syncs. A pass that
    *  runs before the network is back is tried again within seconds. */
   async reconnect(): Promise<void> {
+    this.sharing.restart()
+    // A pass on the old connection holds its account until imapflow gives up on it: with the folder
+    // locked, a silence it expects, it waits out its quiet time, asks NOOP, and waits it out again,
+    // two to three minutes. It's let go of now and runs again at once, on the network there is.
+    for (const [email, source] of this.passing) {
+      this.cut.add(source)
+      this.syncAgain.add(email)
+      source.drop()
+    }
     for (const email of [...this.retries.keys()]) this.stopRetrying(email)
     if (this.watching) {
       this.stopWatching()
@@ -763,6 +902,14 @@ export class MailService {
 
   /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
   private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
+    if (error instanceof LoginRefused) return // nothing went out
+    // A token turned away is no wrong password: Exchange ends a session's token early (a password
+    // change, a new network) and says AUTHENTICATE failed now and then. The next sign-in renews it,
+    // and only Microsoft refusing to renew it means signing in again.
+    if (this.config(email).signIn === 'microsoft') {
+      if (refusedLogin(error)) this.tokens.delete(email)
+      if (error instanceof SignInExpired) this.refuse(email)
+    } else if (refusedLogin(error)) this.refuse(email)
     this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
   }
 
@@ -775,6 +922,10 @@ export class MailService {
   private async syncOne(email: string): Promise<void> {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
+    if (this.isRefused(email)) {
+      status.error = this.refusedText(email)
+      return void this.deps.changed()
+    }
     // Asked for while one runs, by waking, the window coming back or the button, it goes again once
     // that one ends: the one running may be stuck on a connection that died, and dropping this left
     // its error up until the next three-minute pass.
@@ -814,7 +965,7 @@ export class MailService {
 
   private watch(email: string): void {
     const open = this.deps.openWatcher
-    if (!open || !this.watching || this.watchers.has(email)) return
+    if (!open || !this.watching || this.watchers.has(email) || this.isRefused(email)) return
     const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
     const started = performance.now()
@@ -853,7 +1004,7 @@ export class MailService {
       if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email)) return
+      if (!this.watching || !this.emails().includes(email) || this.isRefused(email)) return
       const rewatch = this.rewatches.get(email) ?? { losses: 0, timer: null }
       this.rewatches.set(email, rewatch)
       if (rewatch.timer) return
@@ -901,6 +1052,7 @@ export class MailService {
     const started = performance.now()
     try {
       source = this.deps.openSource(config, await this.login(email))
+      this.passing.set(email, source)
       await source.connect()
       this.noteFolders(email, source)
       await syncAccount(source, this.store, {
@@ -947,10 +1099,16 @@ export class MailService {
       this.stopRetrying(email)
     } catch (e) {
       const service = this.serviceName(email)
-      status.error = describeFailure(e, service)
-      if (!removed()) this.logFailure(email, 'sync', e, started)
-      if (status.error === unreachable(service) && !removed()) this.retrySoon(email)
+      // Cut short on purpose: the pass that follows says how it went.
+      if (!(source && this.cut.has(source))) {
+        status.error = describeFailure(e, service)
+        if (!removed()) this.logFailure(email, 'sync', e, started)
+        // A token turned away is renewed for the next try, which is soon, as for a lost connection.
+        const renew = config.signIn === 'microsoft' && refusedLogin(e)
+        if ((status.error === unreachable(service) || renew) && !removed()) this.retrySoon(email)
+      }
     } finally {
+      if (source && this.passing.get(email) === source) this.passing.delete(email)
       await source?.close().catch(() => undefined)
       status.syncing = false
       status.progress = null
@@ -1113,7 +1271,9 @@ export class MailService {
     const summed = landed.filter((mail) => mail.summary)
     const batch = senders.length
     // Back as a snooze comes back, and told of the same way.
-    const woken = this.store.wokenBetween(this.lastTick, now) + this.store.settleReminders(now, (email) => this.ownAddresses(email))
+    const back = this.store.settleReminders(now, (email) => this.ownAddresses(email))
+    if (back > 0) this.sharing.changedHere()
+    const woken = this.store.wokenBetween(this.lastTick, now) + back
     this.lastTick = now
     if (landed.length + woken > 0) {
       // A muted sender's mail lands like any other, and only goes unannounced.
@@ -1172,6 +1332,7 @@ export class MailService {
       this.change(email, states, action, group, wait)
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unsnooze(ref))
       if (endsSnooze(action)) mine.forEach((ref) => this.store.unremind(ref))
+      if (endsSnooze(action)) this.sharing.changedHere()
       if (action.kind === 'read') mine.forEach((ref) => this.store.seeReminder(ref))
     }
     return group
@@ -1194,7 +1355,7 @@ export class MailService {
   /** At most one waits behind the one running, so a change made as a flush finishes isn't left for
    *  the next tick, and a stalled connection doesn't pile them up. */
   private async flush(email: string): Promise<void> {
-    if (this.flushQueued.has(email) || this.store.dueActions(email, this.deps.now()).length === 0) return
+    if (this.flushQueued.has(email) || this.isRefused(email) || this.store.dueActions(email, this.deps.now()).length === 0) return
     this.flushQueued.add(email)
     await this.inLane(email, () => {
       this.flushQueued.delete(email)
@@ -1278,12 +1439,14 @@ export class MailService {
     targets.forEach((ref) => this.store.keepOutside(ref))
     const back = away.length > 0 ? this.act(away, { kind: 'inbox' }, true) : null
     targets.forEach((ref) => this.store.snooze(ref, now, until))
+    this.sharing.changedHere()
     this.deps.changed()
     return back
   }
 
   unsnooze(targets: ThreadRef[]): void {
     targets.forEach((ref) => this.store.unsnooze(ref))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -1296,11 +1459,13 @@ export class MailService {
     if (!message) throw new Error("That message isn't here any more.")
     if (!this.ownAddresses(message.account).includes(message.from.address.toLowerCase())) throw new Error('Only for mail you sent.')
     this.store.remind({ account: message.account, thread: message.thread, messageId: message.messageId }, message.date, until)
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
   unremind(targets: ThreadRef[]): void {
     targets.forEach((ref) => this.store.unremind(ref))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -1334,10 +1499,11 @@ export class MailService {
     return list
   }
 
-  /** Nothing goes to the server: a pin is this laptop's own note about a thread. */
+  /** Nothing goes to the mail server: a pin is a note about a thread, kept here and shared with the phone. */
   pin(targets: ThreadRef[], on: boolean): void {
     const now = this.deps.now()
     targets.forEach((ref) => (on ? this.store.pin(ref, now) : this.store.unpin(ref)))
+    this.sharing.changedHere()
     this.deps.changed()
   }
 
@@ -1817,7 +1983,7 @@ export class MailService {
 
   /** At most one waits behind the one running, as with changes to mail. */
   private async pushDrafts(email: string, all = false): Promise<void> {
-    if (this.draftsQueued.has(email) || !this.draftsDue(email, all)) return
+    if (this.draftsQueued.has(email) || this.isRefused(email) || !this.draftsDue(email, all)) return
     this.draftsQueued.add(email)
     await this.inLane(email, () => {
       this.draftsQueued.delete(email)
@@ -2107,6 +2273,7 @@ export class MailService {
   /** The app is closing for good. Mail that's only waiting out Undo goes now, and so do changes, or
    *  both would sit here until the next launch. Mail set for later is left to wait for its time. */
   async finishUp(): Promise<void> {
+    const shared = this.sharing.finish()
     const now = this.deps.now()
     for (const draft of this.store.dueDrafts(now + this.settings().undoSeconds * 1000)) {
       this.store.saveDraft({ ...draft, sendAt: now })
@@ -2116,6 +2283,7 @@ export class MailService {
     await Promise.all(this.emails().map((email) => this.flush(email)))
     await this.sendDue()
     await Promise.all(this.emails().map((email) => this.pushDrafts(email, true)))
+    await shared
   }
 
   /** Remakes the previews of mail stored by an older version, in small steps. The tag means it
@@ -2292,6 +2460,7 @@ export class MailService {
 
   private saveSettings(settings: Settings): void {
     this.store.setMeta('settings', JSON.stringify(settings))
+    this.sharing.changedHere()
   }
 
   /** Waiting mail moves to the next slot of the new timetable. Measuring from now, not from when it
@@ -2421,6 +2590,16 @@ export class MailService {
     }
   }
 
+  /** When today's Deliver nows were used, here or on the phone. */
+  private earlyReleases(): number[] {
+    try {
+      const saved = JSON.parse(this.store.meta('early') ?? '{}') as { releases?: unknown }
+      return Array.isArray(saved.releases) ? saved.releases.filter((at): at is number => Number.isInteger(at)) : []
+    } catch {
+      return []
+    }
+  }
+
   private earlyLeft(): number {
     return Math.max(0, this.settings().batch.earlyPerDay - this.earlyUsed())
   }
@@ -2440,12 +2619,93 @@ export class MailService {
     this.earlyStarted = null
     const released = this.store.releaseAll(now)
     if (released > 0) {
-      this.store.setMeta('early', JSON.stringify({ day: dayKey(now), used: this.earlyUsed() + 1 }))
+      // When, as well as how many: the phone lets in what was waiting at each of these moments too.
+      const day = dayKey(now)
+      const releases = this.earlyUsed() > 0 ? [...this.earlyReleases(), now] : [now]
+      this.store.setMeta('early', JSON.stringify({ day, used: this.earlyUsed() + 1, releases }))
+      this.sharing.changedHere()
     }
     this.lastTick = now
     this.deps.changed()
     await this.report('early', released)
     return released
+  }
+
+  /** Sharing with the phone, as Settings shows it. */
+  share(): ShareView {
+    return this.sharing.view()
+  }
+
+  /** Signs in to xrnmail-sync with the sync password, or a device login in its place, and syncs. */
+  connectShare(url: string, user: string, secret: string): Promise<void> {
+    return this.sharing.connect(url, user, secret)
+  }
+
+  disconnectShare(): void {
+    this.sharing.disconnect()
+  }
+
+  /** While [why] holds (the window being shown), the phone's changes are waited for and land at once. */
+  holdShare(why: string): void {
+    this.sharing.hold(why)
+  }
+
+  releaseShare(why: string): void {
+    this.sharing.release(why)
+  }
+
+  /** Shared settings the phone changed, each cleaned as the same change from this laptop's own page
+   *  is. One that won't clean (a newer phone's value this version doesn't know) is left as it is
+   *  here, and goes back up with the next sync. Mail waiting for a batch or the Summary moves to the
+   *  new times, as it does when they're changed here. */
+  private takeShared(part: JsonObject): void {
+    const settings = this.settings()
+    let next: Settings = settings
+    const patch: ProfilePatch = {}
+    let retime = false
+    for (const [key, value] of Object.entries(part)) {
+      try {
+        if (key === 'batch') {
+          next = { ...next, batch: cleanBatch({ ...next.batch, ...batchSettings(value) }) }
+          retime = true
+        } else if (key === 'summary') {
+          next = { ...next, summary: cleanSummary({ ...next.summary, ...summarySettings(value) }) }
+          retime = true
+        } else if (key === 'unsubscribed') {
+          next = { ...next, unsubscribed: cleanSenders(texts(value, 5000, 320)) }
+        } else if (key === 'identities') {
+          if (!isObject(value)) continue
+          const identities: Record<string, Identity> = {}
+          // Each account's own entry, by its address as kept here, lower case. Failing that, one in
+          // other letter case (the phone keeps an address as it was typed), but never a blank one:
+          // that's one the phone made up, and it would wipe the name and aliases kept here.
+          const entries = Object.entries(value)
+          for (const email of this.emails()) {
+            const exact = entries.find(([account]) => account === email)?.[1]
+            const who = exact ?? entries.find(([account, other]) => account.toLowerCase() === email && !blankIdentity(other))?.[1]
+            if (!isObject(who)) continue
+            try {
+              const own = settings.identities[email] ?? { name: '', signature: '', aliases: [], color: '', notify: true }
+              identities[email] = checkedIdentity({ ...own, name: who['name'] as string, aliases: who['aliases'] as string[], color: who['color'] as string })
+            } catch {
+              // This account's stays as it is here.
+            }
+          }
+          if (Object.keys(identities).length > 0) patch.identities = identities
+        } else {
+          Object.assign(patch, profile({ [key]: value }))
+        }
+      } catch {
+        // Left as it is here.
+      }
+    }
+    if (next !== settings) this.saveSettings(next)
+    if (Object.keys(patch).length > 0) this.saveProfile(patch)
+    if (retime) {
+      this.retime(this.rules())
+      background(this.reportHeld())
+    }
+    this.deps.changed()
   }
 
   async connectHub(rawUrl: string, user: string, secret: string): Promise<void> {
