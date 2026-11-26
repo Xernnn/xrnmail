@@ -109,9 +109,12 @@ function mergeSettings(base: JsonObject | undefined, local: JsonObject | undefin
       case 'summary': return [key, fields(bb, ll, rr, ['senders'])]
       case 'later': return [key, fields(bb, ll, rr)]
       case 'identities': return [key, entries(bb, ll, rr, (eb, el, er) => {
-        // One a device made up (no name, no aliases) never wipes one the person filled in.
-        if (blankIdentity(el) && !blankIdentity(er)) return er
-        if (blankIdentity(er) && !blankIdentity(el)) return el
+        // One a device made up (no name, no aliases, and nothing agreed before it, or nothing either)
+        // never wipes one the person filled in. One cleared on purpose, from a copy both agreed had a
+        // name or an alias, is a change like any other.
+        const madeUp = blankIdentity(eb)
+        if (madeUp && blankIdentity(el) && !blankIdentity(er)) return er
+        if (madeUp && blankIdentity(er) && !blankIdentity(el)) return el
         return fields(eb, el, er, ['aliases'])
       })]
       case 'signatureFor': return [key, entries(bb, ll, rr, pick)]
@@ -123,7 +126,7 @@ function mergeSettings(base: JsonObject | undefined, local: JsonObject | undefin
 }
 
 /** An identity with neither a name nor an alias: what a device makes up for an account it adds,
- *  with only a colour of its own. */
+ *  with only a colour of its own. None at all counts as one. */
 export function blankIdentity(who: Json | undefined): boolean {
   if (!isObject(who)) return true
   const name = get(who, 'name')

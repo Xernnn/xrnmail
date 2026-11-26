@@ -44,12 +44,26 @@ describe('merging the shared settings', () => {
     const madeUp = '{"name": "", "aliases": [], "color": "#3B82F6"}'
     const ids = (who: string | null): JsonObject => doc(who === null ? '{}' : `{"identities": {"alex@example.com": ${who}}}`)
     const want = json(`{"alex@example.com": ${filled}}`)
-    expect(settingsOf(merge(ids(filled), ids(madeUp), ids(filled)))['identities']).toEqual(want)
+    // An account added here that the other device already named, with no agreed copy, either way round.
     expect(settingsOf(merge(null, ids(madeUp), ids(filled)))['identities']).toEqual(want)
     expect(settingsOf(merge(ids(null), ids(filled), ids(madeUp)))['identities']).toEqual(want)
     // A named identity whose last alias is taken out on purpose loses it, as any change.
     const named = '{"name": "Alex", "aliases": [], "color": "#111111"}'
     expect(settingsOf(merge(ids(filled), ids(named), ids(filled)))['identities']).toEqual(json(`{"alex@example.com": ${named}}`))
+  })
+
+  // The made-up rule looked at the two sides alone: an identity whose only alias (or name) was
+  // taken out on purpose looked made up, and the other side's filled one came back.
+  it('lets an identity cleared on purpose stay cleared', () => {
+    const ids = (who: string): JsonObject => doc(`{"identities": {"alex@example.com": ${who}}}`)
+    const cleared = '{"name": "", "aliases": [], "color": "#111111"}'
+    // Its only alias taken out here, its name already blank: it stays out.
+    const aliasOnly = '{"name": "", "aliases": ["old@example.com"], "color": "#111111"}'
+    expect(settingsOf(merge(ids(aliasOnly), ids(cleared), ids(aliasOnly)))['identities']).toEqual(json(`{"alex@example.com": ${cleared}}`))
+    // Its name cleared here, with no aliases: it stays cleared, on whichever side merges.
+    const nameOnly = '{"name": "Alex", "aliases": [], "color": "#111111"}'
+    expect(settingsOf(merge(ids(nameOnly), ids(cleared), ids(nameOnly)))['identities']).toEqual(json(`{"alex@example.com": ${cleared}}`))
+    expect(settingsOf(merge(ids(nameOnly), ids(nameOnly), ids(cleared)))['identities']).toEqual(json(`{"alex@example.com": ${cleared}}`))
   })
 
   it('merges signatures by id and templates by name', () => {

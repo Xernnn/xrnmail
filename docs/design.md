@@ -742,11 +742,13 @@ Merging is three-way, against the base, field by field: a field changed on one s
 side's value; changed on both, the device merging takes its own. Lists of addresses merge as sets,
 so an address added on one device and another taken out on the other both stand; signatures merge
 by `id` and templates by `name`. An identity a device made up (no name and no aliases, only a
-colour, which is what the phone gives an account it adds) never beats one with either filled in:
-the other side's wins whole. A thread's `snooze`, `reminder` and `pin` merge each on its own, so a
-pin set on one device keeps a snooze set on the other: a part changed on one side takes that side's;
-changed on both, the newer `at` wins (a pin's own time for a pin), and the merging side on a tie;
-taken out on one side and changed on the other, the change stands. Archiving, deleting or moving a
+colour, which is what the phone gives an account it adds) never beats one with either filled in,
+when the copy agreed before had none or a blank one too: the other side's wins whole. One cleared on
+purpose, from an agreed copy that had a name or an alias, is a change like any other and stays
+cleared. A thread's `snooze`, `reminder` and `pin` merge each on its own, so a pin set on one device
+keeps a snooze set on the other: a part changed on one side takes that side's; changed on both, the
+newer `at` wins (a pin's own time for a pin), and the merging side on a tie; taken out on one side
+and changed on the other, the change stands. Archiving, deleting or moving a
 thread ends its snooze and reminder on every device, as it does here. The server only checks the
 outline; a 412 means another device wrote first: fetch, merge, send again.
 
