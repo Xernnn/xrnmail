@@ -28,9 +28,10 @@ export class SharedFailure extends Error {
     super(`home server: ${status === 0 ? 'no answer' : status}`)
   }
 
-  /** Worth trying again by itself, unlike a refused login or a wrong address. */
+  /** Worth trying again by itself, unlike a refused login or a wrong address. A 412 here is the sync
+   *  losing the race to another device five times in a row, which the next try may win. */
   get temporary(): boolean {
-    return this.status === 0 || this.status === 429 || this.status >= 500
+    return this.status === 0 || this.status === 412 || this.status === 429 || this.status >= 500
   }
 }
 

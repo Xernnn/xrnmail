@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { sha256, type SharedCopy, type SharedPut, type SharedServer } from '@main/shared-server'
 import type { JsonObject } from '@main/shared-state'
-import { SharedSync, type SharedMeta, type SharedMetaStore, type SharedPlace } from '@main/shared-sync'
+import { MemorySecrets } from '@main/secrets'
+import { Sharing, SharedSync, type SharedMeta, type SharedMetaStore, type SharedPlace } from '@main/shared-sync'
 
 /** The sync's own steps, against a server kept in memory that can lose an answer or be put back
  *  from a backup, which the real one can't be made to do on cue. */
@@ -83,5 +84,41 @@ describe('keeping the shared copy in step', () => {
     server.follows = false
     await sync.sync()
     expect(server.doc['settings']).toEqual({ blocked: ['a@x.example', 'b@x.example'] })
+  })
+})
+
+// Five lost races in a row threw a 412, which wasn't counted as temporary: sharing stopped until the
+// app restarted, the page offering only Disconnect, though the contract says wait for the next try.
+describe('losing the race to the other device', () => {
+  it('five times in a row is waited out and tried again, not taken for a refused login', async () => {
+    let version = 1
+    let asks = 0
+    const racing: SharedServer = {
+      current: async () => ({ version: ++version, tag: `t${version}`, doc: { schema: 1, settings: { x: version } }, follows: true }),
+      newerThan: async () => {
+        asks++
+        return { version: ++version, tag: `t${version}`, doc: { schema: 1, settings: { x: version } }, follows: true }
+      },
+      put: async () => {
+        asks++
+        return { kind: 'stale', version, tag: `t${version}`, hash: '' }
+      },
+      abort: () => undefined
+    }
+    const kept = new Map<string, string>([
+      ['share:login', JSON.stringify({ url: 'https://example.invalid/xrnmail', user: 'alex' })],
+      ['share:agreed', JSON.stringify({ version: 1, tag: 't1', agreed: { schema: 1 } })]
+    ])
+    const store = { meta: (k: string) => kept.get(k) ?? null, setMeta: (k: string, v: string) => void kept.set(k, v), deleteMeta: (k: string) => void kept.delete(k) }
+    const secrets = new MemorySecrets()
+    secrets.set('share', 'pw')
+    let doc: JsonObject = { schema: 1, settings: { mine: 1 } }
+    const place: SharedPlace = { document: () => doc, chosen: (d) => d, take: (_was, merged) => void (doc = merged) }
+    const sharing = new Sharing({ store, secrets, place, serverFor: () => racing, changed: () => undefined, settleMs: 10 })
+    await sharing.check()
+    expect(sharing.view().problem).toBe('Busy')
+    const first = asks
+    await sharing.check()
+    expect(asks).toBeGreaterThan(first)
   })
 })
