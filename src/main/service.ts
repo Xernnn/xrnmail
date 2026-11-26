@@ -296,14 +296,26 @@ const unreachable = (service: string): string => `Couldn't reach ${service}.`
 const BUSY_CODES = new Set(['UNAVAILABLE', 'INUSE', 'LIMIT', 'SERVERBUG'])
 const BUSY_WORDS = /too many (simultaneous )?connections|try again later/i
 
+const refusedWords = (service: string): string => `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+
+/** The server turned the password away: not a busy one, which is waited out like a lost connection. */
+export function refusedLogin(error: unknown): boolean {
+  const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string } | null
+  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
+  return e?.authenticationFailed === true && !busy
+}
+
+/** Asked for a connection to an account whose password the server refused: nothing is sent. */
+class LoginRefused extends Error {}
+
 /** Fixed words: what a server says is never shown, and can't carry anything back to the page. It's
  *  only read for whether a sign-in turned away was busy, which is waited out like a lost connection
  *  and tried again: told "refused this password", people changed a password that was right. */
 export function describeFailure(error: unknown, service = 'the mail server'): string {
   const e = error as { authenticationFailed?: boolean; serverResponseCode?: string; responseText?: string; message?: string }
   if (error instanceof SignInExpired) return SIGN_IN_AGAIN
-  const busy = BUSY_CODES.has(String(e?.serverResponseCode ?? '').toUpperCase()) || BUSY_WORDS.test(String(e?.responseText ?? ''))
-  if (e?.authenticationFailed && !busy) return `${service.charAt(0).toUpperCase()}${service.slice(1)} refused this password.`
+  if (error instanceof LoginRefused) return error.message
+  if (refusedLogin(error)) return refusedWords(service)
   if (e?.message === SECRET_GONE || e?.message === KEYRING_SHUT) return String(e.message)
   if (e?.message?.includes('All Mail') || e?.message?.includes('no folders')) return String(e.message)
   if (e?.message?.includes('read-only')) return String(e.message)
@@ -572,7 +584,7 @@ export class MailService {
         id: email,
         email,
         ...status,
-        error: status.error ?? (note && note.until > now ? note.text : null),
+        error: status.error ?? (this.isRefused(email) ? refusedWords(this.serviceName(email)) : note && note.until > now ? note.text : null),
         provider: config.provider,
         providerName: provider(config.provider).name,
         labels: config.gmail,
@@ -665,6 +677,7 @@ export class MailService {
 
   /** The account's new login is kept: what waited on the old one goes again now. */
   private signedInAgain(email: string): void {
+    this.store.deleteMeta(`refused:${email}`)
     const status = this.statusOf(email)
     status.error = null
     this.stopRetrying(email)
@@ -746,6 +759,9 @@ export class MailService {
 
   /** What to sign in with. A token is renewed here, ahead of it running out. */
   private async login(email: string): Promise<Login> {
+    // Every connection signs in here, so nothing else need know: an account whose password was
+    // refused sends no LOGIN until it's entered again.
+    if (this.isRefused(email)) throw new LoginRefused(refusedWords(this.serviceName(email)))
     const key = `account:${email}`
     const secret = this.deps.secrets.get(key)
     if (!secret) throw new Error(this.deps.secrets.has(key) && !this.deps.secrets.available() ? KEYRING_SHUT : SECRET_GONE)
@@ -761,7 +777,31 @@ export class MailService {
     return { secret: '', accessToken: tokens.access }
   }
 
+  /** The server refused this account's password, and it hasn't been entered again since. Kept in the
+   *  store, so a restart doesn't try it again either. */
+  private isRefused(email: string): boolean {
+    return this.store.meta(`refused:${email}`) === '1'
+  }
+
+  /** A refused password is tried again by nothing: not the watch every minute, not the passes, not the
+   *  changes or drafts waiting to go. Each try was a wrong LOGIN, sixty or more an hour per account,
+   *  which Gmail answers by blocking sign-ins for a while. It waits for Sign in again. */
+  private refuse(email: string): void {
+    if (!this.emails().includes(email)) return
+    this.store.setMeta(`refused:${email}`, '1')
+    this.stopRetrying(email)
+    const rewatch = this.rewatches.get(email)
+    if (rewatch?.timer) clearTimeout(rewatch.timer)
+    this.rewatches.delete(email)
+    const watch = this.watchers.get(email)
+    if (watch) this.endWatch(watch)
+    this.watchers.delete(email)
+    this.statusOf(email).error = refusedWords(this.serviceName(email))
+    this.deps.changed()
+  }
+
   removeAccount(email: string): void {
+    this.store.deleteMeta(`refused:${email}`)
     this.saveEmails(this.emails().filter((e) => e !== email))
     this.removals.set(email, (this.removals.get(email) ?? 0) + 1)
     const watch = this.watchers.get(email)
@@ -832,6 +872,8 @@ export class MailService {
 
   /** Into the log of failures (sync-log.ts), timed from when the connection was opened. */
   private logFailure(email: string, doing: Failure['doing'], error: unknown, started: number, idle = false): void {
+    if (error instanceof LoginRefused) return // nothing went out
+    if (refusedLogin(error)) this.refuse(email)
     this.deps.failed?.({ account: email, provider: this.config(email).provider, doing, error, ms: performance.now() - started, idle })
   }
 
@@ -844,6 +886,10 @@ export class MailService {
   private async syncOne(email: string): Promise<void> {
     if (!this.emails().includes(email)) return
     const status = this.statusOf(email)
+    if (this.isRefused(email)) {
+      status.error = refusedWords(this.serviceName(email))
+      return void this.deps.changed()
+    }
     // Asked for while one runs, by waking, the window coming back or the button, it goes again once
     // that one ends: the one running may be stuck on a connection that died, and dropping this left
     // its error up until the next three-minute pass.
@@ -883,7 +929,7 @@ export class MailService {
 
   private watch(email: string): void {
     const open = this.deps.openWatcher
-    if (!open || !this.watching || this.watchers.has(email)) return
+    if (!open || !this.watching || this.watchers.has(email) || this.isRefused(email)) return
     const mine: Watch = { stopped: false, watcher: null, settle: null }
     this.watchers.set(email, mine)
     const started = performance.now()
@@ -922,7 +968,7 @@ export class MailService {
       if (mine.watcher) background(mine.watcher.close())
       if (this.watchers.get(email) !== mine) return // stopped, or a newer watch has taken over
       this.watchers.delete(email)
-      if (!this.watching || !this.emails().includes(email)) return
+      if (!this.watching || !this.emails().includes(email) || this.isRefused(email)) return
       const rewatch = this.rewatches.get(email) ?? { losses: 0, timer: null }
       this.rewatches.set(email, rewatch)
       if (rewatch.timer) return
@@ -1266,7 +1312,7 @@ export class MailService {
   /** At most one waits behind the one running, so a change made as a flush finishes isn't left for
    *  the next tick, and a stalled connection doesn't pile them up. */
   private async flush(email: string): Promise<void> {
-    if (this.flushQueued.has(email) || this.store.dueActions(email, this.deps.now()).length === 0) return
+    if (this.flushQueued.has(email) || this.isRefused(email) || this.store.dueActions(email, this.deps.now()).length === 0) return
     this.flushQueued.add(email)
     await this.inLane(email, () => {
       this.flushQueued.delete(email)
@@ -1894,7 +1940,7 @@ export class MailService {
 
   /** At most one waits behind the one running, as with changes to mail. */
   private async pushDrafts(email: string, all = false): Promise<void> {
-    if (this.draftsQueued.has(email) || !this.draftsDue(email, all)) return
+    if (this.draftsQueued.has(email) || this.isRefused(email) || !this.draftsDue(email, all)) return
     this.draftsQueued.add(email)
     await this.inLane(email, () => {
       this.draftsQueued.delete(email)
